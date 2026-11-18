@@ -40,3 +40,5 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f db/tests/adversarial_permissions.sql
           psql -X -v ON_ERROR_STOP=1 -f db/tests/privilege_audit.sql
           bash db/tests/concurrent_scopes.sh
+          # Blocking regression: fails while custom GUC identity can be forged.
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/identity_spoof_gate.sql
