@@ -15,8 +15,8 @@ function valid(s){if(!UUID.test(s))throw Error('Invalid identifier.');return s;}
 function el(tag,text,cls){const e=document.createElement(tag);if(text!==undefined)e.textContent=String(text);if(cls)e.className=cls;return e;}
 function add(e,...c){e.append(...c);return e;}
 function panel(title){return add(el('section',undefined,'panel'),el('h2',title));}
-function note(s){$('notice').textContent=s;}
-async function run(fn){if(busy)return;busy=true;const g=epoch;note('Working…');try{await fn();if(g===epoch&&$('notice').textContent==='Working…')note('Done.');}catch(e){if(g===epoch)note(e.message||'Request failed.');}finally{busy=false;}}
+function note(s,error=false){$('notice').textContent=s;$('notice').dataset.error=String(error);}
+async function run(fn){if(busy)return;busy=true;root.setAttribute('aria-busy','true');const g=epoch;note('Working…');try{await fn();if(g===epoch&&$('notice').textContent==='Working…')note('Done.');}catch(e){if(g===epoch)note(e.message||'Request failed.',true);}finally{busy=false;root.setAttribute('aria-busy','false');}}
 function button(text,fn){const b=el('button',text);b.type='button';b.addEventListener('click',()=>run(fn));return b;}
 function field(n,label,type='text',v=''){const l=el('label',label),i=el('input');i.name=n;i.type=type;if(type!=='file')i.value=v;l.append(i);return l;}
 function choice(n,label,items){const l=el('label',label),s=el('select');s.name=n;for(const [v,t] of items){const o=el('option',t);o.value=v;s.append(o);}l.append(s);return l;}
@@ -34,10 +34,10 @@ async function req(path,{method='GET',body,raw,share,download=false}={}){
 }
 const post=(p,b)=>req(p,{method:'POST',body:b});
 async function refresh(){const g=epoch;const [project,r,c,f]=await Promise.all([req(''),req('/readiness'),req('/catalog'),req('/finance')]);if(g!==epoch)return;if(model?.c.actorId&&model.c.actorId!==c.actorId){reset();throw Error('Authenticated actor changed. Reconnect.');}model={project,r,c,f};$('project-name').textContent=project.name;render();}
-function reset(){epoch++;captureLabel='';lockLocal();session=null;model=null;tab='overview';root.replaceChildren();$('project-name').textContent='';$('portal-results').replaceChildren();$('login').reset();$('portal-form').reset();$('workspace').hidden=true;$('portal').hidden=true;$('connect').hidden=false;$('disconnect').hidden=true;note('Disconnected.');}
-$('login').addEventListener('submit',e=>{e.preventDefault();const f=new FormData($('login'));run(async()=>{const t=valid(v(f,'tenant')),p=valid(v(f,'project')),token=v(f,'token').trim();if(!/^[A-Za-z0-9_.-]+$/.test(token))throw Error('Invalid token.');session={base:'/v1/tenants/'+t+'/projects/'+p,auth:'Bearer '+token};$('login').elements.token.value='';try{await refresh();$('connect').hidden=true;$('workspace').hidden=false;$('disconnect').hidden=false;note('Connected.');}catch(e){reset();note(e.message);}});});
+function reset(){epoch++;captureLabel='';lockLocal();session=null;model=null;tab='overview';root.replaceChildren();$('project-name').textContent='';$('portal-results').replaceChildren();$('login').reset();$('portal-form').reset();$('workspace').hidden=true;$('portal').hidden=true;$('connect').hidden=false;$('disconnect').hidden=true;note('Disconnected.');$('login').elements.tenant.focus();}
+$('login').addEventListener('submit',e=>{e.preventDefault();const f=new FormData($('login'));run(async()=>{const t=valid(v(f,'tenant')),p=valid(v(f,'project')),token=v(f,'token').trim();if(!/^[A-Za-z0-9_.-]+$/.test(token))throw Error('Invalid token.');session={base:'/v1/tenants/'+t+'/projects/'+p,auth:'Bearer '+token};$('login').elements.token.value='';try{await refresh();$('connect').hidden=true;$('workspace').hidden=false;$('disconnect').hidden=false;note('Connected.');}catch(e){reset();note(e.message,true);}});});
 $('disconnect').addEventListener('click',reset);$('refresh').addEventListener('click',()=>run(refresh));
-$('nav').addEventListener('click',e=>{const b=e.target.closest('[data-tab]');if(b&&model&&!busy){tab=b.dataset.tab;render();}});
+$('nav').addEventListener('click',e=>{const b=e.target.closest('[data-tab]');if(b&&model&&!busy){tab=b.dataset.tab;render();const heading=root.querySelector('h2');if(heading){heading.tabIndex=-1;heading.focus();}}});
 function render(){root.replaceChildren();for(const b of $('nav').querySelectorAll('button')){if(b.dataset.tab===tab)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');}({overview,documents,prooflock,resolve,handover}[tab])();}
 function item(...c){return add(el('article',undefined,'item'),...c);}
 function state(s){return el('span',s,'state');}
@@ -193,6 +193,28 @@ function handover(){const p=panel('Handover · immutable drafts');p.append(butto
  p.append(card);}releaseManager(p);root.append(p);}
 window.addEventListener('online',()=>{if(tab==='documents'&&model&&!busy)render();});
 window.addEventListener('offline',()=>{if(tab==='documents'&&model&&!busy)render();});
-$('portal-open').addEventListener('click',()=>{$('connect').hidden=true;$('portal').hidden=false;});
+$('portal-open').addEventListener('click',()=>{if(busy)return;epoch++;$('connect').hidden=true;$('portal').hidden=false;$('portal-form').elements.release.focus();});
 $('portal-back').addEventListener('click',reset);
-$('portal-form').addEventListener('submit',e=>{e.preventDefault();const f=new FormData($('portal-form'));run(async()=>{const release=valid(v(f,'release')),token=v(f,'secret').trim();if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw Error('Invalid share token.');$('portal-form').elements.secret.value='';const share='Share '+token,path='/v1/shared-index/'+release;const result=await req(path,{share});if(await digest(new TextEncoder().encode(result.json))!==result.sha256)throw Error('Index hash mismatch.');const box=$('portal-results');box.replaceChildren(el('h2','Selected documents'),el('p','Hash checked; signature trust requires independently provisioned public key.','muted'));for(const d of JSON.parse(result.json).documents)box.append(item(el('h3','Revision '+d.revision),el('small',d.documentVersionId),el('p',d.originalSha256)));box.append(button('Check approved originals',async()=>{const r=await req(path+'/bundle',{share});if(await digest(new TextEncoder().encode(r.json))!==r.sha256)throw Error('Bundle hash mismatch.');for(const x of JSON.parse(r.json).originalDocumentVersionIds){valid(x);box.append(button('Download '+x,async()=>download(await req(path+'/originals/'+x,{share,download:true}),x)));}}));note('Index opened.');});});
+$('portal-form').addEventListener('submit',e=>{
+ e.preventDefault();if(busy)return;
+ // Never keep a previous capability visible after a new access attempt, even when it fails.
+ const f=new FormData($('portal-form')),box=$('portal-results');epoch++;box.replaceChildren();
+ $('portal-form').elements.secret.value='';
+ run(async()=>{
+ const g=epoch,guard=()=>{if(g!==epoch||$('portal').hidden)throw Error('Portal session changed.');};
+ const release=valid(v(f,'release')),token=v(f,'secret').trim();if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw Error('Invalid share token.');
+ const share='Share '+token,path='/v1/shared-index/'+release,result=await req(path,{share});
+ if(await digest(new TextEncoder().encode(result.json))!==result.sha256)throw Error('Index hash mismatch.');guard();
+ const index=JSON.parse(result.json);if(!Array.isArray(index.documents)||index.documents.length>200)throw Error('Invalid selected index.');
+ for(const d of index.documents)valid(d.documentVersionId);
+ box.replaceChildren(el('h2','Selected documents'),el('p','Hash checked; signature trust requires independently provisioned public key.','muted'));
+ for(const d of index.documents)box.append(item(el('h3','Revision '+d.revision),el('small',d.documentVersionId),el('p',d.originalSha256)));
+ box.append(button('Check approved originals',async()=>{
+ guard();const r=await req(path+'/bundle',{share});if(await digest(new TextEncoder().encode(r.json))!==r.sha256)throw Error('Bundle hash mismatch.');guard();
+ const ids=JSON.parse(r.json).originalDocumentVersionIds;if(!Array.isArray(ids)||ids.length>50||new Set(ids).size!==ids.length)throw Error('Invalid original selection.');
+ ids.forEach(valid);box.querySelector('.original-options')?.remove();const originals=el('div',undefined,'original-options');
+ for(const x of ids)originals.append(button('Download '+x,async()=>{guard();const blob=await req(path+'/originals/'+x,{share,download:true});guard();const document=index.documents.find(d=>d.documentVersionId===x);if(!document||await digest(await blob.arrayBuffer())!==document.originalSha256)throw Error('Original hash mismatch.');guard();download(blob,x);}));
+ box.append(originals);
+ }));note('Index opened.');
+ });
+});
