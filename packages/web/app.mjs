@@ -1,3 +1,4 @@
+import {selectedSpan,selectedAmount,currentSources} from '/app/source-selection.mjs';
 import {unlockVault,deleteVault} from '/app/capture-vault.mjs';
 import {createUploadQueue} from '/app/upload-queue.mjs';
 const $=id=>document.getElementById(id),root=$('content');
@@ -41,8 +42,72 @@ function item(...c){return add(el('article',undefined,'item'),...c);}
 function state(s){return el('span',s,'state');}
 function metric(t,n){return add(el('div',undefined,'metric'),el('small',t),el('strong',n));}
 const options=()=>model.c.requirements.map(r=>[r.versionId,r.kind+' · '+r.expected]);
+function labelledCheck(name,value,label,checked=false){const l=el('label'),c=el('input');c.type='checkbox';c.name=name;c.value=value;c.checked=checked;l.append(c,document.createTextNode(label));return l;}
+function selectDefault(n,label,items,def){const q=choice(n,label,items);if(def!==undefined&&items.some(([k])=>k===def))q.querySelector('select').value=def;return q;}
+function pickSource(host,callback,initial){
+ const sources=currentSources(model.c);if(!sources.length){host.append(el('p','No current reviewed sources. Approve an extracted revision first.'));return;}
+ const wrapper=el('div',undefined,'source-picker');
+ const selector=selectDefault('source-version','Current reviewed source',sources.map(x=>[x.versionId,x.title]),initial);
+ const area=el('div');wrapper.append(selector,button('Load source pages',async()=>{
+ const source=sources.find(x=>x.versionId===selector.querySelector('select').value);if(!source)throw Error('Select source.');
+ const draft=await req('/uploads/'+source.uploadId+'/review');area.replaceChildren();
+ for(const page of draft.pages){
+ const text=el('textarea');text.readOnly=true;text.rows=6;text.value=page.text_value;text.setAttribute('aria-label','Exact text, page '+page.page);
+ const card=item(el('h3','Page '+page.page+' · '+page.method),el('p','Select the exact excerpt in the text field, then use the selection.','muted'),text,button('Use selected text',()=>{const span=selectedSpan(page,text.selectionStart,text.selectionEnd);callback(source,span);}));
+ area.append(card);
+ }
+ }),area);selector.querySelector('select').addEventListener('change',()=>area.replaceChildren());host.append(wrapper);
+}
+function financeEditor(host,existing){
+ const editor=panel(existing?'Revise financial record':'Create financial record');
+ editor.append(el('p','Select an exact reviewed amount in AUD. Tax basis and retention date are reviewer-entered assertions, not automatically interpreted legal terms.','muted'));
+ const details=el('div');pickSource(editor,(source,span)=>{
+ const amount=selectedAmount(span);details.replaceChildren(el('p','Selected: '+span.quote+' · '+source.title+' · page '+span.page));
+ const conditions=el('fieldset');conditions.append(el('legend','Current documentary conditions (optional)'));
+ for(const r of model.c.requirements)conditions.append(labelledCheck('condition',r.versionId,r.kind+' · '+r.expected,!!existing?.conditions?.some(c=>c.id===r.id&&c.revision===r.revision)));
+ const fields=[field('title','Record title','text',existing?.title??''),selectDefault('category','Category',existing?[[existing.category,existing.category]]:[['milestone','Milestone'],['retention','Retention']],existing?.category),selectDefault('tax','Tax basis',[['inclusive','Inclusive'],['exclusive','Exclusive']],existing?.taxBasis),field('release','Recorded retention date (optional)','date',existing?.releaseOn??''),conditions];
+ const recordId=existing?.id??id(),spanId=id();
+ details.append(form(fields,'Save financial revision',async f=>{
+ const category=v(f,'category'),releaseOn=v(f,'release')||null;
+ if(releaseOn&&category!=='retention')throw Error('Retention date only applies to retention.');
+ if(!v(f,'title').trim())throw Error('Enter a title.');
+ if(!confirm('Save this source-linked financial record? This does not establish a payment entitlement.'))return;
+ await post('/finance',{id:recordId,priorRevision:existing?.revision??0,category,title:v(f,'title').trim(),amount,taxBasis:v(f,'tax'),spanId,documentVersionId:source.versionId,...span,releaseOn,conditionVersionIds:f.getAll('condition').map(String)});await refresh();
+ }));
+ },existing?.sourceId);
+ editor.append(details);host.append(editor);
+}
+function disputeEditor(host,x){
+ const events=(model.f.events??[]).filter(e=>e.financeId===x.id);
+ const history=(model.f.history??[]).filter(e=>e.id===x.id);
+ const box=item(el('h3','Dispute chronology'),el('p','Events are member assertions, not independent evidence of delivery or payment.','muted'));
+ for(const e of events)box.append(item(state(e.type),el('p',e.note),el('small','Occurred: '+(e.occurredAt??'unknown')+' · Recorded: '+e.recordedAt)));
+ for(const r of history)box.append(el('small','Revision '+r.revision+' · AUD '+r.amount+' · '+r.recordedAt));
+ const eventId=id();
+ box.append(form([choice('type','Event type',['submission-asserted','delivery-asserted','receipt-asserted','acceptance-asserted','rejection-asserted','disputed','correction','payment-asserted','note'].map(x=>[x,x])),field('occurred','Occurred UTC ISO (blank unknown)'),field('note','Event details'),choice('document','Related current document',[['','None'],...currentSources(model.c).map(s=>[s.versionId,s.title])]),choice('handover','Related handover draft',[['','None'],...model.c.drafts.map(d=>[d.id,'Generation '+d.generation])])],'Record dispute event',async f=>{
+ const instant=v(f,'occurred').trim();if(instant&&!/Z$/.test(instant))throw Error('Use UTC timestamp ending in Z.');
+ if(!v(f,'note').trim())throw Error('Enter an event note.');
+ if(!confirm('Record this event as a member assertion?'))return;
+ await post('/finance/events',{id:eventId,financeId:x.id,financeRevision:x.revision,type:v(f,'type'),occurredAt:instant?new Date(instant).toISOString():null,note:v(f,'note').trim(),documentVersionId:v(f,'document')||null,handoverId:v(f,'handover')||null});await refresh();
+ }),button('Export dispute draft',async()=>{const r=await req('/finance/'+x.id+'/dispute-pack');if(await digest(new TextEncoder().encode(r.json))!==r.sha256)throw Error('Dispute draft hash mismatch.');download(new Blob([r.json],{type:'application/json'}),'dispute-draft.json');}));
+ host.append(box);
+}
+function relationEditor(host,existing){
+ const editor=panel(existing?'Revise contract relationship':'Record contract relationship');
+ editor.append(el('p','Choose an exact clause from the current amendment. The relationship records reviewer judgment, not automatic legal precedence.','muted'));
+ const details=el('div');pickSource(editor,(source,span)=>{
+ const bases=currentSources(model.c).filter(x=>x.documentId!==source.documentId);
+ details.replaceChildren(el('p',span.quote));if(!bases.length){details.append(el('p','A separate reviewed base document is required.'));return;}
+ const recordId=existing?.id??id(),spanId=id();
+ details.append(form([selectDefault('base','Base document',bases.map(x=>[x.versionId,x.title]),existing?.baseVersionId),selectDefault('relation','Relationship',['amends','supersedes','qualifies','conflicts'].map(x=>[x,x]),existing?.relation),selectDefault('state','Review state',(existing?['unresolved','reviewed','withdrawn']:['unresolved','reviewed']).map(x=>[x,x]),existing?.state),field('note','Review explanation','text',existing?.note??'')],'Save contract relationship',async f=>{
+ if(!v(f,'note').trim())throw Error('A review explanation is required.');
+ if(!confirm('Record this relationship and exact source excerpt? Original documents will remain unchanged.'))return;
+ await post('/contract-relations',{id:recordId,priorRevision:existing?.revision??0,amendmentVersionId:source.versionId,baseVersionId:v(f,'base'),spanId,...span,relation:v(f,'relation'),state:v(f,'state'),note:v(f,'note').trim()});await refresh();
+ }));
+ },existing?.amendmentVersionId);editor.append(details);host.append(editor);
+}
 function overview(){const r=model.r,p=panel('Project readiness');p.append(state(r.ready?'Configured checks ready':'Review required'),el('p',r.label,'muted'),add(el('div',undefined,'grid'),metric('Verified',r.verified+'/'+r.confirmed),metric('Blockers',r.blockers),metric('Workflow blockers',r.operationalBlockers),metric('Coverage',r.coverage===null?'—':Math.round(r.coverage*100)+'%')),el('p',r.scopeConfirmed?'Scope confirmed':'Scope unconfirmed'),button('Confirm configured scope',async()=>{if(confirm('Confirm only the configured documentary scope?')){await post('/scope/confirm',{generation:r.generation});await refresh();}}));root.append(p);
- const f=panel('Financial intelligence');f.append(el('p',model.f.label,'muted'));for(const x of model.f.totals)f.append(item(el('h3',x.category+' · '+x.taxBasis),el('p','AUD '+x.recorded+' recorded'),el('small','AUD '+x.configuredConditionsMet+' documentary conditions met')));for(const x of model.f.items)f.append(item(el('h3',x.title),el('p','AUD '+x.amount),state(x.status),el('p',x.retentionStatus??'')));root.append(f);}
+ const f=panel('Financial intelligence');f.append(el('p',model.f.label,'muted'));for(const x of model.f.totals)f.append(item(el('h3',x.category+' · '+x.taxBasis),el('p','AUD '+x.recorded+' recorded'),el('small','AUD '+x.configuredConditionsMet+' documentary conditions met')));for(const x of model.f.items){const card=item(el('h3',x.title),el('p','AUD '+x.amount),state(x.status),el('p',x.retentionStatus??''));card.append(button('Revise financial record',()=>{card.querySelector('.record-editor')?.remove();const area=el('div',undefined,'record-editor');financeEditor(area,x);card.append(area);}),button('Dispute records',()=>{card.querySelector('.dispute-editor')?.remove();const area=el('div',undefined,'dispute-editor');disputeEditor(area,x);card.append(area);}));f.append(card);}f.append(button('New financial record',()=>{f.querySelector('.new-finance')?.remove();const area=el('div',undefined,'new-finance');financeEditor(area,null);f.append(area);}));root.append(f);}
 async function digest(b){return [...new Uint8Array(await crypto.subtle.digest('SHA-256',b))].map(x=>x.toString(16).padStart(2,'0')).join('');}
 function captureList(p){
  const list=el('div',undefined,'capture-list');
@@ -80,7 +145,7 @@ function editMilestone(m){const opts=model.c.requirements.filter(r=>r.id===m.req
 function prooflock(){const p=panel('ProofLock · evidence deadlines');for(const m of model.r.milestones)p.append(item(el('h3',m.title),state(m.status),el('p','Deadline: '+(m.due??'Unconfirmed')),editMilestone(m)));if(options().length)p.append(form([field('title','Milestone'),choice('req','Requirement',options()),field('date','UTC ISO milestone (blank unknown)'),field('lead','Lead minutes','number','120'),choice('risk','Risk',[['irreversible','Irreversible'],['costly','Costly'],['reversible','Reversible']])],'Add milestone',async f=>{const x=v(f,'date').trim();if(x&&!/Z$/.test(x))throw Error('Use a UTC timestamp ending in Z.');await post('/prooflock',{id:id(),priorRevision:0,requirementVersionId:v(f,'req'),title:v(f,'title'),milestone:x?new Date(x).toISOString():null,confirmed:!!x,leadMinutes:Number(v(f,'lead')),irreversibility:v(f,'risk')});await refresh();}));root.append(p);}
 function resolve(){const p=panel('Resolve documentary gaps');for(const f of model.r.findings){const r=model.c.requirements.find(r=>r.id===f.requirementId),card=item(el('h3',r?r.kind+' · '+r.expected:f.requirementId),state(f.status),el('p',f.reason));if(r)card.append(button('Find candidate evidence',async()=>{const a=await req('/requirements/'+r.id+'/suggestions');card.querySelector('.matches')?.remove();const box=el('div',undefined,'matches');for(const x of a.candidates)box.append(item(el('p',x.quote),el('small','Page '+x.page+' · '+x.documentVersionId),button('Approve evidence',async()=>{if(confirm('Confirm you reviewed this independent source?')){await post('/evidence',{id:id(),requirementVersionId:r.versionId,spanId:id(),documentVersionId:x.documentVersionId,page:x.page,start:x.start,end:x.end,quote:x.quote,textSha256:x.textSha256,decision:'approved'});await refresh();}})));if(!a.candidates.length)box.append(el('p','No current literal matches.'));card.append(box);}));p.append(card);}root.append(p);
  const cases=panel('Rejection cases');for(const c of model.r.cases)cases.append(item(state(c.state),el('p',c.note),form([field('note','Review note')],c.state==='open'?'Record resolution':'Reopen',async f=>{await post('/rejections',{id:c.id,priorRevision:c.revision,requirementVersionId:c.requirementVersionId,state:c.state==='open'?'resolution-recorded':'open',note:v(f,'note')});await refresh();})));if(options().length)cases.append(form([choice('req','Requirement',options()),field('note','Rejection details')],'Open case',async f=>{await post('/rejections',{id:id(),priorRevision:0,requirementVersionId:v(f,'req'),state:'open',note:v(f,'note')});await refresh();}));root.append(cases);
- const rel=panel('Contract relationships');for(const x of model.r.contractRelations??[])rel.append(item(state(x.relation+' · '+x.state),el('p',x.quote),el('p',x.note)));root.append(rel);}
+ const rel=panel('Contract relationships');for(const x of model.r.contractRelations??[]){const card=item(state(x.relation+' · '+x.state),el('p',x.quote),el('p',x.note));card.append(button('Revise relationship',()=>{card.querySelector('.relation-editor')?.remove();const area=el('div',undefined,'relation-editor');relationEditor(area,x);card.append(area);}));rel.append(card);}rel.append(button('New contract relationship',()=>{rel.querySelector('.new-relation')?.remove();const area=el('div',undefined,'new-relation');relationEditor(area,null);rel.append(area);}));root.append(rel);}
 function download(blob,name){const url=URL.createObjectURL(blob),a=el('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 function selections(list,label){const box=el('fieldset');box.append(el('legend',label));for(const d of list){const l=el('label',d.title),c=el('input');c.type='checkbox';c.name='selected';c.value=d.id;l.prepend(c);box.append(l);}return box;}
 const selected=f=>f.getAll('selected').map(String);
