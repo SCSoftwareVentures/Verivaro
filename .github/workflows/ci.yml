@@ -55,4 +55,6 @@ jobs:
         with:
           persist-credentials: false
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/001_foundation.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/002_scoped_ingestion.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/foundation.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/scoped_ingestion.sql
