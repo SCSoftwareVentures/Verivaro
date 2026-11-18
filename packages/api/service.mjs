@@ -4,7 +4,8 @@ import {proposeRequirements,suggestMatches} from '../domain/proposals.mjs';
 import {evaluateGraph,reviewDigest} from '../domain/graph.mjs';
 import {evaluateWorkspace,handoverManifest} from '../domain/workspace.mjs';
 import {evaluateFinance,disputePack} from '../domain/finance.mjs';
-import {createIntelligence,evidenceSuggestions} from '../domain/intelligence.mjs';
+import {evidenceSuggestions} from '../domain/intelligence.mjs';
+import {createScopedIntelligence,intelligenceFingerprint} from '../domain/intelligence-cache.mjs';
 import {createLocalIntelligenceProvider} from '../security/intelligence-process.mjs';
 import {randomUUID,randomBytes,createHash} from 'node:crypto';
 import {createCapabilityGate,CapacityError} from '../security/capacity.mjs';
@@ -77,7 +78,7 @@ export function createService({runtimePool,signerPool,workerPool,issuerConfig,ke
  uuid(keyId);
  const config=structuredClone(issuerConfig);
  if(intelligenceProvider!==undefined||typeof localIntelligence!=='boolean')throw Error('only fixed offline intelligence provider supported');
- const intelligence=createIntelligence({provider:localIntelligence?createLocalIntelligenceProvider():null});
+ const intelligence=createScopedIntelligence({provider:localIntelligence?createLocalIntelligenceProvider():null});
  const releaseSigner=releaseSigning?createReleaseSigner(releaseSigning):null;
  if(capabilityPool&&(!capabilityPool.query||[runtimePool,signerPool,workerPool].includes(capabilityPool)))throw Error('separate capability pool required');
  let activeDownloads=0;
@@ -227,9 +228,10 @@ export function createService({runtimePool,signerPool,workerPool,issuerConfig,ke
  async analyseDraft(b,t,p,u,body){
  uuid(u);exact(body,['useProvider']);if(typeof body.useProvider!=='boolean')throw bad();
  const pages=await scoped(b,t,p,async c=>(await c.query(SQL.reviewPages,[t,p,u])).rows);
- const result=await intelligence(pages,{useProvider:body.useProvider});
+ const fingerprint=intelligenceFingerprint(pages);
+ const result=await intelligence.analyse({tenantId:t,projectId:p,uploadId:u},pages,{useProvider:body.useProvider});
  // Re-authorise after potentially expensive provider call, verify same immutable page digest.
- return scoped(b,t,p,async c=>{const latest=(await c.query(SQL.reviewPages,[t,p,u])).rows;if(reviewDigest(latest)!==reviewDigest(pages))throw new ServiceError(409,'draft_changed');return result;});
+ return scoped(b,t,p,async c=>{const latest=(await c.query(SQL.reviewPages,[t,p,u])).rows;if(intelligenceFingerprint(latest)!==fingerprint)throw new ServiceError(409,'draft_changed');return result;});
  },
  async evidenceSuggestions(b,t,p,r){uuid(r);return scoped(b,t,p,async c=>{const w=one(await c.query(SQL.workspace,[t,p])).workspace;const result=evidenceSuggestions(w,r);if(!result)throw deny();return result;});},
  async saveRelation(b,t,p,body){

@@ -281,3 +281,5 @@ jobs:
         run: node --experimental-strip-types tests/benchmarks/run.mjs development
       - name: Fixed project holdout and critical readiness gate
         run: node --experimental-strip-types tests/benchmarks/run.mjs holdout
+      - name: Sparse graph and incremental cache performance
+        run: node --experimental-strip-types tests/benchmarks/performance.mjs

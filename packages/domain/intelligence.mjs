@@ -39,14 +39,14 @@ export function validateProviderProposals(pages,data){
 /** Trusted operator-injected adapter only. No network endpoint, keys, tool access or side effects supplied by this library.
  * Callers must separately authorise external data processing. No adapter by default.
  */
-export function createIntelligence({provider=null,timeoutMs=8000}={}){
+export function createIntelligence({provider=null,timeoutMs=8000,deterministic=lexicalIntelligence}={}){
  if(!Number.isSafeInteger(timeoutMs)||timeoutMs<1||timeoutMs>8000)throw Error('invalid provider timeout');
  let active=0;
- return async(pages,{useProvider=false}={})=>{
+ return async(pages,{useProvider=false,cacheContext}={})=>{
  // Capture the authoritative inputs before asynchronous provider work. Send a separate copy.
  const snapshot=pages.map(({page,text_value,text_sha256,method})=>({page,text_value,text_sha256,method}));
- const deterministic=lexicalIntelligence(snapshot);
- const fallback={...deterministic,providerStatus:'not-requested',label:'Possible obligations, exceptions and amendments only; not exhaustive. Human review required.'};
+ const local=deterministic(snapshot,cacheContext);
+ const fallback={...local,providerStatus:'not-requested',label:'Possible obligations, exceptions and amendments only; not exhaustive. Human review required.'};
  if(!useProvider)return fallback;
  if(typeof provider!=='function')return {...fallback,providerStatus:'not-configured'};
  if(active>=2||snapshot.reduce((n,p)=>n+Buffer.byteLength(p.text_value),0)>65536)return {...fallback,providerStatus:'budget-exceeded'};
@@ -58,9 +58,9 @@ export function createIntelligence({provider=null,timeoutMs=8000}={}){
  const observed=work.then(value=>{active--;return value;},error=>{active--;throw error;});
  try{
  const raw=await Promise.race([observed,new Promise((_,reject)=>{timer=setTimeout(()=>{reject(Error('provider timeout'));controller.abort();},timeoutMs);})]);
- const suggestions=validateProviderProposals(snapshot,raw),bySpan=new Map(deterministic.candidates.map(x=>[[x.page,x.start,x.end].join(':'),x]));
+ const suggestions=validateProviderProposals(snapshot,raw),bySpan=new Map(local.candidates.map(x=>[[x.page,x.start,x.end].join(':'),x]));
  for(const s of suggestions){const k=[s.page,s.start,s.end].join(':');if(!bySpan.has(k))bySpan.set(k,s);}
- return {...fallback,candidates:[...bySpan.values()].slice(0,200),truncated:deterministic.truncated||bySpan.size>200,providerStatus:'validated-spans-only'};
+ return {...fallback,candidates:[...bySpan.values()].slice(0,200),truncated:local.truncated||bySpan.size>200,providerStatus:'validated-spans-only'};
  }catch{return {...fallback,providerStatus:'rejected-or-unavailable'};}finally{clearTimeout(timer);}
  };
 }
