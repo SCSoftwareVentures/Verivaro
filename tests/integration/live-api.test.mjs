@@ -175,6 +175,40 @@ test('real PostgreSQL and HTTP: distinct roles, persistence, tenant denial, revo
  assert.equal((await call('POST',url+'/finance','a',{...amount,priorRevision:1,spanId:U('b',99),documentVersionId:U('5',97),textSha256:revised.text_sha256})).body.revision,2);
  finance=await call('GET',url+'/finance');assert.equal(finance.body.history.filter(h=>h.id===fid).length,2);assert.equal(finance.body.totals.find(g=>g.category==='milestone').recorded,'10000.00');
  await assert.rejects(pools[0].query('UPDATE vv_app.finance_revision SET amount=\'0.00\''),{code:'42501'});
+ // Internal export formats and recipient-scoped selected-index access.
+ rr=await call('GET',url+'/readiness');
+ assert.equal((await call('POST',url+'/scope/confirm','a',{generation:rr.body.generation})).status,200);
+ rr=await call('GET',url+'/readiness');
+ const exportId=U('c',91),releaseId=U('c',92),grantId=U('c',93),grant2=U('c',94);
+ assert.equal((await call('POST',url+'/handover','a',{id:exportId,generation:rr.body.generation})).status,201);
+ for(const k of ['pdf','xlsx','zip']){
+ const response=await fetch(url+'/handover/'+exportId+'/export/'+k,{headers:{authorization:token('a')}});
+ assert.equal(response.status,200);assert.equal(response.headers.get('cache-control'),'no-store');const buf=Buffer.from(await response.arrayBuffer());
+ assert.equal(k==='pdf'?buf.subarray(0,5).toString():buf.readUInt32LE(),k==='pdf'?'%PDF-':0x04034b50);
+ }
+ assert.equal((await fetch(url+'/handover/'+exportId+'/export/pdf',{headers:{authorization:token('b')}})).status,404);
+ const approval={id:releaseId,generation:rr.body.generation,documentVersionIds:[certV]};
+ await admin.query("UPDATE vv_private.project_member SET role='reviewer' WHERE actor_id=$1 AND project_id=$2",[actor,project]);
+ assert.equal((await call('POST',url+'/handover/'+exportId+'/approve-index','a',approval)).status,404);
+ await admin.query("UPDATE vv_private.project_member SET role='owner' WHERE actor_id=$1 AND project_id=$2",[actor,project]);
+ assert.equal((await call('POST',url+'/handover/'+hid+'/approve-index','a',approval)).status,409);
+ assert.equal((await call('POST',url+'/handover/'+exportId+'/approve-index','a',approval)).status,201);
+ const access=await call('POST',url+'/index-releases/'+releaseId+'/grants','a',{id:grantId,ttlSeconds:3600});assert.equal(access.status,201);
+ const shareUrl=start.split('/v1/')[0]+'/v1/shared-index/'+releaseId;
+ const share=async(secret,target=shareUrl)=>{const r=await fetch(target,{headers:{authorization:'Share '+secret}});return {status:r.status,body:await r.json()};};
+ const shared=await share(access.body.token);assert.equal(shared.status,200);const index=JSON.parse(shared.body.json);assert.equal(index.documents.length,1);assert.equal(index.documents[0].documentVersionId,certV);assert.equal(index.requirements,undefined);assert.equal(index.finance,undefined);assert.equal(index.documents[0].text,undefined);
+ assert.equal((await share('a'.repeat(43))).status,404);
+ assert.equal((await share(access.body.token,shareUrl.replace(releaseId,U('c',99)))).status,404);
+ assert.equal((await call('POST',url+'/index-grants/'+grantId+'/revoke','a')).status,200);
+ assert.equal((await share(access.body.token)).status,404);
+ const access2=await call('POST',url+'/index-releases/'+releaseId+'/grants','a',{id:grant2,ttlSeconds:3600});assert.equal(access2.status,201);
+ await admin.query("UPDATE vv_private.index_grant SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[grant2]);
+ assert.equal((await share(access2.body.token)).status,404);
+ const access3=await call('POST',url+'/index-releases/'+releaseId+'/grants','a',{id:U('c',95),ttlSeconds:3600});assert.equal(access3.status,201);
+ assert.equal((await share(access3.body.token)).status,200);
+ await admin.query('UPDATE vv_app.scope_checkpoint SET generation=generation+1 WHERE tenant_id=$1 AND project_id=$2',[tenant,project]);
+ assert.equal((await share(access3.body.token)).status,404);
+ await assert.rejects(pools[0].query('SELECT * FROM vv_private.index_grant'),{code:'42501'});
  await admin.query('UPDATE vv_private.project_member SET active=false,version=version+1 WHERE tenant_id=$1 AND project_id=$2 AND actor_id=$3',[tenant,project,actor]);
  assert.equal((await call('GET',path)).status,404);
  assert.equal((await call('PUT',path,'a',payload,'application/octet-stream')).status,404);

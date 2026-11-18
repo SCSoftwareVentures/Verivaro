@@ -4,7 +4,8 @@ import {proposeRequirements,suggestMatches} from '../domain/proposals.mjs';
 import {evaluateGraph,reviewDigest} from '../domain/graph.mjs';
 import {evaluateWorkspace,handoverManifest} from '../domain/workspace.mjs';
 import {evaluateFinance,disputePack} from '../domain/finance.mjs';
-import {randomUUID} from 'node:crypto';
+import {randomUUID,randomBytes,createHash} from 'node:crypto';
+import {renderDraft} from '../export/formats.mjs';
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const MIME=new Set(['application/pdf','image/jpeg','image/png','text/plain']);
 export class ServiceError extends Error {constructor(status,code){super(code);this.status=status;this.code=code;}}
@@ -43,6 +44,10 @@ export const SQL=Object.freeze({
  financial:'SELECT vv_api.financial_workspace($1,$2) AS financial',
  financeWrite:'SELECT vv_api.save_finance($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::uuid[]) AS revision',
  disputeWrite:'SELECT vv_api.record_dispute($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) AS id',
+ approveIndex:'SELECT vv_api.approve_index($1,$2,$3,$4,$5,$6::uuid[]) AS id',
+ grantIndex:'SELECT vv_api.grant_index($1,$2,$3,$4,$5,$6) AS id',
+ revokeIndex:'SELECT vv_api.revoke_index($1,$2,$3) AS id',
+ sharedIndex:'SELECT vv_api.read_shared_index($1,$2) AS shared',
  graph:'SELECT vv_api.graph($1,$2) AS graph',
  reserve:'SELECT vv_api.reserve_file($1,$2,$3,$4) AS id',
  receipt:'SELECT vv_api.record_quarantine($1,$2,$3,$4,$5,$6,$7) AS id'
@@ -135,6 +140,23 @@ export function createService({runtimePool,signerPool,workerPool,issuerConfig,ke
  return scoped(b,t,p,async c=>{await c.query(SQL.createHandover,[t,p,body.id,body.generation]);return handoverManifest({tenantId:t,projectId:p},one(await c.query(SQL.readHandover,[t,p,body.id])).draft);});
  },
  async readHandover(b,t,p,h){uuid(h);return scoped(b,t,p,async c=>handoverManifest({tenantId:t,projectId:p},one(await c.query(SQL.readHandover,[t,p,h])).draft));},
+ async exportDraft(b,t,p,h,kind){uuid(h);if(!['pdf','xlsx','zip'].includes(kind))throw bad();return scoped(b,t,p,async c=>renderDraft(handoverManifest({tenantId:t,projectId:p},one(await c.query(SQL.readHandover,[t,p,h])).draft),kind));},
+ async approveIndex(b,t,p,h,body){
+ uuid(h);exact(body,['id','generation','documentVersionIds']);uuid(body.id);
+ if(typeof body.generation!=='string'||!/^\d{1,18}$/.test(body.generation)||!Array.isArray(body.documentVersionIds)||body.documentVersionIds.length<1||body.documentVersionIds.length>200||new Set(body.documentVersionIds).size!==body.documentVersionIds.length)throw bad();
+ body.documentVersionIds.forEach(uuid);
+ return scoped(b,t,p,async c=>({id:one(await c.query(SQL.approveIndex,[t,p,h,body.id,body.generation,body.documentVersionIds])).id,scope:'selected-document-index-only'}));
+ },
+ async grantIndex(b,t,p,r,body){uuid(r);exact(body,['id','ttlSeconds']);uuid(body.id);if(!Number.isSafeInteger(body.ttlSeconds)||body.ttlSeconds<60||body.ttlSeconds>604800)throw bad();
+ const token=randomBytes(32).toString('base64url'),digest=createHash('sha256').update(token).digest('hex');
+ return scoped(b,t,p,async c=>({id:one(await c.query(SQL.grantIndex,[t,p,r,body.id,digest,body.ttlSeconds])).id,token,ttlSeconds:body.ttlSeconds}));
+ },
+ async revokeIndex(b,t,p,i){uuid(i);return scoped(b,t,p,async c=>({id:one(await c.query(SQL.revokeIndex,[t,p,i])).id}));},
+ async readSharedIndex(b,r){uuid(r);if(typeof b!=='string'||!/^Share [A-Za-z0-9_-]{43}$/.test(b))throw deny();
+ let c;try{c=await runtimePool.connect();const row=one(await c.query(SQL.sharedIndex,[r,createHash('sha256').update(b.slice(6)).digest('hex')])).shared;
+ if(typeof row.json!=='string'||createHash('sha256').update(row.json).digest('hex')!==row.sha256)throw unavailable();return row;
+ }catch(e){throw normalize(e);}finally{if(c)c.release();}
+ },
  async financial(b,t,p){return scoped(b,t,p,async c=>evaluateFinance({tenantId:t,projectId:p},one(await c.query(SQL.financial,[t,p])).financial));},
  async saveFinance(b,t,p,body){
  exact(body,['id','priorRevision','category','title','amount','taxBasis','spanId','documentVersionId','page','start','end','quote','textSha256','releaseOn','conditionVersionIds']);
