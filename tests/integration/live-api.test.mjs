@@ -6,6 +6,8 @@ import {mkdtemp,rm,readdir} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createPostgresService} from '../../packages/api/postgres.mjs';
+import {processOneScan} from '../../packages/worker/maintenance.mjs';
+import {processOneExtraction} from '../../packages/worker/extraction.mjs';
 import {createHttpServer} from '../../packages/api/http.mjs';
 const U=(p,n)=>p+'0000000-0000-0000-0000-'+String(n).padStart(12,'0');
 const tenant=U('0',1),project=U('2',1),actor=U('1',1),key=U('3',1),doc=U('4',91),intent=U('6',91);
@@ -17,7 +19,7 @@ function token(sub){const now=Math.floor(Date.now()/1000);const s=enc({alg:'RS25
 const payload=Buffer.from('%PDF-1.7\nreal integration synthetic bytes'),hash=createHash('sha256').update(payload).digest('hex');
 const cfg=(role)=>({host:process.env.PGHOST,port:Number(process.env.PGPORT),database:process.env.PGDATABASE,user:'vv_test_'+role,password:'vv-ci-'+role+'-only'});
 test('real PostgreSQL and HTTP: distinct roles, persistence, tenant denial, revocation, quarantine and audit', {skip:process.env.VV_LIVE_TEST!=='1'},async t=>{
- const root=await mkdtemp(join(tmpdir(),'vv-live-api-'));const admin=new pg.Pool();const pools=['runtime','signer','worker'].map(r=>new pg.Pool(cfg(r)));
+ const root=await mkdtemp(join(tmpdir(),'vv-live-api-'));const admin=new pg.Pool();const pools=['runtime','signer','worker','parser'].map(r=>new pg.Pool(cfg(r)));
  const app=createPostgresService({database:{runtime:cfg('runtime'),signer:cfg('signer'),worker:cfg('worker')},issuerConfig:config,keyId:key,quarantineRoot:root});
  const server=createHttpServer(app.service);
  t.after(async()=>{await new Promise(r=>server.close(r));await app.close();await Promise.all(pools.map(p=>p.end()));await admin.end();await rm(root,{recursive:true,force:true});});
@@ -42,6 +44,16 @@ test('real PostgreSQL and HTTP: distinct roles, persistence, tenant denial, revo
  const result=await admin.query('SELECT actual_sha256,actual_bytes FROM vv_app.quarantine_receipt WHERE intent_id=$1',[intent]);assert.equal(result.rows.length,1);assert.equal(result.rows[0].actual_sha256,hash);assert.equal(Number(result.rows[0].actual_bytes),payload.length);
  assert.equal(Number((await admin.query('SELECT count(*) FROM vv_app.document_version')).rows[0].count),0);
  const audit=await admin.query('SELECT action FROM vv_private.ingestion_audit WHERE object_id=$1 ORDER BY event_id',[intent]);assert.deepEqual(audit.rows.map(r=>r.action),['upload_requested','quarantine_recorded']);
+ // First PDF enters unsupported extraction status, never silently verified.
+ assert.equal((await processOneScan(pools[2],root,(b,m)=>({sha256:m.sha256,outcome:'clean',engine:'synthetic-only',engineVersion:'1'}))).state,'complete');
+ assert.equal((await processOneExtraction(pools[3],root)).state,'unsupported');
+ const text=Buffer.from('exact synthetic text \u{1f4c4}'),textHash=createHash('sha256').update(text).digest('hex'),textIntent=U('6',92);
+ assert.equal((await call('POST',url+'/documents/'+doc+'/uploads','a',{id:textIntent,sha256:textHash,bytes:text.length,mediaType:'text/plain'})).status,202);
+ assert.equal((await call('PUT',url+'/uploads/'+textIntent,'a',text,'application/octet-stream')).status,202);
+ assert.equal((await processOneScan(pools[2],root,(b,m)=>({sha256:m.sha256,outcome:'clean',engine:'synthetic-only',engineVersion:'1'}))).state,'complete');
+ assert.equal((await processOneExtraction(pools[3],root)).state,'complete');
+ const draft=await admin.query('SELECT text_value,source_sha256 FROM vv_app.extracted_text_draft WHERE intent_id=$1',[textIntent]);assert.deepEqual(draft.rows,[{text_value:text.toString(),source_sha256:textHash}]);
+ assert.equal(Number((await admin.query('SELECT count(*) FROM vv_app.document_version')).rows[0].count),0);
  await admin.query('UPDATE vv_private.project_member SET active=false,version=version+1 WHERE tenant_id=$1 AND project_id=$2 AND actor_id=$3',[tenant,project,actor]);
  assert.equal((await call('GET',path)).status,404);
  assert.equal((await call('PUT',path,'a',payload,'application/octet-stream')).status,404);

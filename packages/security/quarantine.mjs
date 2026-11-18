@@ -51,10 +51,10 @@ export async function quarantineUpload(root,metadata,body,{objectKey=randomUUID(
  * No clean verdict enables a release. No production malware engine is bundled.
  * A supervisor must enforce hard process isolation/time and resource limits.
  */
-export async function scanQuarantine(root,receipt,scanner,{timeoutMs=10000}={}){
+export async function readVerifiedQuarantine(root,receipt,{maxBytes=limit}={}){
  const e=expected(receipt);
  if(receipt.state!=='quarantined'||typeof receipt.objectKey!=='string'||!keyPattern.test(receipt.objectKey))throw Error('invalid receipt');
- if(!Number.isSafeInteger(timeoutMs)||timeoutMs<1||timeoutMs>60000)throw Error('invalid scan timeout');
+ if(!Number.isSafeInteger(maxBytes)||maxBytes<1||maxBytes>limit||e.bytes>maxBytes)throw Error('quarantine read exceeds limit');
  const path=join(await privateRoot(root),receipt.objectKey);
  const f=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
  let data;
@@ -66,6 +66,12 @@ export async function scanQuarantine(root,receipt,scanner,{timeoutMs=10000}={}){
  if(n!==e.bytes)throw Error('quarantine size mismatch');data=data.subarray(0,n);
  if(createHash('sha256').update(data).digest('hex')!==e.sha256||!magic(data.subarray(0,8),e.mediaType))throw Error('quarantine integrity mismatch');
  }finally{await f.close();}
+ return data;
+}
+export async function scanQuarantine(root,receipt,scanner,{timeoutMs=10000}={}){
+ const e=expected(receipt);
+ if(!Number.isSafeInteger(timeoutMs)||timeoutMs<1||timeoutMs>60000)throw Error('invalid scan timeout');
+ const data=await readVerifiedQuarantine(root,receipt);
  const result=(outcome,engine=null,engineVersion=null)=>Object.freeze({objectKey:receipt.objectKey,sha256:e.sha256,outcome,engine,engineVersion,state:'quarantined'});
  if(typeof scanner!=='function')return result('unavailable');
  let timer;const controller=new AbortController();

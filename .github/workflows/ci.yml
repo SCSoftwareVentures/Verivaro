@@ -59,6 +59,7 @@ jobs:
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/003_quarantine_audit.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/004_upload_status.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/005_recovery_queue.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/006_draft_extraction.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/foundation.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/scoped_ingestion.sql
 
@@ -66,6 +67,7 @@ jobs:
 
       - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/upload_status.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/recovery_queue.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/draft_extraction.sql
 
   live-api:
     name: Real PostgreSQL HTTP integration

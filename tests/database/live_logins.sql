@@ -7,3 +7,6 @@ GRANT verivaro_runtime TO vv_test_runtime;
 GRANT verivaro_signer TO vv_test_signer;
 GRANT verivaro_ingest_worker TO vv_test_worker;
 UPDATE vv_private.identity SET issuer='https://issuer.invalid' WHERE issuer='synthetic';
+
+CREATE ROLE vv_test_parser LOGIN PASSWORD 'vv-ci-parser-only' NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOBYPASSRLS;
+GRANT verivaro_parse_worker TO vv_test_parser;
