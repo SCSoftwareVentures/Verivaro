@@ -25,5 +25,5 @@ export function createUploadQueue({maxItems=5,maxBytes=50*1024*1024}={}){
  return {state:'quarantined'};
  }finally{active=false;}
  }
- return {enqueue,list,discard,close,flush};
+ return {enqueue,list,discard,close,flush,snapshot:()=>{guard();return [...jobs.values()].map(({stage,...j})=>({...j}));}};
 }

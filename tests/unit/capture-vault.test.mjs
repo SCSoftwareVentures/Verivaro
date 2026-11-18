@@ -1,0 +1,9 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
+import {createCipher,vaultScope} from '../../packages/web/capture-vault.mjs';
+const U=n=>'00000000-0000-0000-0000-'+String(n).padStart(12,'0'),pass='unique synthetic test passphrase 27',scope=await vaultScope([U(1),U(2),U(3)]);
+const text='Synthetic private capture \u{1f4c4}',file=new Blob([text],{type:'text/plain'}),job={documentId:U(4),intentId:U(5),title:'Confidential fixture',newDocument:true,sha256:createHash('sha256').update(text).digest('hex'),mediaType:'text/plain',file};
+test('encrypted snapshot roundtrip preserves exact identifiers and bytes; random IV per save',async()=>{const c=await createCipher(pass,scope),r=await c.seal([job]),r2=await c.seal([job]);assert.notDeepEqual(r.iv,r2.iv);assert.equal(Buffer.from(r.cipher).includes(Buffer.from('Confidential fixture')),false);const restored=await c.open(r);assert.equal(restored[0].intentId,job.intentId);assert.equal(await restored[0].file.text(),text);assert.equal(restored[0].sha256,job.sha256);c.close();await assert.rejects(c.open(r));});
+test('wrong passphrase, actor scope and tampering fail closed',async()=>{const c=await createCipher(pass,scope),r=await c.seal([job]),bad=await createCipher(pass+'wrong',scope,r.salt),different=await createCipher(pass,await vaultScope([U(1),U(2),U(9)]),r.salt);await assert.rejects(bad.open(r));await assert.rejects(different.open(r));const changed=r.cipher.slice(0);new Uint8Array(changed)[0]^=1;await assert.rejects(c.open({...r,cipher:changed}));await assert.rejects(c.open({...r,version:U(7)}));});
+test('bad digest and duplicate IDs cannot be stored',async()=>{const c=await createCipher(pass,scope);await assert.rejects(c.seal([{...job,sha256:'0'.repeat(64)}]));await assert.rejects(c.seal([job,job]));await assert.rejects(createCipher('too short',scope));});

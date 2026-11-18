@@ -1,9 +1,13 @@
+import {unlockVault,deleteVault} from '/app/capture-vault.mjs';
 import {createUploadQueue} from '/app/upload-queue.mjs';
 const $=id=>document.getElementById(id),root=$('content');
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 let session=null,model=null,tab='overview',epoch=0,busy=false;
 const id=()=>crypto.randomUUID();
-let captures=createUploadQueue();
+let captures=createUploadQueue(),vault=null;
+function scopeParts(){return [...session.base.matchAll(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g)].map(m=>m[0]).concat(valid(model.c.actorId));}
+function lockLocal(){vault?.close();vault=null;captures.close();captures=createUploadQueue();}
+async function persist(){if(vault)await vault.save(captures.snapshot());}
 const online=()=>navigator.onLine!==false;
 function valid(s){if(!UUID.test(s))throw Error('Invalid identifier.');return s;}
 function el(tag,text,cls){const e=document.createElement(tag);if(text!==undefined)e.textContent=String(text);if(cls)e.className=cls;return e;}
@@ -27,8 +31,8 @@ async function req(path,{method='GET',body,raw,share,download=false}={}){
  const result=download?await r.blob():await r.json();if(g!==epoch)throw Error('Session changed.');return result;
 }
 const post=(p,b)=>req(p,{method:'POST',body:b});
-async function refresh(){const g=epoch;const [project,r,c,f]=await Promise.all([req(''),req('/readiness'),req('/catalog'),req('/finance')]);if(g!==epoch)return;model={project,r,c,f};$('project-name').textContent=project.name;render();}
-function reset(){epoch++;captures.close();captures=createUploadQueue();session=null;model=null;tab='overview';root.replaceChildren();$('project-name').textContent='';$('portal-results').replaceChildren();$('login').reset();$('portal-form').reset();$('workspace').hidden=true;$('portal').hidden=true;$('connect').hidden=false;$('disconnect').hidden=true;note('Disconnected.');}
+async function refresh(){const g=epoch;const [project,r,c,f]=await Promise.all([req(''),req('/readiness'),req('/catalog'),req('/finance')]);if(g!==epoch)return;if(model?.c.actorId&&model.c.actorId!==c.actorId){reset();throw Error('Authenticated actor changed. Reconnect.');}model={project,r,c,f};$('project-name').textContent=project.name;render();}
+function reset(){epoch++;lockLocal();session=null;model=null;tab='overview';root.replaceChildren();$('project-name').textContent='';$('portal-results').replaceChildren();$('login').reset();$('portal-form').reset();$('workspace').hidden=true;$('portal').hidden=true;$('connect').hidden=false;$('disconnect').hidden=true;note('Disconnected.');}
 $('login').addEventListener('submit',e=>{e.preventDefault();const f=new FormData($('login'));run(async()=>{const t=valid(v(f,'tenant')),p=valid(v(f,'project')),token=v(f,'token').trim();if(!/^[A-Za-z0-9_.-]+$/.test(token))throw Error('Invalid token.');session={base:'/v1/tenants/'+t+'/projects/'+p,auth:'Bearer '+token};$('login').elements.token.value='';try{await refresh();$('connect').hidden=true;$('workspace').hidden=false;$('disconnect').hidden=false;note('Connected.');}catch(e){reset();note(e.message);}});});
 $('disconnect').addEventListener('click',reset);$('refresh').addEventListener('click',()=>run(refresh));
 $('nav').addEventListener('click',e=>{const b=e.target.closest('[data-tab]');if(b&&model&&!busy){tab=b.dataset.tab;render();}});
@@ -42,22 +46,30 @@ function overview(){const r=model.r,p=panel('Project readiness');p.append(state(
 async function digest(b){return [...new Uint8Array(await crypto.subtle.digest('SHA-256',b))].map(x=>x.toString(16).padStart(2,'0')).join('');}
 function captureList(p){
  const list=el('div',undefined,'capture-list');
- const jobs=captures.list();list.append(el('p',(online()?'Connection available.':'Offline.')+' '+jobs.length+' session capture(s). Keep this tab open; unsent files are discarded on disconnect or reload.','muted'));
- for(const j of jobs)list.append(item(el('h3',j.title||'Existing document revision'),state(j.stage),el('p',j.bytes+' bytes'),button('Retry capture',async()=>{await syncCapture(j.intentId);}),button('Discard local capture',()=>{if(confirm('Discard the local file? Server-side records already created will remain.')){captures.discard(j.intentId);render();}})));
+ const jobs=captures.list();list.append(el('p',(online()?'Connection available.':'Offline.')+' '+jobs.length+' capture(s). '+(vault?'Encrypted device vault unlocked.':'Session-only; unsent files are lost on reload.'),'muted'));
+ if(vault)list.append(button('Lock device vault',async()=>{await persist();lockLocal();render();note('Vault locked. Reconnect and unlock to resume.');}));
+ else if(model.c.actorId){const pass=field('passphrase','Unique device vault passphrase (16+ characters)','password');pass.querySelector('input').autocomplete='new-password';
+ const f=form([pass],'Unlock / create encrypted vault',async(data)=>{const g=epoch;if(captures.list().length)throw Error('Synchronise or discard existing session captures before unlocking.');if(!confirm('Store encrypted files on this device? Browser storage can be erased; keep originals and remember your unique passphrase.'))return;
+ const opened=await unlockVault(scopeParts(),v(data,'passphrase'));if(g!==epoch){opened.close();throw Error('Session changed.');}vault=opened;for(const j of opened.jobs)captures.enqueue(j);opened.jobs.length=0;render();note('Encrypted vault unlocked.');});
+ f.addEventListener('submit',()=>{pass.querySelector('input').value='';});list.append(f,button('Delete local encrypted vault',async()=>{if(!confirm('Permanently delete this project and actor’s local encrypted captures, including unsent files?'))return;await deleteVault(scopeParts());note('Local vault deleted.');}));}
+ for(const j of jobs)list.append(item(el('h3',j.title||'Existing document revision'),state(j.stage),el('p',j.bytes+' bytes'),button('Retry capture',async()=>{await syncCapture(j.intentId);}),button('Discard local capture',async()=>{if(confirm('Discard the local file? Server-side records already created will remain.')){if(vault)await vault.save(captures.snapshot().filter(x=>x.intentId!==j.intentId));captures.discard(j.intentId);render();}})));
  p.append(list);
 }
 async function syncCapture(k){
- if(!online()){note('Offline. Capture retained in this tab.');return;}
+ if(!online()){note('Offline. Capture retained '+(vault?'in encrypted device storage.':'in this tab.'));return;}
+ const g=epoch;await persist();if(g!==epoch)throw Error('Session changed.');
  try{await captures.flush(k,(path,body,raw)=>raw===undefined?post(path,body):req(path,{method:'PUT',raw}));}
  catch(e){render();throw Error(e.message+' Capture retained; retry uses the same identifiers.');}
+ if(g!==epoch)return;
+ try{await persist();}catch{render();throw Error('Server acknowledged quarantine; encrypted vault cleanup failed. Reopen vault and replay safely.');}
  render();await refresh();note('Quarantined. Refresh after worker processing.');
 }
-function documents(){const p=panel('Upload a document');p.append(el('p','Capture now, synchronise when connected. Files enter quarantine before extraction. Local queue is memory-only and limited to five files / 50 MiB total.','muted'),form([field('title','New title'),choice('document','Existing document or new',[['','New'],...model.c.documents.map(d=>[d.id,d.title])]),field('file','PDF, image or text','file')],'Capture file',async f=>{
+function documents(){const p=panel('Upload a document');p.append(el('p','Capture now, synchronise when connected. Files enter quarantine before extraction. Optional encrypted device storage; five files / 50 MiB total. Unlock after connecting. Keep original copies.','muted'),form([field('title','New title'),choice('document','Existing document or new',[['','New'],...model.c.documents.map(d=>[d.id,d.title])]),field('file','PDF, image or text','file')],'Capture file',async f=>{
  const file=f.get('file');if(!(file instanceof File)||file.size<1||file.size>52428800)throw Error('Select a file up to 50 MiB.');
  const mime=file.type||({pdf:'application/pdf',jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',txt:'text/plain'}[file.name.split('.').pop().toLowerCase()]);if(!['application/pdf','image/jpeg','image/png','text/plain'].includes(mime))throw Error('Unsupported format.');
  const title=v(f,'title').trim(),existing=v(f,'document');if(!existing&&(!title||title.length>250))throw Error('Enter a valid title.');
  const g=epoch,d=existing||id(),u=id(),sha256=await digest(await file.arrayBuffer());if(g!==epoch)throw Error('Session changed.');
- captures.enqueue({documentId:d,intentId:u,title,newDocument:!existing,sha256,mediaType:mime,file});render();if(online())await syncCapture(u);else note('Captured offline. Retry when connected.');
+ captures.enqueue({documentId:d,intentId:u,title,newDocument:!existing,sha256,mediaType:mime,file});try{await persist();}catch(e){render();throw Error('Encrypted save failed; file remains in this tab. '+e.message);}if(g!==epoch)throw Error('Session changed.');render();if(online())await syncCapture(u);else note('Captured offline. Retry when connected.');
  }));captureList(p);root.append(p);
  const list=panel('Document inventory');for(const d of model.c.documents){const card=item(el('h3',d.title),el('p','Revision '+d.revision));for(const u of d.uploads){const row=item(state(u.state),el('small',u.mediaType+' · '+u.bytes+' bytes'));if(['reviewed','extraction-complete'].includes(u.state))row.append(button('Review extracted source',()=>review(row,d,u)));card.append(row);}list.append(card);}root.append(list);}
 async function review(row,d,u){const a=await req('/uploads/'+u.id+'/review');const b=await post('/uploads/'+u.id+'/intelligence',{useProvider:false});row.querySelector('.detail')?.remove();const box=el('div',undefined,'detail');for(const p of a.pages)box.append(el('h3','Page '+p.page+' · '+p.method),el('pre',p.text_value));box.append(el('p','Compare the original independently. OCR may be inaccurate.','muted'));
