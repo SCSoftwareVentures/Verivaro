@@ -225,6 +225,28 @@ test('real PostgreSQL and HTTP: distinct roles, persistence, tenant denial, revo
  await assert.rejects(pools[4].query('SELECT * FROM vv_app.document_version'),{code:'42501'});
  assert.equal((await call('POST',url+'/index-grants/'+U('c',96)+'/revoke','a')).status,200);
  assert.equal((await getFile(originalGrant.body.token)).status,404);
+ // Owner demotion must invalidate previously issued capabilities even after restoration of authority.
+ const demote=await call('POST',url+'/index-releases/'+releaseId+'/original-grants','a',{id:U('c',120),ttlSeconds:300});assert.equal(demote.status,201);
+ const prevVersion=Number((await admin.query('SELECT version FROM vv_private.project_member WHERE tenant_id=$1 AND project_id=$2 AND actor_id=$3',[tenant,project,actor])).rows[0].version);
+ await admin.query("UPDATE vv_private.project_member SET role='reviewer' WHERE tenant_id=$1 AND project_id=$2 AND actor_id=$3",[tenant,project,actor]);
+ assert.equal((await share(demote.body.token)).status,404);assert.equal((await getFile(demote.body.token)).status,404);
+ await admin.query("UPDATE vv_private.project_member SET role='owner' WHERE tenant_id=$1 AND project_id=$2 AND actor_id=$3",[tenant,project,actor]);
+ assert.equal(Number((await admin.query('SELECT version FROM vv_private.project_member WHERE tenant_id=$1 AND project_id=$2 AND actor_id=$3',[tenant,project,actor])).rows[0].version),prevVersion+2);
+ assert.equal((await share(demote.body.token)).status,404);
+ const tenantGrant=await call('POST',url+'/index-releases/'+releaseId+'/grants','a',{id:U('c',121),ttlSeconds:300});assert.equal(tenantGrant.status,201);
+ await admin.query('UPDATE vv_private.membership SET active=false WHERE tenant_id=$1 AND actor_id=$2',[tenant,actor]);
+ assert.equal((await share(tenantGrant.body.token)).status,404);
+ await admin.query('UPDATE vv_private.membership SET active=true WHERE tenant_id=$1 AND actor_id=$2',[tenant,actor]);
+ assert.equal((await share(tenantGrant.body.token)).status,404);
+ const pendingGrant=await call('POST',url+'/index-releases/'+releaseId+'/grants','a',{id:U('c',122),ttlSeconds:300});assert.equal(pendingGrant.status,201);
+ const baseGeneration=(await call('GET',url+'/readiness')).body.generation;
+ const pendingIntent={id:U('6',125),sha256:'a'.repeat(64),bytes:16,mediaType:'text/plain'};
+ assert.equal((await call('POST',url+'/documents/'+doc+'/uploads','a',pendingIntent)).status,202);
+ const invalidated=(await call('GET',url+'/readiness')).body;assert.equal(invalidated.scopeConfirmed,false);assert.equal(invalidated.ready,false);assert.equal(BigInt(invalidated.generation),BigInt(baseGeneration)+1n);
+ assert.equal((await share(pendingGrant.body.token)).status,404);
+ assert.equal((await call('POST',url+'/documents/'+doc+'/uploads','a',pendingIntent)).status,202);
+ assert.equal((await call('GET',url+'/readiness')).body.generation,invalidated.generation);
+ assert.equal((await call('POST',url+'/scope/confirm','a',{generation:baseGeneration})).status,409);
  // Deterministic intelligence and explicit amendment record. No external provider configured.
  const intelligenceResult=await call('POST',url+'/uploads/'+contractIntent2+'/intelligence','a',{useProvider:true});assert.equal(intelligenceResult.status,200);assert.equal(intelligenceResult.body.providerStatus,'not-configured');assert.equal(intelligenceResult.body.candidates[0].state,'needs-review');
  assert.equal((await call('POST',url+'/uploads/'+contractIntent2+'/intelligence','b',{useProvider:false})).status,404);

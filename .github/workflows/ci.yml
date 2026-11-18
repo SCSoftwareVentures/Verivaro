@@ -72,7 +72,9 @@ jobs:
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/016_release_catalog.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/017_capture_identity.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/018_reviewer_capture.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/019_authority_inventory.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/foundation.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/privilege_matrix.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/scoped_ingestion.sql
 
       - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/quarantine_audit.sql
