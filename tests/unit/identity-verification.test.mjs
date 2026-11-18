@@ -47,3 +47,8 @@ test('rejects unrecognized signed header and identity claim fields',()=>{
  assert.throws(()=>verifyIdentityToken(token({...base,tenant_id:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'}),options));
  assert.throws(()=>verifyIdentityToken(token({...base,role:'owner'}),options));
 });
+
+test('rejects correctly signed JWT using a weak 1024-bit RSA key',()=>{
+ const weak=generateKeyPairSync('rsa',{modulusLength:1024});
+ assert.throws(()=>verifyIdentityToken(token(base,undefined,weak.privateKey),{...options,publicKey:weak.publicKey}),/invalid token signature/);
+});
