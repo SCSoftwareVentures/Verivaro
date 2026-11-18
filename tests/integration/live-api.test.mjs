@@ -239,6 +239,11 @@ test('real PostgreSQL and HTTP: distinct roles, persistence, tenant denial, revo
  rr=await call('GET',url+'/readiness');assert.equal(rr.body.contractRelations[0].requiresAttention,false);
  assert.equal((await share(access3.body.token)).status,404);
  const inventory=await call('GET',url+'/catalog');assert.equal(inventory.status,200);assert.ok(inventory.body.documents.some(d=>d.id===doc&&d.revision===2));assert.ok(inventory.body.requirements.some(r=>r.id===req&&r.versionId===req2));assert.ok(inventory.body.drafts.some(d=>d.id===exportId));
+ assert.equal(inventory.body.role,'owner');assert.ok(inventory.body.releases.some(r=>r.id===releaseId&&r.originalDocumentVersionIds.includes(certV)&&r.grants.some(g=>g.id===grantId&&g.revoked)));
+ assert.equal(JSON.stringify(inventory.body).includes('token_hash'),false);assert.equal(JSON.stringify(inventory.body).includes(access3.body.token),false);
+ await admin.query("UPDATE vv_private.project_member SET role='reviewer' WHERE actor_id=$1 AND project_id=$2",[actor,project]);
+ const reviewerCatalog=await call('GET',url+'/catalog');assert.equal(reviewerCatalog.body.role,'reviewer');assert.deepEqual(reviewerCatalog.body.releases,[]);
+ await admin.query("UPDATE vv_private.project_member SET role='owner' WHERE actor_id=$1 AND project_id=$2",[actor,project]);
  assert.equal(JSON.stringify(inventory.body).includes('objectKey'),false);assert.equal((await call('GET',url+'/catalog','b')).status,404);
  const appPage=await fetch(start.split('/v1/')[0]+'/app');assert.equal(appPage.status,200);assert.match(appPage.headers.get('content-security-policy'),/frame-ancestors 'none'/);assert.match(await appPage.text(),/Verivaro/);
  await admin.query('UPDATE vv_app.scope_checkpoint SET generation=generation+1 WHERE tenant_id=$1 AND project_id=$2',[tenant,project]);
