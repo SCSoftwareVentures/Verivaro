@@ -157,6 +157,8 @@ jobs:
           for migration in database/migrations/*.sql; do psql -X -v ON_ERROR_STOP=1 -f "$migration"; done
           psql -X -v ON_ERROR_STOP=1 -f tests/database/foundation.sql
           psql -X -v ON_ERROR_STOP=1 -f tests/database/live_logins.sql
+      - run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends postgresql-client-16
+      - run: /usr/lib/postgresql/16/bin/pg_dump --version && /usr/lib/postgresql/16/bin/pg_restore --version
       - run: node --experimental-strip-types --test tests/integration/recovery-benchmark.test.mjs
 
   live-browser:
