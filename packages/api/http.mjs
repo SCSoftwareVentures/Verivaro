@@ -13,6 +13,7 @@ const exportDraft=new RegExp('^'+prefix+'/handover/'+UUID+'/export/(pdf|xlsx|zip
 const approveOriginals=new RegExp('^'+prefix+'/index-releases/'+UUID+'/approve-originals$'),grantOriginals=new RegExp('^'+prefix+'/index-releases/'+UUID+'/original-grants$'),bundleIndex=new RegExp('^/v1/shared-index/'+UUID+'/bundle$'),downloadOriginal=new RegExp('^/v1/shared-index/'+UUID+'/originals/'+UUID+'$');
 const intelligence=new RegExp('^'+prefix+'/uploads/'+UUID+'/intelligence$'),suggestions=new RegExp('^'+prefix+'/requirements/'+UUID+'/suggestions$'),relation=new RegExp('^'+prefix+'/contract-relations$');
 const catalog=new RegExp('^'+prefix+'/catalog$');
+const milestoneUpload=new RegExp('^'+prefix+'/documents/'+UUID+'/milestone-uploads$'),reviewerOriginal=new RegExp('^'+prefix+'/uploads/'+UUID+'/original$');
 async function json(req){
  if(req.headers['content-type']!=='application/json')throw new ServiceError(415,'unsupported_media_type');
  let n=0,parts=[];for await(const b of req){n+=b.length;if(n>16384)throw new ServiceError(413,'payload_too_large');parts.push(b);}
@@ -35,6 +36,8 @@ export function createHttpServer(service){
  if(req.method==='GET'&&path==='/health/live'){out={status:'ok'};}
  else if(req.method==='GET'&&(m=project.exec(path)))out=await service.project(b,m[1],m[2]);
  else if(req.method==='POST'&&(m=doc.exec(path))){out=await service.createDocument(b,m[1],m[2],await json(req));status=201;}
+ else if(req.method==='POST'&&(m=milestoneUpload.exec(path))){out=await service.requestMilestoneUpload(b,m[1],m[2],m[3],await json(req));status=202;}
+ else if(req.method==='GET'&&(m=reviewerOriginal.exec(path))){const file=await service.reviewerOriginal(b,m[1],m[2],m[3]);if(!res.destroyed){res.writeHead(200,{'content-type':file.type,'content-disposition':'attachment; filename="'+file.filename+'"','cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'none'; sandbox",'x-content-sha256':file.sha256,'x-request-id':id,'content-length':file.bytes.length,'connection':'close'});res.end(file.bytes);}return;}
  else if(req.method==='POST'&&(m=intent.exec(path))){out=await service.requestUpload(b,m[1],m[2],m[3],await json(req));status=202;}
  else if(req.method==='POST'&&(m=promoteDoc.exec(path))){out=await service.promoteDocument(b,m[1],m[2],m[3],await json(req));status=201;}
  else if(req.method==='POST'&&(m=promoteReq.exec(path))){out=await service.promoteRequirement(b,m[1],m[2],m[3],await json(req));status=201;}

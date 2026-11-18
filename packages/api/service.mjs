@@ -57,6 +57,8 @@ export const SQL=Object.freeze({
  original:'SELECT vv_api.read_original($1,$2,$3,$4) AS receipt',
  relation:'SELECT vv_api.save_relation($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) AS revision',
  catalog:'SELECT vv_api.catalog($1,$2) AS catalog',
+ reviewerOriginal:'SELECT vv_api.reviewer_original($1,$2,$3,$4) AS receipt',
+ milestoneUpload:'SELECT vv_api.request_milestone_upload($1,$2,$3,$4,$5,$6,$7,$8,$9) AS id',
  graph:'SELECT vv_api.graph($1,$2) AS graph',
  reserve:'SELECT vv_api.reserve_file($1,$2,$3,$4) AS id',
  receipt:'SELECT vv_api.record_quarantine($1,$2,$3,$4,$5,$6,$7) AS id'
@@ -109,6 +111,21 @@ export function createService({runtimePool,signerPool,workerPool,issuerConfig,ke
  async createDocument(b,t,p,body){
  exact(body,['id','title']);uuid(body.id);if(typeof body.title!=='string'||!body.title.trim()||body.title.length>250||body.title.includes('\0'))throw bad();
  return scoped(b,t,p,async c=>({id:one(await c.query(SQL.document,[t,p,body.id,body.title])).id}));
+ },
+ async requestMilestoneUpload(b,t,p,d,body){
+ uuid(d);exact(body,['id','sha256','bytes','mediaType','milestoneId','milestoneRevision']);uuid(body.id);uuid(body.milestoneId);
+ if(typeof body.sha256!=='string'||!/^[a-f0-9]{64}$/.test(body.sha256)||!Number.isSafeInteger(body.bytes)||body.bytes<1||body.bytes>52428800||!MIME.has(body.mediaType)||!Number.isSafeInteger(body.milestoneRevision)||body.milestoneRevision<1||body.milestoneRevision>2147483647)throw bad();
+ return scoped(b,t,p,async c=>({id:one(await c.query(SQL.milestoneUpload,[t,p,d,body.id,body.sha256,body.bytes,body.mediaType,body.milestoneId,body.milestoneRevision])).id}));
+ },
+ async reviewerOriginal(b,t,p,u){uuid(u);if(typeof downloadScanner!=='function')throw unavailable();
+ if(activeDownloads>=2)throw new ServiceError(429,'download_capacity');activeDownloads++;
+ try{
+ const receipt=await scoped(b,t,p,async c=>one(await c.query(SQL.reviewerOriginal,[t,p,u,false])).receipt);
+ let bytes;try{bytes=await readVerifiedQuarantine(quarantineRoot,receipt,{maxBytes:10485760});const verdict=await scanQuarantine(quarantineRoot,receipt,downloadScanner);if(verdict.outcome!=='clean')throw Error('not clean');}catch{throw unavailable();}
+ const current=await scoped(b,t,p,async c=>one(await c.query(SQL.reviewerOriginal,[t,p,u,true])).receipt);
+ if(current.objectKey!==receipt.objectKey||current.sha256!==receipt.sha256||current.bytes!==receipt.bytes||current.mediaType!==receipt.mediaType)throw unavailable();
+ return {bytes,type:'application/octet-stream',filename:u+({'application/pdf':'.pdf','image/png':'.png','image/jpeg':'.jpg','text/plain':'.txt'}[receipt.mediaType]),sha256:receipt.sha256};
+ }finally{activeDownloads--;}
  },
  async requestUpload(b,t,p,d,body){
  uuid(d);exact(body,['id','sha256','bytes','mediaType']);uuid(body.id);

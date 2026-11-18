@@ -246,6 +246,27 @@ test('real PostgreSQL and HTTP: distinct roles, persistence, tenant denial, revo
  await admin.query("UPDATE vv_private.project_member SET role='owner' WHERE actor_id=$1 AND project_id=$2",[actor,project]);
  assert.equal(JSON.stringify(inventory.body).includes('objectKey'),false);assert.equal((await call('GET',url+'/catalog','b')).status,404);
  const appPage=await fetch(start.split('/v1/')[0]+'/app');assert.equal(appPage.status,200);assert.match(appPage.headers.get('content-security-policy'),/frame-ancestors 'none'/);assert.match(await appPage.text(),/Verivaro/);
+ // Reviewer original is separately authorised, even before canonical promotion, and rescanned.
+ const reviewerRoute=url+'/uploads/'+contractIntent2+'/original';
+ const rrFile=await fetch(reviewerRoute,{headers:{authorization:token('a')}});assert.equal(rrFile.status,200);assert.equal(await rrFile.text(),'Serial MUST be ABC-123');
+ assert.equal((await fetch(reviewerRoute,{headers:{authorization:token('b')}})).status,404);
+ scanMode='rejected';assert.equal((await fetch(reviewerRoute,{headers:{authorization:token('a')}})).status,503);scanMode='clean';
+ assert.equal(Number((await admin.query('SELECT count(*) FROM vv_app.reviewer_original_audit')).rows[0].count),1);
+ await admin.query("UPDATE vv_private.project_member SET role='contributor' WHERE actor_id=$1 AND project_id=$2",[actor,project]);
+ assert.equal((await fetch(reviewerRoute,{headers:{authorization:token('a')}})).status,404);
+ await admin.query("UPDATE vv_private.project_member SET role='owner' WHERE actor_id=$1 AND project_id=$2",[actor,project]);
+ const qrDoc=U('4',110),qrIntent=U('6',110),qrBytes=Buffer.from('capture evidence fixture'),qrHash=createHash('sha256').update(qrBytes).digest('hex');
+ assert.equal((await call('POST',url+'/documents','a',{id:qrDoc,title:'QR fixture'})).status,201);
+ const qrBody={id:qrIntent,sha256:qrHash,bytes:qrBytes.length,mediaType:'text/plain',milestoneId:mid,milestoneRevision:3};
+ const qrRoute=url+'/documents/'+qrDoc+'/milestone-uploads';
+ assert.equal((await call('POST',qrRoute,'a',{...qrBody,milestoneRevision:2})).status,404);
+ assert.equal((await call('POST',qrRoute,'b',qrBody)).status,404);
+ assert.equal((await call('POST',qrRoute,'a',qrBody)).status,202);
+ assert.equal((await call('POST',qrRoute,'a',qrBody)).status,202);
+ assert.equal((await call('POST',qrRoute,'a',{...qrBody,milestoneRevision:2})).status,409);
+ assert.equal((await call('PUT',url+'/uploads/'+qrIntent,'a',qrBytes,'application/octet-stream')).status,202);
+ const qrCatalog=await call('GET',url+'/catalog');const linked=qrCatalog.body.documents.find(d=>d.id===qrDoc).uploads[0];assert.equal(linked.milestoneId,mid);assert.equal(linked.milestoneRevision,3);
+ assert.equal(Number((await admin.query('SELECT count(*) FROM vv_app.milestone_capture')).rows[0].count),1);
  await admin.query('UPDATE vv_app.scope_checkpoint SET generation=generation+1 WHERE tenant_id=$1 AND project_id=$2',[tenant,project]);
  assert.equal((await share(access3.body.token)).status,404);
  await assert.rejects(pools[0].query('SELECT * FROM vv_private.index_grant'),{code:'42501'});

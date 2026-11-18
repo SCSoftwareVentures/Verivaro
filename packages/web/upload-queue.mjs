@@ -20,7 +20,7 @@ export function createUploadQueue({maxItems=5,maxBytes=50*1024*1024}={}){
  try{
  // Stage changes only after an acknowledged server response. If response is lost, replay same IDs.
  if(j.stage==='queued'){if(j.newDocument)await safe('/documents',{id:j.documentId,title:j.title});j.stage='document-acknowledged';}
- if(j.stage==='document-acknowledged'){await safe('/documents/'+j.documentId+'/uploads',{id:j.intentId,sha256:j.sha256,bytes:j.file.size,mediaType:j.mediaType});j.stage='intent-acknowledged';}
+ if(j.stage==='document-acknowledged'){await safe('/documents/'+j.documentId+(j.milestoneId?'/milestone-uploads':'/uploads'),{id:j.intentId,sha256:j.sha256,bytes:j.file.size,mediaType:j.mediaType,...(j.milestoneId?{milestoneId:j.milestoneId,milestoneRevision:j.milestoneRevision}:{})});j.stage='intent-acknowledged';}
  if(j.stage==='intent-acknowledged'){const r=await safe('/uploads/'+j.intentId,undefined,j.file);if(r?.state!=='quarantined')throw Error('Quarantine not acknowledged.');jobs.delete(k);}
  return {state:'quarantined'};
  }finally{active=false;}

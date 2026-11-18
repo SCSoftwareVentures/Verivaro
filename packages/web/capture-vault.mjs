@@ -12,9 +12,10 @@ async function derive(pass,salt){
  const raw=enc.encode(pass);
  try{const base=await crypto.subtle.importKey('raw',raw,'PBKDF2',false,['deriveKey']);return await crypto.subtle.deriveKey({name:'PBKDF2',salt,iterations:ITER,hash:'SHA-256'},base,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);}finally{raw.fill(0);}
 }
-function meta(j){return {documentId:j.documentId,intentId:j.intentId,title:j.title,newDocument:j.newDocument,sha256:j.sha256,mediaType:j.mediaType,bytes:j.file.size};}
+function meta(j){return {documentId:j.documentId,intentId:j.intentId,title:j.title,newDocument:j.newDocument,sha256:j.sha256,mediaType:j.mediaType,bytes:j.file.size,...(j.milestoneId?{milestoneId:j.milestoneId,milestoneRevision:j.milestoneRevision}:{})};}
 function validate(j){
  if(!j||!UUID.test(j.documentId)||!UUID.test(j.intentId)||typeof j.title!=='string'||j.title.length>250||(j.newDocument&&!j.title.trim())||typeof j.newDocument!=='boolean'||typeof j.sha256!=='string'||!/^[a-f0-9]{64}$/.test(j.sha256)||!MIME.has(j.mediaType)||!Number.isSafeInteger(j.bytes)||j.bytes<1||j.bytes>MAX)throw Error('Invalid capture metadata.');
+ if((j.milestoneId!==undefined||j.milestoneRevision!==undefined)&&(!UUID.test(j.milestoneId)||!Number.isSafeInteger(j.milestoneRevision)||j.milestoneRevision<1||j.milestoneRevision>2147483647))throw Error('Invalid milestone metadata.');
 }
 async function pack(jobs){
  if(!Array.isArray(jobs)||jobs.length>5)throw Error('Capture count exceeded.');
