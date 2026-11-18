@@ -47,6 +47,8 @@ test('isolated PostgreSQL load, quiesced database and original-file backup, fres
  const source=process.env.PGDATABASE;
  // Intentionally refuse any real or differently named database.
  assert.equal(source,'verivaro_test');assert.equal(process.env.PGHOST,'127.0.0.1');
+ const container=process.env.VV_PG_CONTAINER;assert.match(container??'',/^[a-f0-9]{64}$/);
+ const pgCommand=async(cmd,args,opts={})=>exec('docker',['exec','-e','PGPASSWORD',container,cmd,'-h','127.0.0.1','-U','postgres',...args],{timeout:60000,maxBuffer:16*1024*1024,...opts});
  const target='verivaro_restore_'+randomUUID().replaceAll('-','');
  const dir=await mkdtemp(join(tmpdir(),'vv-dr-')),root=join(dir,'source'),backup=join(dir,'backup'),restored=join(dir,'restored');
  for(const d of [root,backup,restored])await mkdir(d,{mode:0o700});
@@ -78,14 +80,15 @@ test('isolated PostgreSQL load, quiesced database and original-file backup, fres
  function receipt(r){return {objectKey:r.object_key,sha256:r.actual_sha256,bytes:Number(r.actual_bytes),mediaType:r.media_type,state:'quarantined'};}
  for(const r of rows){const b=await readVerifiedQuarantine(root,receipt(r));await writeFile(join(backup,r.object_key),b,{flag:'wx',mode:0o600});}
  const dump=join(dir,'snapshot.dump');
- await exec('/usr/lib/postgresql/16/bin/pg_dump',['--format=custom','--file='+dump,'--dbname='+source],{timeout:60000,maxBuffer:2*1024*1024});
+ const archive=await pgCommand('pg_dump',['--format=custom','--dbname='+source],{encoding:'buffer'});await writeFile(dump,archive.stdout,{flag:'wx',mode:0o600});
  const dumpSha=sha(await readFile(dump)),backupMs=performance.now()-backupStart;
  const before=(await admin.query('SELECT (SELECT count(*) FROM vv_app.document)::int AS documents,(SELECT count(*) FROM vv_app.document_version)::int AS versions,(SELECT count(*) FROM vv_private.ingestion_audit)::int AS audit')).rows[0];
  // Simulate source loss after backup, without touching any external/system data.
  await unlink(join(root,rows[0].object_key));await assert.rejects(readVerifiedQuarantine(root,receipt(rows[0])));
  const restoreStart=performance.now();await admin.query('CREATE DATABASE '+target);
  assert.equal(sha(await readFile(dump)),dumpSha);
- await exec('/usr/lib/postgresql/16/bin/pg_restore',['--exit-on-error','--dbname='+target,dump],{timeout:60000,maxBuffer:4*1024*1024});
+ const inside='/tmp/'+target+'.dump';await exec('docker',['cp',dump,container+':'+inside],{timeout:30000});
+ try{await pgCommand('pg_restore',['--exit-on-error','--dbname='+target,inside]);}finally{await exec('docker',['exec',container,'rm','-f',inside],{timeout:30000});}
  for(const r of rows){const b=await readFile(join(backup,r.object_key));assert.equal(sha(b),r.actual_sha256);await writeFile(join(restored,r.object_key),b,{flag:'wx',mode:0o600});assert.deepEqual(await readVerifiedQuarantine(restored,receipt(r)),b);}
  restoreAdmin=new pg.Pool({database:target});restoreWorker=new pg.Pool(cfg('worker',target));restoreParser=new pg.Pool(cfg('parser',target));
  const after=(await restoreAdmin.query('SELECT (SELECT count(*) FROM vv_app.document)::int AS documents,(SELECT count(*) FROM vv_app.document_version)::int AS versions,(SELECT count(*) FROM vv_private.ingestion_audit)::int AS audit')).rows[0];
