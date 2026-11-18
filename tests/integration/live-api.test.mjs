@@ -132,6 +132,24 @@ test('real PostgreSQL and HTTP: distinct roles, persistence, tenant denial, revo
  assert.equal((await call('GET',url+'/readiness')).body.ready,false);
  assert.equal(Number((await admin.query('SELECT count(*) FROM vv_app.prooflock_revision')).rows[0].count),2);
  assert.equal(Number((await admin.query('SELECT count(*) FROM vv_app.rejection_event')).rows[0].count),3);
+ // A later approved requirement can be rebound without erasing rejection history.
+ const req2=U('9',101),contractV2=U('5',95),contractIntent2=U('6',96);
+ await makeEvidence(doc,contractIntent2,contractV2,'Serial MUST be ABC-123',1);
+ const newDraft=await call('GET',url+'/uploads/'+contractIntent2+'/review');const newCandidate=newDraft.body.candidates[0];
+ const newDecision={...decision,id:U('9',102),page:newCandidate.page,start:newCandidate.start,end:newCandidate.end,quote:newCandidate.quote,textSha256:newCandidate.textSha256};
+ assert.equal((await call('POST',url+'/uploads/'+contractIntent2+'/review','a',newDecision)).status,201);
+ assert.equal((await call('POST',url+'/decisions/'+newDecision.id+'/promote','a',{requirementId:req,versionId:req2,priorRevision:1,spanId:U('9',103)})).status,201);
+ rr=await call('GET',url+'/readiness');assert.equal(rr.body.milestones[0].status,'revision-review-required');
+ assert.equal((await call('POST',url+'/rejections','a',{...cEvent,priorRevision:3,state:'resolution-recorded',note:'old version cannot close'})).status,404);
+ assert.equal((await call('POST',url+'/rejections','a',{...cEvent,priorRevision:3,requirementVersionId:req2,state:'resolution-recorded',note:'cannot skip reopen'})).status,400);
+ assert.equal((await call('POST',url+'/rejections','a',{...cEvent,priorRevision:3,requirementVersionId:req2,note:'Reopen against replacement requirement'})).body.revision,4);
+ assert.equal((await call('POST',url+'/prooflock','a',{...reschedule,priorRevision:2,requirementVersionId:req2})).body.revision,3);
+ assert.equal((await call('POST',url+'/evidence','a',{...link,id:U('9',104),spanId:U('9',105),requirementVersionId:req2})).status,201);
+ assert.equal((await call('POST',url+'/rejections','a',{...cEvent,priorRevision:4,requirementVersionId:req2,state:'resolution-recorded',note:'Replacement requirement reviewed'})).status,201);
+ rr=await call('GET',url+'/readiness');assert.equal(rr.body.operationalBlockers,0);
+ assert.equal((await call('POST',url+'/scope/confirm','a',{generation:rr.body.generation})).status,200);
+ assert.equal((await call('GET',url+'/readiness')).body.ready,true);
+ assert.equal(Number((await admin.query('SELECT count(*) FROM vv_app.rejection_event')).rows[0].count),5);
  await admin.query('UPDATE vv_private.project_member SET active=false,version=version+1 WHERE tenant_id=$1 AND project_id=$2 AND actor_id=$3',[tenant,project,actor]);
  assert.equal((await call('GET',path)).status,404);
  assert.equal((await call('PUT',path,'a',payload,'application/octet-stream')).status,404);
