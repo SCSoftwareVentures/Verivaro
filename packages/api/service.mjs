@@ -24,6 +24,7 @@ export const SQL=Object.freeze({
  document:'SELECT vv_api.create_document($1,$2,$3,$4) AS id',
  intent:'SELECT vv_api.request_upload($1,$2,$3,$4,$5,$6,$7) AS id',
  status:'SELECT * FROM vv_api.upload_status($1,$2,$3)',
+ reserve:'SELECT vv_api.reserve_file($1,$2,$3,$4) AS id',
  receipt:'SELECT vv_api.record_quarantine($1,$2,$3,$4,$5,$6,$7) AS id'
 });
 /** Pool contract compatible with node-postgres. No driver, live IdP, or production listener bundled.
@@ -75,10 +76,11 @@ export function createService({runtimePool,signerPool,workerPool,issuerConfig,ke
  async status(b,t,p,u){const m=await getStatus(b,t,p,u);return {id:u,state:m.received?'quarantined':'pending'};},
  async upload(b,t,p,u,body){
  // Reauthorise before writing a single byte. No open DB transaction during streaming.
- const m=await getStatus(b,t,p,u);
+ uuid(u);const key=randomUUID();
+ const m=await scoped(b,t,p,async c=>{const m=metadata(one(await c.query(SQL.status,[t,p,u])));if(!m.received)await c.query(SQL.reserve,[t,p,u,key]);return m;});
  if(m.received)return {id:u,state:'quarantined',replayed:true};
  let receipt;
- try{receipt=await quarantineUpload(quarantineRoot,m,body);}catch{throw new ServiceError(422,'upload_rejected');}
+ try{receipt=await quarantineUpload(quarantineRoot,m,body,{objectKey:key});}catch{throw new ServiceError(422,'upload_rejected');}
  // Recheck identity, membership, ownership and metadata after receiving bytes.
  // capture_actor holds membership share locks until final commit.
  // Do NOT delete a persisted file on ambiguous database outcomes: reconciliation is required.

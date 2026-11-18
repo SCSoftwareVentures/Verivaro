@@ -24,9 +24,10 @@ function magic(header,type){
  * Root must be provisioned by operator outside web roots, with no untrusted writers.
  * A content signature is only a coarse format check, not parser safety or malware clearance.
  */
-export async function quarantineUpload(root,metadata,body){
+export async function quarantineUpload(root,metadata,body,{objectKey=randomUUID()}={}){
  const e=expected(metadata),dir=await privateRoot(root);
- const objectKey=randomUUID(),path=join(dir,objectKey);
+ if(typeof objectKey!=='string'||!keyPattern.test(objectKey))throw Error('invalid reserved object key');
+ const path=join(dir,objectKey);
  const hash=createHash('sha256');let count=0,header=Buffer.alloc(0);
  const decoder=e.mediaType==='text/plain'?new TextDecoder('utf-8',{fatal:true}):null;
  let f;let created=false;
@@ -73,4 +74,12 @@ export async function scanQuarantine(root,receipt,scanner,{timeoutMs=10000}={}){
  if(!verdict||verdict.sha256!==e.sha256||!['clean','rejected'].includes(verdict.outcome)||typeof verdict.engine!=='string'||!verdict.engine.trim()||verdict.engine.length>80||typeof verdict.engineVersion!=='string'||!verdict.engineVersion.trim()||verdict.engineVersion.length>80)return result('unavailable');
  return result(verdict.outcome,verdict.engine,verdict.engineVersion);
  }catch{return result('unavailable');}finally{clearTimeout(timer);}
+}
+
+/** Only use keys returned by the committed recovery procedure. No directory sweeps or client keys. */
+export async function removeAbandonedObject(root,key){
+ if(typeof key!=='string'||!keyPattern.test(key))throw Error('invalid recovery key');
+ const path=join(await privateRoot(root),key);
+ try{const s=await lstat(path);if(!s.isFile()||s.isSymbolicLink()||s.nlink!==1||s.uid!==process.getuid())throw Error('unexpected recovery object');await unlink(path);return true;}
+ catch(e){if(e?.code==='ENOENT')return false;throw e;}
 }

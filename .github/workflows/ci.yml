@@ -22,6 +22,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22.16.0'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
       - run: npm run demo
 
@@ -57,15 +58,17 @@ jobs:
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/002_scoped_ingestion.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/003_quarantine_audit.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/004_upload_status.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/005_recovery_queue.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/foundation.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/scoped_ingestion.sql
 
       - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/quarantine_audit.sql
 
       - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/upload_status.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/recovery_queue.sql
 
   live-api:
-    name: Real PostgreSQL HTTP integration (bootstrap)
+    name: Real PostgreSQL HTTP integration
     runs-on: ubuntu-latest
     timeout-minutes: 12
     services:
@@ -96,15 +99,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22.16.0'
-      # Temporary bootstrap only: next commit captures and verifies exact generated lock.
-      - name: Bootstrap exact dependency lock
-        run: |
-          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-          echo VERIVARO_LOCK_START
-          base64 -w0 package-lock.json
-          echo
-          echo VERIVARO_LOCK_END
-          npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: |
           for migration in database/migrations/*.sql; do psql -X -v ON_ERROR_STOP=1 -f "$migration"; done
           psql -X -v ON_ERROR_STOP=1 -f tests/database/foundation.sql
