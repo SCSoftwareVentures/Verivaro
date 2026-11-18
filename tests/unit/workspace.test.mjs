@@ -9,3 +9,11 @@ test('matching evidence does not prove its capture time',()=>{const r=evaluateWo
 test('unconfirmed or superseded schedule blocks workflow',()=>{const f=fixture();f.milestones[0].confirmed=false;f.milestones[0].milestone=null;assert.equal(evaluateWorkspace(scope,f).ready,false);f.milestones[0].requirementRevision=2;assert.equal(evaluateWorkspace(scope,f).milestones[0].status,'revision-review-required');});
 test('recorded resolution cannot hide contradiction or stale requirement',()=>{const f=fixture();f.cases=[{id:'c',requirementId:'r',requirementRevision:1,state:'resolution-recorded'}];f.graph.evidence[0].value='BAD';assert.equal(evaluateWorkspace(scope,f).cases[0].requiresAttention,true);});
 test('handover omits full source text, is stable and never grants release',()=>{const payload=JSON.stringify(fixture()),sha256=createHash('sha256').update(payload).digest('hex');const x={id:'h',payload,sha256,stale:false};const a=handoverManifest(scope,x);assert.equal(a.releaseAuthorised,false);assert.equal(JSON.parse(a.json).sources.some(s=>Object.hasOwn(s,'text')),false);assert.equal(a.sha256,createHash('sha256').update(a.json).digest('hex'));assert.equal(handoverManifest(scope,{...x,stale:true}).json,a.json);assert.throws(()=>handoverManifest(scope,{...x,payload:payload+' '}),/integrity failure/);});
+
+test('unmapped notice blocks even a confirmed graph; mapped case counted once',()=>{
+ const w=fixture();w.rejectionNotices=[{id:'n',quote:'Missing certificate',history:[],documentVersionId:'d',page:1,start:0,end:19,textSha256:'a'.repeat(64)}];
+ let r=evaluateWorkspace(scope,w);assert.equal(r.ready,false);assert.equal(r.operationalBlockers,1);
+ w.cases=[{id:'n',requirementId:'r',requirementRevision:1,state:'open'}];r=evaluateWorkspace(scope,w);assert.equal(r.operationalBlockers,1);assert.equal(r.ready,false);
+ w.cases[0].state='resolution-recorded';assert.equal(evaluateWorkspace(scope,w).ready,true);
+ w.graph.evidence=[];assert.equal(evaluateWorkspace(scope,w).ready,false);
+});

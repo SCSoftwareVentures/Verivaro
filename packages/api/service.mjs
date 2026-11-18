@@ -42,6 +42,7 @@ export const SQL=Object.freeze({
  confirmScope:'SELECT vv_api.confirm_scope($1,$2,$3) AS generation',
  workspace:'SELECT vv_api.workspace($1,$2) AS workspace',
  milestone:'SELECT vv_api.save_prooflock($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) AS revision',
+ notice:'SELECT vv_api.import_rejection_notice($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) AS id',
  rejection:'SELECT vv_api.save_rejection($1,$2,$3,$4,$5,$6,$7) AS revision',
  createHandover:'SELECT vv_api.create_handover($1,$2,$3,$4) AS id',
  readHandover:'SELECT vv_api.read_handover($1,$2,$3) AS draft',
@@ -166,6 +167,12 @@ export function createService({runtimePool,signerPool,workerPool,issuerConfig,ke
  if(!Number.isSafeInteger(body.priorRevision)||body.priorRevision<0||body.priorRevision>=2147483647||typeof body.title!=='string'||!body.title.trim()||body.title.length>200||typeof body.confirmed!=='boolean'||!Number.isSafeInteger(body.leadMinutes)||body.leadMinutes<0||body.leadMinutes>525600||!['reversible','costly','irreversible'].includes(body.irreversibility))throw bad();
  if(body.confirmed){if(typeof body.milestone!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(body.milestone)||!Number.isFinite(Date.parse(body.milestone))||new Date(body.milestone).toISOString()!==body.milestone)throw bad();}else if(body.milestone!==null)throw bad();
  return scoped(b,t,p,async c=>({id:body.id,revision:one(await c.query(SQL.milestone,[t,p,body.id,body.priorRevision,body.requirementVersionId,body.title,body.milestone,body.confirmed,body.leadMinutes,body.irreversibility])).revision}));
+ },
+ async importRejectionNotice(b,t,p,body){
+ exact(body,['id','spanId','documentVersionId','page','start','end','quote','textSha256']);
+ [body.id,body.spanId,body.documentVersionId].forEach(uuid);
+ if(!Number.isSafeInteger(body.page)||body.page<1||body.page>20||!Number.isSafeInteger(body.start)||!Number.isSafeInteger(body.end)||body.start<0||body.end<=body.start||body.end>2147483647||body.end-body.start>2000||typeof body.quote!=='string'||!body.quote.trim()||[...body.quote].length!==body.end-body.start||typeof body.textSha256!=='string'||!/^[a-f0-9]{64}$/.test(body.textSha256))throw bad();
+ return scoped(b,t,p,async c=>({id:one(await c.query(SQL.notice,[t,p,body.id,body.spanId,body.documentVersionId,body.page,body.start,body.end,body.quote,body.textSha256])).id}));
  },
  async saveRejection(b,t,p,body){
  exact(body,['id','priorRevision','requirementVersionId','state','note']);uuid(body.id);uuid(body.requirementVersionId);

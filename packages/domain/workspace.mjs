@@ -1,4 +1,5 @@
 import {evaluateGraph} from './graph.mjs';
+import {assessRejectionNotices} from './rejections.mjs';
 import {evidenceWindow} from '../rules/prooflock.ts';
 import {createHash} from 'node:crypto';
 const sha=s=>createHash('sha256').update(s,'utf8').digest('hex');
@@ -16,8 +17,9 @@ export function evaluateWorkspace(scope,w){
  }).sort(cmp);
  const cases=w.cases.map(c=>{const f=found.get(c.requirementId);const resolved=!!f&&f.revision===c.requirementRevision&&f.status==='verified-configured-checks';return {...c,requiresAttention:c.state==='open'||!resolved};}).sort(cmp);
  const contractRelations=(w.contractRelations??[]).map(r=>({...r,requiresAttention:r.state!=='withdrawn'&&(r.state!=='reviewed'||!r.current)})).sort(cmp);
- const operationalBlockers=milestones.filter(m=>m.requiresAttention).length+cases.filter(c=>c.requiresAttention).length+contractRelations.filter(c=>c.requiresAttention).length;
- return {...report,documentaryReady:report.ready,ready:report.ready&&operationalBlockers===0,operationalBlockers,asOf:w.asOf,milestones,cases,contractRelations,label:'Configured documentary and workflow checks only. Evidence timing, authenticity, compliance and payment entitlement are not certified.'};
+ const rejectionNotices=assessRejectionNotices(w.rejectionNotices??[],cases);
+ const operationalBlockers=rejectionNotices.filter(n=>!n.caseId).length+milestones.filter(m=>m.requiresAttention).length+cases.filter(c=>c.requiresAttention).length+contractRelations.filter(c=>c.requiresAttention).length;
+ return {...report,documentaryReady:report.ready,ready:report.ready&&operationalBlockers===0,operationalBlockers,asOf:w.asOf,milestones,cases,contractRelations,...(rejectionNotices.length?{rejectionNotices}:{}),label:'Configured documentary and workflow checks only. Evidence timing, authenticity, compliance and payment entitlement are not certified.'};
 }
 export function handoverManifest(scope,stored){
  if(typeof stored?.payload!=='string'||sha(stored.payload)!==stored.sha256)throw Error('snapshot integrity failure');

@@ -292,6 +292,31 @@ test('real PostgreSQL and HTTP: distinct roles, persistence, tenant denial, revo
  await admin.query('UPDATE vv_app.scope_checkpoint SET generation=generation+1 WHERE tenant_id=$1 AND project_id=$2',[tenant,project]);
  assert.equal((await share(access3.body.token)).status,404);
  await assert.rejects(pools[0].query('SELECT * FROM vv_private.index_grant'),{code:'42501'});
+
+ // RejectionDNA: immutable, exact-source notice; deduplicate replay and hold unknown mapping.
+ const noticeText='Missing certificate: serial number mismatch.',noticeV=U('5',151);
+ const noticePage=await makeEvidence(U('4',151),U('6',151),noticeV,noticeText);
+ const notice={id:U('d',151),spanId:U('d',152),documentVersionId:noticeV,page:1,start:0,end:noticeText.length,quote:noticeText,textSha256:noticePage.text_sha256};
+ assert.equal((await call('POST',url+'/rejection-notices','b',notice)).status,404);
+ assert.equal((await call('POST',url+'/rejection-notices','a',{...notice,quote:'X'+noticeText.slice(1)})).status,400);
+ assert.equal((await call('POST',url+'/rejection-notices','a',{...notice,id:caseId})).status,409);
+ assert.equal((await call('POST',url+'/rejection-notices','a',notice)).body.id,notice.id);
+ let report=(await call('GET',url+'/readiness')).body;const noticeGeneration=report.generation;
+ assert.equal(report.rejectionNotices[0].status,'mapping-required');assert.equal(report.rejectionNotices[0].draft.modifiesOriginal,false);assert.equal(report.ready,false);
+ assert.equal((await call('POST',url+'/rejection-notices','a',notice)).body.id,notice.id);
+ assert.equal((await call('POST',url+'/rejection-notices','a',{...notice,id:U('d',153),spanId:U('d',154)})).body.id,notice.id);
+ assert.equal((await call('GET',url+'/readiness')).body.generation,noticeGeneration);
+ assert.equal((await call('POST',url+'/scope/confirm','a',{generation:noticeGeneration})).status,200);
+ assert.equal((await call('GET',url+'/readiness')).body.ready,false);
+ const correction={id:notice.id,priorRevision:0,requirementVersionId:req2,state:'open',note:'Reviewer linked explicit serial objection'};
+ assert.equal((await call('POST',url+'/rejections','a',correction)).status,201);
+ assert.equal((await call('GET',url+'/readiness')).body.rejectionNotices[0].status,'correction-review-required');
+ assert.equal((await call('POST',url+'/rejections','a',{...correction,priorRevision:1,state:'resolution-recorded',note:'Review completed against current certificate'})).status,201);
+ report=(await call('GET',url+'/readiness')).body;
+ assert.equal(report.rejectionNotices[0].quote,noticeText);assert.equal(report.rejectionNotices[0].history.length,2);
+ assert.equal(report.rejectionNotices[0].status,report.cases.find(c=>c.id===notice.id).requiresAttention?'correction-review-required':'resolution-documented');
+ assert.equal(Number((await admin.query('SELECT count(*) FROM vv_app.rejection_notice')).rows[0].count),1);
+ await assert.rejects(pools[0].query('SELECT * FROM vv_app.rejection_notice'),{code:'42501'});
  await admin.query('UPDATE vv_private.project_member SET active=false,version=version+1 WHERE tenant_id=$1 AND project_id=$2 AND actor_id=$3',[tenant,project,actor]);
  assert.equal((await call('GET',path)).status,404);
  assert.equal((await call('PUT',path,'a',payload,'application/octet-stream')).status,404);
