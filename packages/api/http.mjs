@@ -5,6 +5,7 @@ const UUID='([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})';
 const prefix='/v1/tenants/'+UUID+'/projects/'+UUID;
 const project=new RegExp('^'+prefix+'$'),doc=new RegExp('^'+prefix+'/documents$'),intent=new RegExp('^'+prefix+'/documents/'+UUID+'/uploads$'),upload=new RegExp('^'+prefix+'/uploads/'+UUID+'$');
 const review=new RegExp('^'+prefix+'/uploads/'+UUID+'/review$'),match=new RegExp('^'+prefix+'/uploads/'+UUID+'/matches$');
+const promoteDoc=new RegExp('^'+prefix+'/uploads/'+UUID+'/promote$'),promoteReq=new RegExp('^'+prefix+'/decisions/'+UUID+'/promote$'),evidence=new RegExp('^'+prefix+'/evidence$'),retire=new RegExp('^'+prefix+'/evidence/'+UUID+'/retire$'),readiness=new RegExp('^'+prefix+'/readiness$'),confirm=new RegExp('^'+prefix+'/scope/confirm$');
 async function json(req){
  if(req.headers['content-type']!=='application/json')throw new ServiceError(415,'unsupported_media_type');
  let n=0,parts=[];for await(const b of req){n+=b.length;if(n>16384)throw new ServiceError(413,'payload_too_large');parts.push(b);}
@@ -27,6 +28,12 @@ export function createHttpServer(service){
  else if(req.method==='GET'&&(m=project.exec(path)))out=await service.project(b,m[1],m[2]);
  else if(req.method==='POST'&&(m=doc.exec(path))){out=await service.createDocument(b,m[1],m[2],await json(req));status=201;}
  else if(req.method==='POST'&&(m=intent.exec(path))){out=await service.requestUpload(b,m[1],m[2],m[3],await json(req));status=202;}
+ else if(req.method==='POST'&&(m=promoteDoc.exec(path))){out=await service.promoteDocument(b,m[1],m[2],m[3],await json(req));status=201;}
+ else if(req.method==='POST'&&(m=promoteReq.exec(path))){out=await service.promoteRequirement(b,m[1],m[2],m[3],await json(req));status=201;}
+ else if(req.method==='POST'&&(m=evidence.exec(path))){out=await service.linkEvidence(b,m[1],m[2],await json(req));status=201;}
+ else if(req.method==='POST'&&(m=retire.exec(path)))out=await service.retireEvidence(b,m[1],m[2],m[3],await json(req));
+ else if(req.method==='GET'&&(m=readiness.exec(path)))out=await service.readiness(b,m[1],m[2]);
+ else if(req.method==='POST'&&(m=confirm.exec(path)))out=await service.confirmScope(b,m[1],m[2],await json(req));
  else if(req.method==='GET'&&(m=review.exec(path)))out=await service.reviewDraft(b,m[1],m[2],m[3]);
  else if(req.method==='POST'&&(m=review.exec(path))){out=await service.decideRequirement(b,m[1],m[2],m[3],await json(req));status=201;}
  else if(req.method==='POST'&&(m=match.exec(path)))out=await service.matchDraft(b,m[1],m[2],m[3],await json(req));

@@ -1,6 +1,7 @@
 import {verifyAccessToken} from '../security/oidc.mjs';
 import {quarantineUpload} from '../security/quarantine.mjs';
 import {proposeRequirements,suggestMatches} from '../domain/proposals.mjs';
+import {evaluateGraph,reviewDigest} from '../domain/graph.mjs';
 import {randomUUID} from 'node:crypto';
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const MIME=new Set(['application/pdf','image/jpeg','image/png','text/plain']);
@@ -27,6 +28,12 @@ export const SQL=Object.freeze({
  status:'SELECT * FROM vv_api.upload_status($1,$2,$3)',
  reviewPages:'SELECT * FROM vv_api.review_pages($1,$2,$3)',
  decision:'SELECT vv_api.decide_requirement($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) AS id',
+ promoteDoc:'SELECT vv_api.promote_document($1,$2,$3,$4,$5,$6,$7) AS id',
+ promoteReq:'SELECT vv_api.promote_requirement($1,$2,$3,$4,$5,$6,$7) AS id',
+ linkEvidence:'SELECT vv_api.link_evidence($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) AS id',
+ retireEvidence:'SELECT vv_api.retire_evidence($1,$2,$3,$4) AS id',
+ confirmScope:'SELECT vv_api.confirm_scope($1,$2,$3) AS generation',
+ graph:'SELECT vv_api.graph($1,$2) AS graph',
  reserve:'SELECT vv_api.reserve_file($1,$2,$3,$4) AS id',
  receipt:'SELECT vv_api.record_quarantine($1,$2,$3,$4,$5,$6,$7) AS id'
 });
@@ -76,7 +83,7 @@ export function createService({runtimePool,signerPool,workerPool,issuerConfig,ke
  if(typeof body.sha256!=='string'||!/^[a-f0-9]{64}$/.test(body.sha256)||!Number.isSafeInteger(body.bytes)||body.bytes<1||body.bytes>52428800||!MIME.has(body.mediaType))throw bad();
  return scoped(b,t,p,async c=>({id:one(await c.query(SQL.intent,[t,p,d,body.id,body.sha256,body.bytes,body.mediaType])).id,state:'pending'}));
  },
- async reviewDraft(b,t,p,u){uuid(u);return scoped(b,t,p,async c=>{const {rows}=await c.query(SQL.reviewPages,[t,p,u]);return {pages:rows,...proposeRequirements(rows)};});},
+ async reviewDraft(b,t,p,u){uuid(u);return scoped(b,t,p,async c=>{const {rows}=await c.query(SQL.reviewPages,[t,p,u]);return {pages:rows,textDigest:reviewDigest(rows),...proposeRequirements(rows)};});},
  async matchDraft(b,t,p,u,body){uuid(u);exact(body,['expected']);if(typeof body.expected!=='string'||!body.expected.trim()||body.expected.length>500)throw bad();return scoped(b,t,p,async c=>suggestMatches((await c.query(SQL.reviewPages,[t,p,u])).rows,body.expected));},
  async decideRequirement(b,t,p,u,body){
  uuid(u);exact(body,['id','page','start','end','quote','textSha256','decision','kind','expected','mandatory']);uuid(body.id);
@@ -85,6 +92,24 @@ export function createService({runtimePool,signerPool,workerPool,issuerConfig,ke
  if(body.decision==='rejected'&&(body.kind!==null||body.expected!==null||body.mandatory!==null))throw bad();
  return scoped(b,t,p,async c=>({id:one(await c.query(SQL.decision,[t,p,u,body.id,body.page,body.start,body.end,body.quote,body.textSha256,body.decision,body.kind,body.expected,body.mandatory])).id,state:body.decision+'-proposal'}));
  },
+ async promoteDocument(b,t,p,u,body){
+ uuid(u);exact(body,['id','priorRevision','sourceSha256','textDigest']);uuid(body.id);
+ if(!Number.isSafeInteger(body.priorRevision)||body.priorRevision<0||body.priorRevision>=2147483647||![body.sourceSha256,body.textDigest].every(x=>typeof x==='string'&&/^[a-f0-9]{64}$/.test(x)))throw bad();
+ return scoped(b,t,p,async c=>({id:one(await c.query(SQL.promoteDoc,[t,p,u,body.id,body.priorRevision,body.sourceSha256,body.textDigest])).id}));
+ },
+ async promoteRequirement(b,t,p,d,body){
+ uuid(d);exact(body,['requirementId','versionId','priorRevision','spanId']);[body.requirementId,body.versionId,body.spanId].forEach(uuid);
+ if(!Number.isSafeInteger(body.priorRevision)||body.priorRevision<0||body.priorRevision>=2147483647)throw bad();
+ return scoped(b,t,p,async c=>({id:one(await c.query(SQL.promoteReq,[t,p,d,body.requirementId,body.versionId,body.priorRevision,body.spanId])).id}));
+ },
+ async linkEvidence(b,t,p,body){
+ exact(body,['id','requirementVersionId','spanId','documentVersionId','page','start','end','quote','textSha256','decision']);[body.id,body.requirementVersionId,body.spanId,body.documentVersionId].forEach(uuid);
+ if(!Number.isSafeInteger(body.page)||body.page<1||body.page>20||!Number.isSafeInteger(body.start)||!Number.isSafeInteger(body.end)||body.start<0||body.end<=body.start||body.end-body.start>500||typeof body.quote!=='string'||typeof body.textSha256!=='string'||!/^[a-f0-9]{64}$/.test(body.textSha256)||!['approved','rejected'].includes(body.decision))throw bad();
+ return scoped(b,t,p,async c=>({id:one(await c.query(SQL.linkEvidence,[t,p,body.id,body.requirementVersionId,body.spanId,body.documentVersionId,body.page,body.start,body.end,body.quote,body.textSha256,body.decision])).id}));
+ },
+ async retireEvidence(b,t,p,e,body){uuid(e);exact(body,['reason']);if(typeof body.reason!=='string'||!body.reason.trim()||body.reason.length>500)throw bad();return scoped(b,t,p,async c=>({id:one(await c.query(SQL.retireEvidence,[t,p,e,body.reason])).id}));},
+ async readiness(b,t,p){return scoped(b,t,p,async c=>evaluateGraph({tenantId:t,projectId:p},one(await c.query(SQL.graph,[t,p])).graph));},
+ async confirmScope(b,t,p,body){exact(body,['generation']);if(typeof body.generation!=='string'||!/^\d{1,18}$/.test(body.generation))throw bad();return scoped(b,t,p,async c=>({generation:one(await c.query(SQL.confirmScope,[t,p,body.generation])).generation}));},
  async status(b,t,p,u){const m=await getStatus(b,t,p,u);return {id:u,state:m.received?'quarantined':'pending'};},
  async upload(b,t,p,u,body){
  // Reauthorise before writing a single byte. No open DB transaction during streaming.
