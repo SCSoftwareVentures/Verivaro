@@ -1,4 +1,4 @@
-import {selectedSpan,selectedAmount,currentSources} from '/app/source-selection.mjs';
+import {textareaSpan,selectedAmount,currentSources} from '/app/source-selection.mjs';
 import {unlockVault,deleteVault} from '/app/capture-vault.mjs';
 import {createUploadQueue} from '/app/upload-queue.mjs';
 const $=id=>document.getElementById(id),root=$('content');
@@ -53,7 +53,7 @@ function pickSource(host,callback,initial){
  const draft=await req('/uploads/'+source.uploadId+'/review');area.replaceChildren();
  for(const page of draft.pages){
  const text=el('textarea');text.readOnly=true;text.rows=6;text.value=page.text_value;text.setAttribute('aria-label','Exact text, page '+page.page);
- const card=item(el('h3','Page '+page.page+' · '+page.method),el('p','Select the exact excerpt in the text field, then use the selection.','muted'),text,button('Use selected text',()=>{const span=selectedSpan(page,text.selectionStart,text.selectionEnd);callback(source,span);}));
+ const card=item(el('h3','Page '+page.page+' · '+page.method),el('p','Select the exact excerpt in the text field, then use the selection.','muted'),text,button('Use selected text',()=>{const span=textareaSpan(page,text.value,text.selectionStart,text.selectionEnd);callback(source,span);}));
  area.append(card);
  }
  }),area);selector.querySelector('select').addEventListener('change',()=>area.replaceChildren());host.append(wrapper);

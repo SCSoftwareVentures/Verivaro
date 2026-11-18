@@ -16,3 +16,18 @@ export function selectedAmount(span){
 export function currentSources(catalog){
  return catalog.documents.flatMap(d=>d.currentVersionId?d.uploads.filter(u=>u.state==='reviewed'&&u.versionId===d.currentVersionId).map(u=>({versionId:d.currentVersionId,documentId:d.id,title:d.title,uploadId:u.id})):[]);
 }
+
+/** HTML textarea normalizes CR and CRLF to LF. Recover original UTF-16 boundaries. */
+export function textareaSpan(page,display,start,end){
+ const raw=page.text_value;
+ if(typeof display!=='string'||display!==raw.replace(/\r\n?/g,'\n')||!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||start<0||end<=start||end>display.length)throw Error('Source display changed; reload the page.');
+ let i=0,j=0,lo,hi;
+ while(i<=raw.length){
+ if(j===start)lo=i;if(j===end){hi=i;break;}
+ if(i===raw.length)break;
+ if(raw[i]==='\r'&&raw[i+1]==='\n')i+=2;else i++;
+ j++;
+ }
+ if(lo===undefined||hi===undefined)throw Error('Cannot map selected source text.');
+ return selectedSpan(page,lo,hi);
+}
