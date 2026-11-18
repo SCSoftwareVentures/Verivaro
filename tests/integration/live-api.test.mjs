@@ -379,9 +379,9 @@ test('real PostgreSQL and HTTP: distinct roles, persistence, tenant denial, revo
  // An admin pool is used only as fixture harness; grant assertions are checked separately.
  await assert.rejects(pools[0].query('SELECT vv_api.prepare_project_erasure($1,$2,$3)',[tenant,project,second.id]),{code:'42501'});
  const erasureKey=generateKeyPairSync('ed25519'),ledgerDirectory=await mkdtemp(join(tmpdir(),'vv-erasure-ledger-'));t.after(()=>rm(ledgerDirectory,{recursive:true,force:true}));
- const plan=(await admin.query('SELECT vv_api.prepare_project_erasure($1,$2,$3) AS plan',[tenant,project,second.id])).rows[0].plan;
- const parsed=JSON.parse(plan.json),otherCount=(await admin.query('SELECT count(*)::int AS n FROM vv_app.project WHERE tenant_id=$1',[otherTenant])).rows[0].n;
- const args={pool:admin,quarantineRoot:root,ledgerDirectory,privateKey:erasureKey.privateKey,tenantId:tenant,projectId:project,requestId:second.id,expectedPlanSha256:plan.sha256,quiesced:true};
+ const erasurePlan=(await admin.query('SELECT vv_api.prepare_project_erasure($1,$2,$3) AS plan',[tenant,project,second.id])).rows[0].plan;
+ const parsed=JSON.parse(erasurePlan.json),otherCount=(await admin.query('SELECT count(*)::int AS n FROM vv_app.project WHERE tenant_id=$1',[otherTenant])).rows[0].n;
+ const args={pool:admin,quarantineRoot:root,ledgerDirectory,privateKey:erasureKey.privateKey,tenantId:tenant,projectId:project,requestId:second.id,expectedPlanSha256:erasurePlan.sha256,quiesced:true};
  await assert.rejects(executeOfflineErasure({...args,quiesced:false}));
  await assert.rejects(executeOfflineErasure({...args,expectedPlanSha256:'0'.repeat(64)}));
  const done=await executeOfflineErasure(args);assert.equal(done.projectRowsRemoved,true);assert.equal(done.originalObjectsAbsent,parsed.objectKeys.length);assert.equal(done.backupErasureCertified,false);
