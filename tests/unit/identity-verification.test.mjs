@@ -41,3 +41,9 @@ test('rejects alg confusion, missing signature and unknown signing key',()=>{
  const other=generateKeyPairSync('rsa',{modulusLength:2048});
  assert.throws(()=>verifyIdentityToken(token(base,undefined,other.privateKey),options));
 });
+
+test('rejects unrecognized signed header and identity claim fields',()=>{
+ assert.throws(()=>verifyIdentityToken(token(base,{alg:'RS256',typ:'JWT',jku:'https://attacker.test/keys'}),options));
+ assert.throws(()=>verifyIdentityToken(token({...base,tenant_id:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'}),options));
+ assert.throws(()=>verifyIdentityToken(token({...base,role:'owner'}),options));
+});
