@@ -42,6 +42,10 @@ export const SQL=Object.freeze({
  linkEvidence:'SELECT vv_api.link_evidence($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) AS id',
  retireEvidence:'SELECT vv_api.retire_evidence($1,$2,$3,$4) AS id',
  confirmScope:'SELECT vv_api.confirm_scope($1,$2,$3) AS generation',
+ privacyStatus:'SELECT vv_api.privacy_status($1,$2) AS privacy',
+ retention:'SELECT vv_api.save_retention($1,$2,$3,$4,$5,$6) AS revision',
+ erasure:'SELECT vv_api.save_erasure_request($1,$2,$3,$4,$5,$6,$7) AS revision',
+ projectExport:'SELECT vv_api.export_project_records($1,$2,$3) AS exported',
  workspace:'SELECT vv_api.workspace($1,$2) AS workspace',
  milestone:'SELECT vv_api.save_prooflock($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) AS revision',
  correctionPlan:'SELECT vv_api.save_correction_plan($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) AS revision',
@@ -90,12 +94,12 @@ export function createService({runtimePool,signerPool,workerPool,issuerConfig,ke
  if(typeof bearer!=='string'||bearer.length>16400||!/^Bearer [A-Za-z0-9_.-]+$/.test(bearer))throw new ServiceError(401,'authentication_required');
  try{return verifyAccessToken(bearer.slice(7),config,now());}catch{throw new ServiceError(401,'authentication_required');}
  }
- async function scoped(bearer,t,p,operation){
+ async function scoped(bearer,t,p,operation,{snapshot=false}={}){
  const who=identity(bearer);uuid(t);uuid(p);
  let c;let began=false;let destroy=false;
  try{
  c=await runtimePool.connect();
- await c.query('BEGIN ISOLATION LEVEL READ COMMITTED');began=true;
+ await c.query(snapshot?'BEGIN ISOLATION LEVEL REPEATABLE READ':'BEGIN ISOLATION LEVEL READ COMMITTED');began=true;
  await c.query("SET LOCAL statement_timeout = '10000ms'");
  await c.query("SET LOCAL idle_in_transaction_session_timeout = '15000ms'");
  const {tx}=one(await c.query(SQL.tx));
@@ -165,6 +169,23 @@ export function createService({runtimePool,signerPool,workerPool,issuerConfig,ke
  },
  async retireEvidence(b,t,p,e,body){uuid(e);exact(body,['reason']);if(typeof body.reason!=='string'||!body.reason.trim()||body.reason.length>500)throw bad();return scoped(b,t,p,async c=>({id:one(await c.query(SQL.retireEvidence,[t,p,e,body.reason])).id}));},
  async catalog(b,t,p){return scoped(b,t,p,async c=>one(await c.query(SQL.catalog,[t,p])).catalog);},
+ async privacyStatus(b,t,p){return scoped(b,t,p,async c=>one(await c.query(SQL.privacyStatus,[t,p])).privacy);},
+ async saveRetention(b,t,p,body){
+ exact(body,['priorRevision','retentionDays','legalHold','reason']);
+ if(!Number.isSafeInteger(body.priorRevision)||body.priorRevision<0||body.priorRevision>=2147483647||!Number.isSafeInteger(body.retentionDays)||body.retentionDays<1||body.retentionDays>36500||typeof body.legalHold!=='boolean'||typeof body.reason!=='string'||!body.reason.trim()||body.reason.length>500)throw bad();
+ return scoped(b,t,p,async c=>({revision:one(await c.query(SQL.retention,[t,p,body.priorRevision,body.retentionDays,body.legalHold,body.reason])).revision}));
+ },
+ async saveErasureRequest(b,t,p,body){
+ exact(body,['id','priorRevision','state','policyRevision','reason']);uuid(body.id);
+ if(!Number.isSafeInteger(body.priorRevision)||body.priorRevision<0||body.priorRevision>2||!Number.isSafeInteger(body.policyRevision)||body.policyRevision<1||body.policyRevision>2147483647||!['requested','approved-for-operator','cancelled'].includes(body.state)||typeof body.reason!=='string'||!body.reason.trim()||body.reason.length>500)throw bad();
+ return scoped(b,t,p,async c=>({id:body.id,revision:one(await c.query(SQL.erasure,[t,p,body.id,body.priorRevision,body.state,body.policyRevision,body.reason])).revision}));
+ },
+ async exportProjectRecords(b,t,p,body){
+ exact(body,['id']);uuid(body.id);
+ return scoped(b,t,p,async c=>{const x=one(await c.query(SQL.projectExport,[t,p,body.id])).exported;
+ if(typeof x?.json!=='string'||Buffer.byteLength(x.json)>8388608||createHash('sha256').update(x.json).digest('hex')!==x.sha256||x.completeTenantExport!==false||x.containsOriginalBytes!==false)throw unavailable();
+ return x;},{snapshot:true});
+ },
  async readiness(b,t,p){return scoped(b,t,p,async c=>evaluateWorkspace({tenantId:t,projectId:p},one(await c.query(SQL.workspace,[t,p])).workspace));},
  async saveMilestone(b,t,p,body){
  exact(body,['id','priorRevision','requirementVersionId','title','milestone','confirmed','leadMinutes','irreversibility']);uuid(body.id);uuid(body.requirementVersionId);

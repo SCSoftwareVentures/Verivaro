@@ -338,7 +338,36 @@ test('real PostgreSQL and HTTP: distinct roles, persistence, tenant denial, revo
  assert.equal((await share(access3.body.token)).status,404);
  await assert.rejects(pools[0].query('SELECT * FROM vv_private.index_grant'),{code:'42501'});
 
- await admin.query('UPDATE vv_private.project_member SET active=false,version=version+1 WHERE tenant_id=$1 AND project_id=$2 AND actor_id=$3',[tenant,project,actor]);
+
+ // Privacy: explicit owner-only project snapshot and dual-control request; no fake erasure.
+ const privacy=await call('GET',url+'/privacy');assert.equal(privacy.status,200);assert.equal(privacy.body.policy,null);
+ assert.equal((await call('GET',url+'/privacy','b')).status,404);
+ const policy={priorRevision:0,retentionDays:365,legalHold:true,reason:'Synthetic policy pending legal review'};
+ assert.equal((await call('POST',url+'/privacy/retention','a',policy)).body.revision,1);
+ assert.equal((await call('POST',url+'/privacy/retention','a',policy)).body.revision,1);
+ const erase={id:U('d',201),priorRevision:0,state:'requested',policyRevision:1,reason:'Synthetic erasure request'};
+ assert.equal((await call('POST',url+'/privacy/erasure','a',erase)).status,201);
+ assert.equal((await call('POST',url+'/privacy/erasure','a',{...erase,priorRevision:1,state:'approved-for-operator'})).status,404);
+ assert.equal((await call('POST',url+'/privacy/erasure','b',{...erase,priorRevision:1,state:'approved-for-operator'})).status,404);
+ const cancel={...erase,priorRevision:1,state:'cancelled'};assert.equal((await call('POST',url+'/privacy/erasure','a',cancel)).status,201);
+ assert.equal((await call('POST',url+'/privacy/retention','a',{...policy,priorRevision:1,legalHold:false})).body.revision,2);
+ const second={...erase,id:U('d',202),policyRevision:2};assert.equal((await call('POST',url+'/privacy/erasure','a',second)).status,201);
+ const actor2=U('1',202);
+ await admin.query('INSERT INTO vv_private.identity(id,issuer,subject) VALUES($1,$2,$3)',[actor2,config.issuer,'second-owner']);
+ await admin.query("INSERT INTO vv_private.membership(tenant_id,actor_id,active,tenant_role) VALUES($1,$2,true,'owner')",[tenant,actor2]);
+ await admin.query("INSERT INTO vv_private.project_member(tenant_id,project_id,actor_id,role,active) VALUES($1,$2,$3,'owner',true)",[tenant,project,actor2]);
+ assert.equal((await call('POST',url+'/privacy/erasure','second-owner',{...second,priorRevision:1,state:'approved-for-operator'})).status,201);
+ const states=(await call('GET',url+'/privacy')).body;assert.equal(states.operatorExecutionImplemented,false);assert.equal(states.events.at(-1).state,'approved-for-operator');
+ const ticket={id:U('d',203)};assert.equal((await call('POST',url+'/privacy/export','b',ticket)).status,404);
+ const exp=await call('POST',url+'/privacy/export','a',ticket);assert.equal(exp.status,201);assert.equal(exp.body.sha256,createHash('sha256').update(exp.body.json).digest('hex'));
+ const records=JSON.parse(exp.body.json);assert.equal(records.tenantId,tenant);assert.equal(records.projectId,project);assert.equal(records.containsOriginalBytes,false);assert.ok(records.records.document_version.length>0);assert.ok(records.records.rejection_notice.length>0);
+ for(const name of ['token_hash','object_key','lease_token','context_key'])assert.equal(Object.values(records.records).filter(Array.isArray).some(rows=>rows.some(row=>Object.hasOwn(row,name))),false);
+ assert.ok(records.records.document.every(d=>d.tenant_id===tenant&&d.project_id===project));
+ assert.equal((await call('POST',url+'/privacy/export','a',ticket)).status,409);
+ assert.equal(Number((await admin.query('SELECT count(*) FROM vv_private.privacy_export_audit')).rows[0].count),1);
+ await assert.rejects(pools[0].query('SELECT * FROM vv_app.erasure_event'),{code:'42501'});
+ assert.equal(Number((await admin.query('SELECT count(*) FROM vv_app.document_version WHERE tenant_id=$1 AND project_id=$2',[tenant,project])).rows[0].count),records.records.document_version.length);
+  await admin.query('UPDATE vv_private.project_member SET active=false,version=version+1 WHERE tenant_id=$1 AND project_id=$2 AND actor_id=$3',[tenant,project,actor]);
  assert.equal((await call('GET',path)).status,404);
  assert.equal((await call('PUT',path,'a',payload,'application/octet-stream')).status,404);
 });

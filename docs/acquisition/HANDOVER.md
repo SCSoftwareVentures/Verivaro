@@ -35,3 +35,6 @@ Startup is an operator task, not enabled automatically. Review packages/api/post
 - Commercial buyer access and transfer terms, ownership/license review, operational support obligations. No price or certification claim.
 
 This is an acquisition review package, not a final acceptance certificate.
+
+CI #83 found missing bundled licence text for pg-types. Internal source-only evidence packaging records every missing text as a redistribution blocker; no dependencies are bundled in the source tar. Buyer-offline signing remains blocked when licence texts are missing. Declared SPDX metadata does not substitute for actual licence text or legal review. The internal candidate does not approve redistribution.
+See [privacy lifecycle](../engineering/PRIVACY_LIFECYCLE.md) for the project export and deletion review boundary.

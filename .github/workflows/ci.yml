@@ -76,6 +76,7 @@ jobs:
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/019_authority_inventory.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/020_rejection_notices.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/021_correction_plans.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/022_privacy_lifecycle.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/foundation.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/privilege_matrix.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/scoped_ingestion.sql
@@ -303,6 +304,7 @@ jobs:
         env:
           VV_AUDIT_JSON: ${{ runner.temp }}/vv-npm-audit.json
         run: |
+          set -euo pipefail
           node scripts/candidate-build.mjs "$RUNNER_TEMP/vv-candidate" ci-ephemeral | tee "$RUNNER_TEMP/vv-signing.json"
           fingerprint="$(node -p "JSON.parse(require('fs').readFileSync(process.env.RUNNER_TEMP+'/vv-signing.json','utf8')).fingerprint")"
           node scripts/candidate-verify.mjs "$RUNNER_TEMP/vv-candidate" "$RUNNER_TEMP/vv-candidate/candidate-public.pem" "$(git rev-parse HEAD)" "$fingerprint" ci-ephemeral
