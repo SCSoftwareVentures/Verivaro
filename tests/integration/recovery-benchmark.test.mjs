@@ -1,11 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import pg from 'pg';
-import {generateKeyPairSync,sign,createHash,randomUUID} from 'node:crypto';
+import {generateKeyPairSync,sign,createHash,randomUUID,randomBytes} from 'node:crypto';
 import {mkdtemp,rm,mkdir,writeFile,readFile,unlink} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {execFile} from 'node:child_process';
+import {execFile,spawn} from 'node:child_process';
+import {createWriteStream} from 'node:fs';
+import {pipeline} from 'node:stream/promises';
+import {Transform} from 'node:stream';
+import {encryptBackup,decryptBackup} from '../../packages/security/encrypted-backup.mjs';
+import {checkRestoreErasureLedger} from '../../packages/security/erasure-ledger.mjs';
 import {promisify} from 'node:util';
 import {setTimeout as sleep} from 'node:timers/promises';
 import {createPostgresService} from '../../packages/api/postgres.mjs';
@@ -89,17 +94,23 @@ test('isolated PostgreSQL load, quiesced database and original-file backup, fres
  assert.equal(rows.length,12);
  function receipt(r){return {objectKey:r.object_key,sha256:r.actual_sha256,bytes:Number(r.actual_bytes),mediaType:r.media_type,state:'quarantined'};}
  for(const r of rows){const b=await readVerifiedQuarantine(root,receipt(r));await writeFile(join(backup,r.object_key),b,{flag:'wx',mode:0o600});}
- const dump=join(dir,'snapshot.dump');
- const archive=await pgCommand('pg_dump',['--format=custom','--dbname='+source],{encoding:'buffer'});await writeFile(dump,archive.stdout,{flag:'wx',mode:0o600});
- const dumpSha=sha(await readFile(dump)),backupMs=performance.now()-backupStart;
+ const dump=join(dir,'snapshot.dump'),encryptedDump=join(backup,'database.vvb');
+ const child=spawn('docker',['exec','-e','PGPASSWORD',container,'pg_dump','-h','127.0.0.1','-U','postgres','--format=custom','--dbname='+source],{stdio:['ignore','pipe','ignore'],timeout:60000});
+ const exit=new Promise(resolve=>{child.once('error',()=>resolve(false));child.once('close',code=>resolve(code===0));});
+ let streamed=0;const bound=new Transform({transform(chunk,enc,cb){streamed+=chunk.length;if(streamed>16*1024*1024*1024)return cb(Error('dump budget'));cb(null,chunk);}});
+ try{await pipeline(child.stdout,bound,createWriteStream(dump,{flags:'wx',mode:0o600}));assert.equal(await exit,true);}catch(e){child.kill('SIGKILL');await exit;throw e;}
+ const backupKey=randomBytes(32),backupOpts={key:backupKey,keyId:'synthetic-ci',context:'database:'+source};
+ const encrypted=await encryptBackup(dump,encryptedDump,backupOpts);const dumpSha=encrypted.plaintextSha256;await unlink(dump);
+ for(const r of rows){const original=join(backup,r.object_key),enc=original+'.vvb';const e=await encryptBackup(original,enc,{...backupOpts,context:'original:'+r.object_key});assert.equal(e.plaintextSha256,r.actual_sha256);await unlink(original);}
+ const backupMs=performance.now()-backupStart;
  const before=(await admin.query('SELECT (SELECT count(*) FROM vv_app.document)::int AS documents,(SELECT count(*) FROM vv_app.document_version)::int AS versions,(SELECT count(*) FROM vv_private.ingestion_audit)::int AS audit')).rows[0];
  // Simulate source loss after backup, without touching any external/system data.
  await unlink(join(root,rows[0].object_key));await assert.rejects(readVerifiedQuarantine(root,receipt(rows[0])));
  const restoreStart=performance.now();await admin.query('CREATE DATABASE '+target);
- assert.equal(sha(await readFile(dump)),dumpSha);
+ assert.equal((await decryptBackup(encryptedDump,dump,backupOpts)).plaintextSha256,dumpSha);
  const inside='/tmp/'+target+'.dump';await exec('docker',['cp',dump,container+':'+inside],{timeout:30000});
  try{await pgCommand('pg_restore',['--exit-on-error','--dbname='+target,inside]);}finally{await exec('docker',['exec',container,'rm','-f',inside],{timeout:30000});}
- for(const r of rows){const b=await readFile(join(backup,r.object_key));assert.equal(sha(b),r.actual_sha256);await writeFile(join(restored,r.object_key),b,{flag:'wx',mode:0o600});assert.deepEqual(await readVerifiedQuarantine(restored,receipt(r)),b);}
+ for(const r of rows){const restoredPath=join(restored,r.object_key);const e=await decryptBackup(join(backup,r.object_key+'.vvb'),restoredPath,{...backupOpts,context:'original:'+r.object_key});assert.equal(e.plaintextSha256,r.actual_sha256);assert.equal(sha(await readVerifiedQuarantine(restored,receipt(r))),r.actual_sha256);}
  restoreAdmin=new pg.Pool({database:target});restoreWorker=new pg.Pool(cfg('worker',target));restoreParser=new pg.Pool(cfg('parser',target));
  const after=(await restoreAdmin.query('SELECT (SELECT count(*) FROM vv_app.document)::int AS documents,(SELECT count(*) FROM vv_app.document_version)::int AS versions,(SELECT count(*) FROM vv_private.ingestion_audit)::int AS audit')).rows[0];
  assert.deepEqual(after,before);
@@ -107,6 +118,7 @@ test('isolated PostgreSQL load, quiesced database and original-file backup, fres
  // Recovery cutover policy: invalidate restored context signing key, rotate it and revoke all sharing capabilities.
  const newKey=randomUUID();await restoreAdmin.query('WITH disabled AS (UPDATE vv_private.context_key SET active=false RETURNING id) INSERT INTO vv_private.context_key(id,secret,active) VALUES($1,vv_crypto.gen_random_bytes(32),true)',[newKey]);
  await restoreAdmin.query('UPDATE vv_private.index_grant SET revoked_at=clock_timestamp(),revoked_by=created_by WHERE revoked_at IS NULL');
+ const emptyLedgerKey=generateKeyPairSync('ed25519');assert.equal((await checkRestoreErasureLedger({pool:restoreAdmin,quarantineRoot:restored,ledgers:[],publicKey:emptyLedgerKey.publicKey,expectedLedgerSha256s:[]})).cutoverLedgerCheckPassed,true);
  copy=await start(target,restored,newKey);
  const inventory=await copy.call('GET','/catalog');assert.equal(inventory.status,200);assert.deepEqual(inventory.body.documents,sourceInventory.body.documents);assert.equal((await copy.call('GET','/catalog',undefined,'b')).status,404);
  assert.equal((await copy.call('GET','/uploads/'+docs[11].u)).body.state,'quarantined');
@@ -116,5 +128,5 @@ test('isolated PostgreSQL load, quiesced database and original-file backup, fres
  const original=await fetch(copy.url+'/uploads/'+docs[0].u+'/original',{headers:{authorization:token('a')}});assert.equal(original.status,200);assert.deepEqual(Buffer.from(await original.arrayBuffer()),docs[0].body);
  const victim=rows.find(x=>x.actual_sha256===docs[0].digest);await writeFile(join(restored,victim.object_key),Buffer.alloc(docs[0].body.length,88));
  const tampered=await fetch(copy.url+'/uploads/'+docs[0].u+'/original',{headers:{authorization:token('a')}});assert.equal(tampered.status,503);
- console.log('VV_RECOVERY '+JSON.stringify({documents:before.documents,canonicalVersions:before.versions,verifiedOriginals:rows.length,auditEvents:before.audit,backupMs:Math.round(backupMs),restoreAndVerifyMs:Math.round(performance.now()-restoreStart),recoveredPendingScanAndExtraction:true,sourceLossDetected:true,tamperedRestoreDenied:true,unexpectedRecordLoss:0}));
+ console.log('VV_RECOVERY '+JSON.stringify({documents:before.documents,canonicalVersions:before.versions,verifiedOriginals:rows.length,auditEvents:before.audit,backupMs:Math.round(backupMs),restoreAndVerifyMs:Math.round(performance.now()-restoreStart),encryptedDatabaseAndOriginals:true,streamedDumpBytes:streamed,recoveredPendingScanAndExtraction:true,sourceLossDetected:true,tamperedRestoreDenied:true,unexpectedRecordLoss:0}));
 });
