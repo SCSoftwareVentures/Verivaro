@@ -244,3 +244,21 @@ jobs:
       - run: google-chrome --version
       - run: node --check packages/web/app.mjs
       - run: node --experimental-strip-types --test tests/integration/browser.test.mjs
+
+  intelligence-isolation:
+    name: Linux offline intelligence containment
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.16.0'
+      - name: Build offline worker
+        run: docker build --network=none -f deploy/intelligence/Dockerfile -t verivaro-intelligence:ci .
+      - name: Exercise kernel controls and actual worker
+        run: |
+          export VV_INTELLIGENCE_IMAGE="$(docker image inspect --format '{{.Id}}' verivaro-intelligence:ci)"
+          node --test tests/integration/intelligence-container.test.mjs
