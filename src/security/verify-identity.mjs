@@ -20,7 +20,7 @@ export function verifyIdentityToken(token, { publicKey, issuer, audience, now = 
   if (header.alg !== 'RS256' || header.typ !== 'JWT' || header.crit !== undefined) throw new Error('unsupported token header');
   const signature = Buffer.from(s, 'base64url');
   if (!s || signature.toString('base64url') !== s) throw new Error('invalid signature encoding');
-  const key = createPublicKey(publicKey);
+  const key = publicKey?.type === 'public' ? publicKey : createPublicKey(publicKey);
   if (key.asymmetricKeyType !== 'rsa' || !verifySignature('RSA-SHA256',Buffer.from(h+'.'+p),key,signature)) {
     throw new Error('invalid token signature');
   }
