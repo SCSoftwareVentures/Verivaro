@@ -25,3 +25,34 @@ jobs:
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
       - run: npm run demo
+
+  database:
+    name: PostgreSQL 16 foundation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ephemeral-ci-only
+          POSTGRES_DB: verivaro_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: ephemeral-ci-only
+      PGDATABASE: verivaro_test
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/001_foundation.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/foundation.sql
