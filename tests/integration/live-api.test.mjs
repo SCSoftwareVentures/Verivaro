@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import pg from 'pg';
 import {generateKeyPairSync,sign,createHash} from 'node:crypto';
 import {mkdtemp,rm,readdir,readFile,writeFile} from 'node:fs/promises';
-import {executeOfflineErasure,checkRestoreErasureLedger,reconcileErasedObjects,verifyErasureLedger} from '../../packages/security/erasure-ledger.mjs';
+import {executeOfflineErasure,checkRestoreErasureLedger,reconcileErasedObjects,verifyErasureLedger,attestCommittedErasure,replayCommittedErasures} from '../../packages/security/erasure-ledger.mjs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createPostgresService} from '../../packages/api/postgres.mjs';
@@ -379,6 +379,21 @@ test('real PostgreSQL and HTTP: distinct roles, persistence, tenant denial, revo
  // An admin pool is used only as fixture harness; grant assertions are checked separately.
  await assert.rejects(pools[0].query('SELECT vv_api.prepare_project_erasure($1,$2,$3)',[tenant,project,second.id]),{code:'42501'});
  const erasureKey=generateKeyPairSync('ed25519'),ledgerDirectory=await mkdtemp(join(tmpdir(),'vv-erasure-ledger-'));t.after(()=>rm(ledgerDirectory,{recursive:true,force:true}));
+ // A deliberately abandoned failed-upload reservation must prevent erasure.
+ await assert.rejects(admin.query('SELECT vv_api.prepare_project_erasure($1,$2,$3)',[tenant,project,second.id]),{code:'42501'});
+ // Advance ONLY isolated synthetic lease clocks; use recovery routine to abandon expired reservations.
+ await admin.query("UPDATE vv_private.file_reservation SET expires_at=clock_timestamp()-interval '1 second' WHERE tenant_id=$1 AND project_id=$2 AND state='pending'",[tenant,project]);
+ await admin.query('SELECT * FROM vv_api.recover_files(100)');
+ // Workers are stopped/idle; no leased job may be silently ignored. Complete actual queued work before approving a new plan if present.
+ assert.equal(Number((await admin.query("SELECT (SELECT count(*) FROM vv_private.scan_job WHERE tenant_id=$1 AND project_id=$2 AND state='leased')+(SELECT count(*) FROM vv_private.extract_job WHERE tenant_id=$1 AND project_id=$2 AND state='leased') AS n",[tenant,project])).rows[0].n),0);
+ const tenantTicket={id:U('d',204)};
+ assert.equal((await call('POST',url+'/privacy/tenant-export','a',tenantTicket)).status,404);
+ await admin.query("INSERT INTO vv_private.project_member(tenant_id,project_id,actor_id,role,active) VALUES($1,$2,$3,'owner',true)",[tenant,U('2',2),actor]);
+ const tenantExport=await call('POST',url+'/privacy/tenant-export','a',tenantTicket);assert.equal(tenantExport.status,201);
+ const tenantRecords=JSON.parse(tenantExport.body.json);assert.equal(tenantRecords.projectCount,2);assert.equal(tenantRecords.containsOriginalBytes,false);assert.equal(tenantRecords.projects.length,2);
+ for(const x of tenantRecords.projects){assert.equal(createHash('sha256').update(x.json).digest('hex'),x.sha256);assert.equal(JSON.parse(x.json).tenantId,tenant);}
+ assert.equal((await call('POST',url+'/privacy/tenant-export','b',{id:U('d',205)})).status,404);
+ assert.equal((await call('POST',url+'/privacy/tenant-export','a',tenantTicket)).status,409);
  const erasurePlan=(await admin.query('SELECT vv_api.prepare_project_erasure($1,$2,$3) AS plan',[tenant,project,second.id])).rows[0].plan;
  const parsed=JSON.parse(erasurePlan.json),otherCount=(await admin.query('SELECT count(*)::int AS n FROM vv_app.project WHERE tenant_id=$1',[otherTenant])).rows[0].n;
  const args={pool:admin,quarantineRoot:root,ledgerDirectory,privateKey:erasureKey.privateKey,tenantId:tenant,projectId:project,requestId:second.id,expectedPlanSha256:erasurePlan.sha256,quiesced:true};
@@ -394,4 +409,19 @@ test('real PostgreSQL and HTTP: distinct roles, persistence, tenant denial, revo
  await assert.rejects(checkRestoreErasureLedger({...restore,ledgers:[]}));
  if(parsed.objectKeys.length){await writeFile(join(root,parsed.objectKeys[0]),'synthetic restored bytes',{mode:0o600});await assert.rejects(checkRestoreErasureLedger(restore));await reconcileErasedObjects({pool:admin,quarantineRoot:root,ledger,publicKey:erasureKey.publicKey});}
  assert.equal((await checkRestoreErasureLedger(restore)).cutoverLedgerCheckPassed,true);
+ const witness=await attestCommittedErasure({pool:admin,ledger,privateKey:erasureKey.privateKey});
+ const replayArgs={pool:admin,quarantineRoot:root,entries:[{ledger,witness}],publicKey:erasureKey.publicKey,expectedWitnessSha256s:[createHash('sha256').update(witness).digest('hex')],quiesced:true,restoreApproved:true};
+ await assert.rejects(replayCommittedErasures({...replayArgs,restoreApproved:false}));
+ await assert.rejects(replayCommittedErasures({...replayArgs,entries:[{ledger,witness:Buffer.from('bad')}]}));
+ // Reconstruct a minimal older synthetic snapshot under the exact same scope.
+ // This is not a real customer restore. Remove the tombstone solely as the fixture admin.
+ await admin.query('DELETE FROM vv_private.erasure_tombstone WHERE tenant_id=$1 AND project_id=$2',[tenant,project]);
+ await admin.query("INSERT INTO vv_app.project(tenant_id,id,name,timezone,created_by) VALUES($1,$2,'Historical fixture','Australia/Melbourne',$3)",[tenant,project,actor]);
+ await admin.query("INSERT INTO vv_private.project_member(tenant_id,project_id,actor_id,role,active) VALUES($1,$2,$3,'owner',true)",[tenant,project,actor]);
+ await assert.rejects(checkRestoreErasureLedger(restore));
+ if(parsed.objectKeys.length)await writeFile(join(root,parsed.objectKeys[0]),'older synthetic bytes',{mode:0o600});
+ assert.equal((await replayCommittedErasures(replayArgs)).cutoverLedgerCheckPassed,true);
+ assert.equal((await replayCommittedErasures(replayArgs)).cutoverLedgerCheckPassed,true);
+ assert.equal((await admin.query('SELECT count(*)::int AS n FROM vv_app.project WHERE tenant_id=$1 AND id=$2',[tenant,project])).rows[0].n,0);
+ assert.equal((await admin.query('SELECT count(*)::int AS n FROM vv_app.project WHERE tenant_id=$1',[otherTenant])).rows[0].n,otherCount);
 });

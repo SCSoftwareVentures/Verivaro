@@ -42,6 +42,7 @@ export const SQL=Object.freeze({
  linkEvidence:'SELECT vv_api.link_evidence($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) AS id',
  retireEvidence:'SELECT vv_api.retire_evidence($1,$2,$3,$4) AS id',
  confirmScope:'SELECT vv_api.confirm_scope($1,$2,$3) AS generation',
+ tenantExport:'SELECT vv_api.export_tenant_records($1,$2,$3) AS exported',
  tenantPortability:'SELECT vv_api.tenant_portability_inventory($1,$2) AS inventory',
  privacyStatus:'SELECT vv_api.privacy_status($1,$2) AS privacy',
  retention:'SELECT vv_api.save_retention($1,$2,$3,$4,$5,$6) AS revision',
@@ -170,6 +171,7 @@ export function createService({runtimePool,signerPool,workerPool,issuerConfig,ke
  },
  async retireEvidence(b,t,p,e,body){uuid(e);exact(body,['reason']);if(typeof body.reason!=='string'||!body.reason.trim()||body.reason.length>500)throw bad();return scoped(b,t,p,async c=>({id:one(await c.query(SQL.retireEvidence,[t,p,e,body.reason])).id}));},
  async catalog(b,t,p){return scoped(b,t,p,async c=>one(await c.query(SQL.catalog,[t,p])).catalog);},
+ async exportTenantRecords(b,t,p,body){exact(body,['id']);uuid(body.id);return scoped(b,t,p,async c=>{const x=one(await c.query(SQL.tenantExport,[t,p,body.id])).exported;if(typeof x?.json!=='string'||Buffer.byteLength(x.json)>16777216||createHash('sha256').update(x.json).digest('hex')!==x.sha256||x.allProjectRecordsIncluded!==true||x.completeTenantExport!==false||x.containsOriginalBytes!==false)throw unavailable();return x;},{snapshot:true});},
  async tenantPortability(b,t,p){return scoped(b,t,p,async c=>one(await c.query(SQL.tenantPortability,[t,p])).inventory);},
  async privacyStatus(b,t,p){return scoped(b,t,p,async c=>one(await c.query(SQL.privacyStatus,[t,p])).privacy);},
  async saveRetention(b,t,p,body){
