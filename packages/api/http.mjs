@@ -1,5 +1,6 @@
 import {createServer} from 'node:http';
 import {randomUUID} from 'node:crypto';
+import {serveApp} from './static.mjs';
 import {ServiceError} from './service.mjs';
 const UUID='([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})';
 const prefix='/v1/tenants/'+UUID+'/projects/'+UUID;
@@ -11,6 +12,7 @@ const financial=new RegExp('^'+prefix+'/finance$'),dispute=new RegExp('^'+prefix
 const exportDraft=new RegExp('^'+prefix+'/handover/'+UUID+'/export/(pdf|xlsx|zip)$'),approveIndex=new RegExp('^'+prefix+'/handover/'+UUID+'/approve-index$'),grantIndex=new RegExp('^'+prefix+'/index-releases/'+UUID+'/grants$'),revokeIndex=new RegExp('^'+prefix+'/index-grants/'+UUID+'/revoke$'),sharedIndex=new RegExp('^/v1/shared-index/'+UUID+'$');
 const approveOriginals=new RegExp('^'+prefix+'/index-releases/'+UUID+'/approve-originals$'),grantOriginals=new RegExp('^'+prefix+'/index-releases/'+UUID+'/original-grants$'),bundleIndex=new RegExp('^/v1/shared-index/'+UUID+'/bundle$'),downloadOriginal=new RegExp('^/v1/shared-index/'+UUID+'/originals/'+UUID+'$');
 const intelligence=new RegExp('^'+prefix+'/uploads/'+UUID+'/intelligence$'),suggestions=new RegExp('^'+prefix+'/requirements/'+UUID+'/suggestions$'),relation=new RegExp('^'+prefix+'/contract-relations$');
+const catalog=new RegExp('^'+prefix+'/catalog$');
 async function json(req){
  if(req.headers['content-type']!=='application/json')throw new ServiceError(415,'unsupported_media_type');
  let n=0,parts=[];for await(const b of req){n+=b.length;if(n>16384)throw new ServiceError(413,'payload_too_large');parts.push(b);}
@@ -28,6 +30,7 @@ export function createHttpServer(service){
  const id=randomUUID(),path=req.url??'',b=req.headers.authorization;
  try{
  if(req.headersDistinct.authorization?.length>1)throw new ServiceError(400,'duplicate_authorization');
+ if(serveApp(req,res))return;
  let m,out,status=200;
  if(req.method==='GET'&&path==='/health/live'){out={status:'ok'};}
  else if(req.method==='GET'&&(m=project.exec(path)))out=await service.project(b,m[1],m[2]);
@@ -62,6 +65,7 @@ export function createHttpServer(service){
  else if(req.method==='POST'&&(m=financial.exec(path))){out=await service.saveFinance(b,m[1],m[2],await json(req));status=201;}
  else if(req.method==='POST'&&(m=dispute.exec(path))){out=await service.recordDispute(b,m[1],m[2],await json(req));status=201;}
  else if(req.method==='GET'&&(m=pack.exec(path)))out=await service.disputePack(b,m[1],m[2],m[3]);
+ else if(req.method==='GET'&&(m=catalog.exec(path)))out=await service.catalog(b,m[1],m[2]);
  else if(req.method==='GET'&&(m=readiness.exec(path)))out=await service.readiness(b,m[1],m[2]);
  else if(req.method==='POST'&&(m=confirm.exec(path)))out=await service.confirmScope(b,m[1],m[2],await json(req));
  else if(req.method==='GET'&&(m=review.exec(path)))out=await service.reviewDraft(b,m[1],m[2],m[3]);

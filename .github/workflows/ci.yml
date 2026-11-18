@@ -68,6 +68,7 @@ jobs:
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/012_index_access.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/013_original_access.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/014_contract_relations.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/015_workspace_catalog.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/foundation.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/scoped_ingestion.sql
 
@@ -143,3 +144,18 @@ jobs:
           node-version: '22.16.0'
       - run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends clamav-daemon
       - run: node --test tests/integration/clamav.test.mjs
+
+  browser:
+    name: Chromium mobile workspace smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.16.0'
+      - run: google-chrome --version
+      - run: node --check packages/web/app.mjs
+      - run: node --experimental-strip-types --test tests/integration/browser.test.mjs

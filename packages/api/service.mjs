@@ -56,6 +56,7 @@ export const SQL=Object.freeze({
  bundleIndex:'SELECT vv_api.read_bundle_index($1,$2) AS shared',
  original:'SELECT vv_api.read_original($1,$2,$3,$4) AS receipt',
  relation:'SELECT vv_api.save_relation($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) AS revision',
+ catalog:'SELECT vv_api.catalog($1,$2) AS catalog',
  graph:'SELECT vv_api.graph($1,$2) AS graph',
  reserve:'SELECT vv_api.reserve_file($1,$2,$3,$4) AS id',
  receipt:'SELECT vv_api.record_quarantine($1,$2,$3,$4,$5,$6,$7) AS id'
@@ -139,6 +140,7 @@ export function createService({runtimePool,signerPool,workerPool,issuerConfig,ke
  return scoped(b,t,p,async c=>({id:one(await c.query(SQL.linkEvidence,[t,p,body.id,body.requirementVersionId,body.spanId,body.documentVersionId,body.page,body.start,body.end,body.quote,body.textSha256,body.decision])).id}));
  },
  async retireEvidence(b,t,p,e,body){uuid(e);exact(body,['reason']);if(typeof body.reason!=='string'||!body.reason.trim()||body.reason.length>500)throw bad();return scoped(b,t,p,async c=>({id:one(await c.query(SQL.retireEvidence,[t,p,e,body.reason])).id}));},
+ async catalog(b,t,p){return scoped(b,t,p,async c=>one(await c.query(SQL.catalog,[t,p])).catalog);},
  async readiness(b,t,p){return scoped(b,t,p,async c=>evaluateWorkspace({tenantId:t,projectId:p},one(await c.query(SQL.workspace,[t,p])).workspace));},
  async saveMilestone(b,t,p,body){
  exact(body,['id','priorRevision','requirementVersionId','title','milestone','confirmed','leadMinutes','irreversibility']);uuid(body.id);uuid(body.requirementVersionId);

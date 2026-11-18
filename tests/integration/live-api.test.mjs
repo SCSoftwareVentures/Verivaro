@@ -238,6 +238,9 @@ test('real PostgreSQL and HTTP: distinct roles, persistence, tenant denial, revo
  assert.equal((await call('POST',url+'/contract-relations','a',{...rel,priorRevision:1,spanId:U('d',95),state:'reviewed',note:'Reviewed relationship; documentary checks remain independent'})).status,201);
  rr=await call('GET',url+'/readiness');assert.equal(rr.body.contractRelations[0].requiresAttention,false);
  assert.equal((await share(access3.body.token)).status,404);
+ const inventory=await call('GET',url+'/catalog');assert.equal(inventory.status,200);assert.ok(inventory.body.documents.some(d=>d.id===doc&&d.revision===2));assert.ok(inventory.body.requirements.some(r=>r.id===req&&r.versionId===req2));assert.ok(inventory.body.drafts.some(d=>d.id===exportId));
+ assert.equal(JSON.stringify(inventory.body).includes('objectKey'),false);assert.equal((await call('GET',url+'/catalog','b')).status,404);
+ const appPage=await fetch(start.split('/v1/')[0]+'/app');assert.equal(appPage.status,200);assert.match(appPage.headers.get('content-security-policy'),/frame-ancestors 'none'/);assert.match(await appPage.text(),/Verivaro/);
  await admin.query('UPDATE vv_app.scope_checkpoint SET generation=generation+1 WHERE tenant_id=$1 AND project_id=$2',[tenant,project]);
  assert.equal((await share(access3.body.token)).status,404);
  await assert.rejects(pools[0].query('SELECT * FROM vv_private.index_grant'),{code:'42501'});
