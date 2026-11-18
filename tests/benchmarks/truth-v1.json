@@ -1,0 +1,409 @@
+{
+  "schema": "vv-synthetic-truth-v1",
+  "status": "developer-authored synthetic oracle; not independently reviewed",
+  "projects": [
+    {
+      "id": "T01",
+      "vertical": "construction",
+      "template": "hydraulic commissioning",
+      "kind": "serial",
+      "value": "HYD-DEV-101",
+      "label": "Serial",
+      "split": "development"
+    },
+    {
+      "id": "T02",
+      "vertical": "maintenance",
+      "template": "preventive service",
+      "kind": "model",
+      "value": "MNT-DEV-102",
+      "label": "Model",
+      "split": "development"
+    },
+    {
+      "id": "H01",
+      "vertical": "construction",
+      "template": "electrical handover",
+      "kind": "serial",
+      "value": "ELC-8031",
+      "label": "Serial number",
+      "split": "holdout"
+    },
+    {
+      "id": "H02",
+      "vertical": "construction",
+      "template": "fire system",
+      "kind": "model",
+      "value": "FIR-X12",
+      "label": "Model",
+      "split": "holdout"
+    },
+    {
+      "id": "H03",
+      "vertical": "construction",
+      "template": "mechanical installation",
+      "kind": "expiry date",
+      "value": "2028-02-29",
+      "label": "Expiry date",
+      "split": "holdout"
+    },
+    {
+      "id": "H04",
+      "vertical": "manufacturing",
+      "template": "equipment acceptance",
+      "kind": "serial",
+      "value": "MFG-445A",
+      "label": "S/N",
+      "split": "holdout"
+    },
+    {
+      "id": "H05",
+      "vertical": "manufacturing",
+      "template": "quality dossier",
+      "kind": "document type",
+      "value": "Inspection record",
+      "label": "Document type",
+      "split": "holdout"
+    },
+    {
+      "id": "H06",
+      "vertical": "logistics",
+      "template": "asset acceptance",
+      "kind": "serial",
+      "value": "LOG-77B",
+      "label": "Serial",
+      "split": "holdout"
+    },
+    {
+      "id": "H07",
+      "vertical": "logistics",
+      "template": "delivery acceptance",
+      "kind": "model",
+      "value": "DLV-008",
+      "label": "Model number",
+      "split": "holdout"
+    },
+    {
+      "id": "H08",
+      "vertical": "maintenance",
+      "template": "warranty review",
+      "kind": "expiry date",
+      "value": "2027-11-30",
+      "label": "Warranty expiry",
+      "split": "holdout"
+    },
+    {
+      "id": "H09",
+      "vertical": "field-service",
+      "template": "commissioning visit",
+      "kind": "serial",
+      "value": "SV-𐐀81",
+      "label": "Serial no.",
+      "split": "holdout"
+    },
+    {
+      "id": "H10",
+      "vertical": "field-service",
+      "template": "repair closeout",
+      "kind": "document type",
+      "value": "Service report",
+      "label": "Certificate type",
+      "split": "holdout"
+    }
+  ],
+  "critical": [
+    {
+      "id": "missing",
+      "status": "missing",
+      "ready": false
+    },
+    {
+      "id": "rejected",
+      "status": "missing",
+      "ready": false
+    },
+    {
+      "id": "pending",
+      "status": "provisional",
+      "ready": false
+    },
+    {
+      "id": "wrong-value",
+      "status": "conflicting",
+      "ready": false
+    },
+    {
+      "id": "two-values",
+      "status": "conflicting",
+      "ready": false
+    },
+    {
+      "id": "stale-evidence",
+      "status": "unknown",
+      "ready": false
+    },
+    {
+      "id": "stale-contract",
+      "status": "unknown",
+      "ready": false
+    },
+    {
+      "id": "unreviewed-evidence",
+      "status": "unknown",
+      "ready": false
+    },
+    {
+      "id": "pending-scan",
+      "status": "unknown",
+      "ready": false
+    },
+    {
+      "id": "fabricated-quote",
+      "status": "unknown",
+      "ready": false
+    },
+    {
+      "id": "wrong-kind",
+      "status": "provisional",
+      "ready": false
+    },
+    {
+      "id": "stale-requirement-link",
+      "status": "missing",
+      "ready": false
+    },
+    {
+      "id": "unapproved-requirement",
+      "status": "unknown",
+      "ready": false
+    },
+    {
+      "id": "unknown-applicability",
+      "status": "unknown",
+      "ready": false
+    },
+    {
+      "id": "unconfirmed-scope",
+      "status": "verified-configured-checks",
+      "ready": false
+    },
+    {
+      "id": "unconfirmed-milestone",
+      "status": "verified-configured-checks",
+      "ready": false
+    },
+    {
+      "id": "open-rejection",
+      "status": "verified-configured-checks",
+      "ready": false
+    },
+    {
+      "id": "unmapped-notice",
+      "status": "verified-configured-checks",
+      "ready": false
+    },
+    {
+      "id": "unresolved-relation",
+      "status": "verified-configured-checks",
+      "ready": false
+    },
+    {
+      "id": "self-evidence",
+      "status": "unknown",
+      "ready": false
+    }
+  ],
+  "negative": [
+    {
+      "id": "valid",
+      "variant": "bare",
+      "status": "verified-configured-checks",
+      "ready": true
+    },
+    {
+      "id": "valid",
+      "variant": "labeled",
+      "status": "verified-configured-checks",
+      "ready": true
+    },
+    {
+      "id": "valid",
+      "variant": "contextual",
+      "status": "verified-configured-checks",
+      "ready": true
+    },
+    {
+      "id": "duplicate-agreement",
+      "variant": "bare",
+      "status": "verified-configured-checks",
+      "ready": true
+    },
+    {
+      "id": "duplicate-agreement",
+      "variant": "labeled",
+      "status": "verified-configured-checks",
+      "ready": true
+    },
+    {
+      "id": "duplicate-agreement",
+      "variant": "contextual",
+      "status": "verified-configured-checks",
+      "ready": true
+    },
+    {
+      "id": "rejected-conflict-ignored",
+      "variant": "bare",
+      "status": "verified-configured-checks",
+      "ready": true
+    },
+    {
+      "id": "rejected-conflict-ignored",
+      "variant": "labeled",
+      "status": "verified-configured-checks",
+      "ready": true
+    },
+    {
+      "id": "rejected-conflict-ignored",
+      "variant": "contextual",
+      "status": "verified-configured-checks",
+      "ready": true
+    },
+    {
+      "id": "old-link-ignored",
+      "variant": "bare",
+      "status": "verified-configured-checks",
+      "ready": true
+    },
+    {
+      "id": "old-link-ignored",
+      "variant": "labeled",
+      "status": "verified-configured-checks",
+      "ready": true
+    },
+    {
+      "id": "old-link-ignored",
+      "variant": "contextual",
+      "status": "verified-configured-checks",
+      "ready": true
+    },
+    {
+      "id": "old-document-unlinked",
+      "variant": "bare",
+      "status": "verified-configured-checks",
+      "ready": true
+    },
+    {
+      "id": "old-document-unlinked",
+      "variant": "labeled",
+      "status": "verified-configured-checks",
+      "ready": true
+    },
+    {
+      "id": "old-document-unlinked",
+      "variant": "contextual",
+      "status": "verified-configured-checks",
+      "ready": true
+    },
+    {
+      "id": "resolved-rejection",
+      "variant": "bare",
+      "status": "verified-configured-checks",
+      "ready": true
+    },
+    {
+      "id": "resolved-rejection",
+      "variant": "labeled",
+      "status": "verified-configured-checks",
+      "ready": true
+    },
+    {
+      "id": "resolved-rejection",
+      "variant": "contextual",
+      "status": "verified-configured-checks",
+      "ready": true
+    },
+    {
+      "id": "reviewed-relation",
+      "variant": "bare",
+      "status": "verified-configured-checks",
+      "ready": true
+    },
+    {
+      "id": "reviewed-relation",
+      "variant": "labeled",
+      "status": "verified-configured-checks",
+      "ready": true
+    },
+    {
+      "id": "reviewed-relation",
+      "variant": "contextual",
+      "status": "verified-configured-checks",
+      "ready": true
+    },
+    {
+      "id": "confirmed-milestone",
+      "variant": "bare",
+      "status": "verified-configured-checks",
+      "ready": true
+    },
+    {
+      "id": "confirmed-milestone",
+      "variant": "labeled",
+      "status": "verified-configured-checks",
+      "ready": true
+    },
+    {
+      "id": "confirmed-milestone",
+      "variant": "contextual",
+      "status": "verified-configured-checks",
+      "ready": true
+    },
+    {
+      "id": "applicable-plus-reviewed-exception",
+      "variant": "bare",
+      "status": "verified-configured-checks",
+      "ready": true
+    },
+    {
+      "id": "applicable-plus-reviewed-exception",
+      "variant": "labeled",
+      "status": "verified-configured-checks",
+      "ready": true
+    },
+    {
+      "id": "applicable-plus-reviewed-exception",
+      "variant": "contextual",
+      "status": "verified-configured-checks",
+      "ready": true
+    },
+    {
+      "id": "unicode-source",
+      "variant": "bare",
+      "status": "verified-configured-checks",
+      "ready": true
+    },
+    {
+      "id": "unicode-source",
+      "variant": "labeled",
+      "status": "verified-configured-checks",
+      "ready": true
+    },
+    {
+      "id": "unicode-source",
+      "variant": "contextual",
+      "status": "verified-configured-checks",
+      "ready": true
+    }
+  ],
+  "thresholds": {
+    "recall": 0.98,
+    "falsePositiveRateExclusive": 0.05,
+    "criticalFalseReady": 0,
+    "traceability": 1
+  },
+  "limitations": [
+    "Repeated scenario families across project templates are correlated, not independent real-world observations.",
+    "Split is fixed by project before execution; author also develops engine, so this is not independent blind validation.",
+    "Only user-configured exact documentary checks and selected workflow controls are scored as critical-error cases."
+  ]
+}
