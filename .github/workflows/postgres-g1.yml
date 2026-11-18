@@ -37,3 +37,4 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/0001_tenant_foundation.sql
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/0002_evidence_immutability.sql
           psql -X -v ON_ERROR_STOP=1 -f db/tests/tenant_isolation.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/adversarial_permissions.sql
