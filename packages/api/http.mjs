@@ -12,7 +12,8 @@ const financial=new RegExp('^'+prefix+'/finance$'),dispute=new RegExp('^'+prefix
 const exportDraft=new RegExp('^'+prefix+'/handover/'+UUID+'/export/(pdf|xlsx|zip)$'),approveIndex=new RegExp('^'+prefix+'/handover/'+UUID+'/approve-index$'),grantIndex=new RegExp('^'+prefix+'/index-releases/'+UUID+'/grants$'),revokeIndex=new RegExp('^'+prefix+'/index-grants/'+UUID+'/revoke$'),sharedIndex=new RegExp('^/v1/shared-index/'+UUID+'$');
 const approveOriginals=new RegExp('^'+prefix+'/index-releases/'+UUID+'/approve-originals$'),grantOriginals=new RegExp('^'+prefix+'/index-releases/'+UUID+'/original-grants$'),bundleIndex=new RegExp('^/v1/shared-index/'+UUID+'/bundle$'),downloadOriginal=new RegExp('^/v1/shared-index/'+UUID+'/originals/'+UUID+'$');
 const intelligence=new RegExp('^'+prefix+'/uploads/'+UUID+'/intelligence$'),suggestions=new RegExp('^'+prefix+'/requirements/'+UUID+'/suggestions$'),relation=new RegExp('^'+prefix+'/contract-relations$');
-const rejectionNotice=new RegExp('^'+prefix+'/rejection-notices('^'+prefix+'/catalog$');
+const rejectionNotice=new RegExp('^'+prefix+'/rejection-notices$');
+const catalog=new RegExp('^'+prefix+'/catalog$');
 const milestoneUpload=new RegExp('^'+prefix+'/documents/'+UUID+'/milestone-uploads$'),reviewerOriginal=new RegExp('^'+prefix+'/uploads/'+UUID+'/original$');
 function rejectAmbiguity(req,path){
  const h=req.headersDistinct;
