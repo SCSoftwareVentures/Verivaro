@@ -3,6 +3,7 @@ import {quarantineUpload} from '../security/quarantine.mjs';
 import {proposeRequirements,suggestMatches} from '../domain/proposals.mjs';
 import {evaluateGraph,reviewDigest} from '../domain/graph.mjs';
 import {evaluateWorkspace,handoverManifest} from '../domain/workspace.mjs';
+import {evaluateFinance,disputePack} from '../domain/finance.mjs';
 import {randomUUID} from 'node:crypto';
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const MIME=new Set(['application/pdf','image/jpeg','image/png','text/plain']);
@@ -13,7 +14,7 @@ const unavailable=()=>new ServiceError(503,'service_unavailable');
 const uuid=x=>{if(typeof x!=='string'||!UUID.test(x))throw bad();return x;};
 function exact(x,keys){if(!x||typeof x!=='object'||Array.isArray(x)||Object.keys(x).length!==keys.length||keys.some(k=>!Object.hasOwn(x,k)))throw bad();}
 function one(r){if(!r||!Array.isArray(r.rows)||r.rows.length!==1)throw unavailable();return r.rows[0];}
-function normalize(e){if(e instanceof ServiceError)return e;if(e?.code==='42501')return deny();if(e?.code==='23505')return new ServiceError(409,'idempotency_conflict');if(['22023','22P02','23514'].includes(e?.code))return bad();return unavailable();}
+function normalize(e){if(e instanceof ServiceError)return e;if(e?.code==='42501')return deny();if(e?.code==='23505')return new ServiceError(409,'idempotency_conflict');if(['22023','22P02','23514','22007','22008'].includes(e?.code))return bad();return unavailable();}
 const metadata=r=>{
  const bytes=typeof r.bytes==='string'&&/^[1-9][0-9]{0,8}$/.test(r.bytes)?Number(r.bytes):r.bytes;
  if(typeof r.sha256!=='string'||!/^[a-f0-9]{64}$/.test(r.sha256)||!Number.isSafeInteger(bytes)||bytes<1||bytes>52428800||!MIME.has(r.media_type)||typeof r.received!=='boolean')throw unavailable();
@@ -39,6 +40,9 @@ export const SQL=Object.freeze({
  rejection:'SELECT vv_api.save_rejection($1,$2,$3,$4,$5,$6,$7) AS revision',
  createHandover:'SELECT vv_api.create_handover($1,$2,$3,$4) AS id',
  readHandover:'SELECT vv_api.read_handover($1,$2,$3) AS draft',
+ financial:'SELECT vv_api.financial_workspace($1,$2) AS financial',
+ financeWrite:'SELECT vv_api.save_finance($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::uuid[]) AS revision',
+ disputeWrite:'SELECT vv_api.record_dispute($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) AS id',
  graph:'SELECT vv_api.graph($1,$2) AS graph',
  reserve:'SELECT vv_api.reserve_file($1,$2,$3,$4) AS id',
  receipt:'SELECT vv_api.record_quarantine($1,$2,$3,$4,$5,$6,$7) AS id'
@@ -131,6 +135,23 @@ export function createService({runtimePool,signerPool,workerPool,issuerConfig,ke
  return scoped(b,t,p,async c=>{await c.query(SQL.createHandover,[t,p,body.id,body.generation]);return handoverManifest({tenantId:t,projectId:p},one(await c.query(SQL.readHandover,[t,p,body.id])).draft);});
  },
  async readHandover(b,t,p,h){uuid(h);return scoped(b,t,p,async c=>handoverManifest({tenantId:t,projectId:p},one(await c.query(SQL.readHandover,[t,p,h])).draft));},
+ async financial(b,t,p){return scoped(b,t,p,async c=>evaluateFinance({tenantId:t,projectId:p},one(await c.query(SQL.financial,[t,p])).financial));},
+ async saveFinance(b,t,p,body){
+ exact(body,['id','priorRevision','category','title','amount','taxBasis','spanId','documentVersionId','page','start','end','quote','textSha256','releaseOn','conditionVersionIds']);
+ [body.id,body.spanId,body.documentVersionId].forEach(uuid);
+ if(!Number.isSafeInteger(body.priorRevision)||body.priorRevision<0||body.priorRevision>=2147483647||!['milestone','retention'].includes(body.category)||typeof body.title!=='string'||!body.title.trim()||body.title.length>200||typeof body.amount!=='string'||!/^(0|[1-9]\d{0,11})\.\d{2}$/.test(body.amount)||!['inclusive','exclusive'].includes(body.taxBasis)||body.quote!=='AUD '+body.amount||!Number.isSafeInteger(body.page)||body.page<1||body.page>20||!Number.isSafeInteger(body.start)||!Number.isSafeInteger(body.end)||body.start<0||body.end-body.start!==body.quote.length||typeof body.textSha256!=='string'||!/^[a-f0-9]{64}$/.test(body.textSha256)||!Array.isArray(body.conditionVersionIds)||body.conditionVersionIds.length>100||new Set(body.conditionVersionIds).size!==body.conditionVersionIds.length)throw bad();
+ body.conditionVersionIds.forEach(uuid);
+ if(body.releaseOn!==null){if(body.category!=='retention'||typeof body.releaseOn!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(body.releaseOn)||!Number.isFinite(Date.parse(body.releaseOn))||new Date(body.releaseOn).toISOString().slice(0,10)!==body.releaseOn)throw bad();}
+ return scoped(b,t,p,async c=>({id:body.id,revision:one(await c.query(SQL.financeWrite,[t,p,body.id,body.priorRevision,body.category,body.title,body.amount,body.taxBasis,body.spanId,body.documentVersionId,body.page,body.start,body.end,body.quote,body.textSha256,body.releaseOn,body.conditionVersionIds])).revision}));
+ },
+ async recordDispute(b,t,p,body){
+ exact(body,['id','financeId','financeRevision','type','occurredAt','note','documentVersionId','handoverId']);[body.id,body.financeId].forEach(uuid);
+ if(body.documentVersionId!==null)uuid(body.documentVersionId);if(body.handoverId!==null)uuid(body.handoverId);
+ if(!Number.isSafeInteger(body.financeRevision)||body.financeRevision<1||body.financeRevision>=2147483647||!['submission-asserted','delivery-asserted','receipt-asserted','acceptance-asserted','rejection-asserted','disputed','correction','payment-asserted','note'].includes(body.type)||typeof body.note!=='string'||!body.note.trim()||body.note.length>2000)throw bad();
+ if(body.occurredAt!==null&&(typeof body.occurredAt!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(body.occurredAt)||!Number.isFinite(Date.parse(body.occurredAt))||new Date(body.occurredAt).toISOString()!==body.occurredAt))throw bad();
+ return scoped(b,t,p,async c=>({id:one(await c.query(SQL.disputeWrite,[t,p,body.id,body.financeId,body.financeRevision,body.type,body.occurredAt,body.note,body.documentVersionId,body.handoverId])).id,verification:'member-asserted'}));
+ },
+ async disputePack(b,t,p,f){uuid(f);return scoped(b,t,p,async c=>{const scope={tenantId:t,projectId:p};const finance=evaluateFinance(scope,one(await c.query(SQL.financial,[t,p])).financial);const pack=disputePack(scope,finance,f);if(!pack)throw deny();return pack;});},
  async confirmScope(b,t,p,body){exact(body,['generation']);if(typeof body.generation!=='string'||!/^\d{1,18}$/.test(body.generation))throw bad();return scoped(b,t,p,async c=>({generation:one(await c.query(SQL.confirmScope,[t,p,body.generation])).generation}));},
  async status(b,t,p,u){const m=await getStatus(b,t,p,u);return {id:u,state:m.received?'quarantined':'pending'};},
  async upload(b,t,p,u,body){
