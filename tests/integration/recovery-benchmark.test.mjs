@@ -7,6 +7,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
+import {setTimeout as sleep} from 'node:timers/promises';
 import {createPostgresService} from '../../packages/api/postgres.mjs';
 import {createHttpServer} from '../../packages/api/http.mjs';
 import {processOneScan} from '../../packages/worker/maintenance.mjs';
@@ -54,7 +55,15 @@ test('isolated PostgreSQL load, quiesced database and original-file backup, fres
  for(const d of [root,backup,restored])await mkdir(d,{mode:0o700});
  const admin=new pg.Pool(),worker=new pg.Pool(cfg('worker',source)),parser=new pg.Pool(cfg('parser',source));
  let api,copy,restoreAdmin,restoreWorker,restoreParser;
- t.after(async()=>{await api?.close();await copy?.close();await Promise.all([worker.end(),parser.end(),restoreAdmin?.end(),restoreWorker?.end(),restoreParser?.end()]);await admin.query('DROP DATABASE IF EXISTS '+target+' WITH (FORCE)');await admin.end();await rm(dir,{recursive:true,force:true});});
+ t.after(async()=>{await api?.close();await copy?.close();await Promise.all([worker.end(),parser.end(),restoreAdmin?.end(),restoreWorker?.end(),restoreParser?.end()]);// Pool.end resolves before every server-side socket can have fully disconnected.
+ // Never forcibly terminate target connections; require graceful drain and normal drop.
+ for(let i=0;i<100;i++){
+ const active=Number((await admin.query('SELECT count(*) FROM pg_stat_activity WHERE datname=$1',[target])).rows[0].count);
+ if(active===0)break;
+ if(i===99)throw Error('Restored database connections did not drain');
+ await sleep(50);
+ }
+ await admin.query('DROP DATABASE IF EXISTS '+target);await admin.end();await rm(dir,{recursive:true,force:true});});
  api=await start(source,root);
  const docs=[];
  for(let i=0;i<12;i++){
