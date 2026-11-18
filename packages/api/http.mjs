@@ -10,6 +10,7 @@ const milestone=new RegExp('^'+prefix+'/prooflock$'),rejection=new RegExp('^'+pr
 const financial=new RegExp('^'+prefix+'/finance$'),dispute=new RegExp('^'+prefix+'/finance/events$'),pack=new RegExp('^'+prefix+'/finance/'+UUID+'/dispute-pack$');
 const exportDraft=new RegExp('^'+prefix+'/handover/'+UUID+'/export/(pdf|xlsx|zip)$'),approveIndex=new RegExp('^'+prefix+'/handover/'+UUID+'/approve-index$'),grantIndex=new RegExp('^'+prefix+'/index-releases/'+UUID+'/grants$'),revokeIndex=new RegExp('^'+prefix+'/index-grants/'+UUID+'/revoke$'),sharedIndex=new RegExp('^/v1/shared-index/'+UUID+'$');
 const approveOriginals=new RegExp('^'+prefix+'/index-releases/'+UUID+'/approve-originals$'),grantOriginals=new RegExp('^'+prefix+'/index-releases/'+UUID+'/original-grants$'),bundleIndex=new RegExp('^/v1/shared-index/'+UUID+'/bundle$'),downloadOriginal=new RegExp('^/v1/shared-index/'+UUID+'/originals/'+UUID+'$');
+const intelligence=new RegExp('^'+prefix+'/uploads/'+UUID+'/intelligence$'),suggestions=new RegExp('^'+prefix+'/requirements/'+UUID+'/suggestions$'),relation=new RegExp('^'+prefix+'/contract-relations$');
 async function json(req){
  if(req.headers['content-type']!=='application/json')throw new ServiceError(415,'unsupported_media_type');
  let n=0,parts=[];for await(const b of req){n+=b.length;if(n>16384)throw new ServiceError(413,'payload_too_large');parts.push(b);}
@@ -54,6 +55,9 @@ export function createHttpServer(service){
  }
  else if(req.method==='GET'&&(m=sharedIndex.exec(path)))out=await service.readSharedIndex(b,m[1]);
  else if(req.method==='GET'&&(m=draft.exec(path)))out=await service.readHandover(b,m[1],m[2],m[3]);
+ else if(req.method==='POST'&&(m=intelligence.exec(path)))out=await service.analyseDraft(b,m[1],m[2],m[3],await json(req));
+ else if(req.method==='GET'&&(m=suggestions.exec(path)))out=await service.evidenceSuggestions(b,m[1],m[2],m[3]);
+ else if(req.method==='POST'&&(m=relation.exec(path))){out=await service.saveRelation(b,m[1],m[2],await json(req));status=201;}
  else if(req.method==='GET'&&(m=financial.exec(path)))out=await service.financial(b,m[1],m[2]);
  else if(req.method==='POST'&&(m=financial.exec(path))){out=await service.saveFinance(b,m[1],m[2],await json(req));status=201;}
  else if(req.method==='POST'&&(m=dispute.exec(path))){out=await service.recordDispute(b,m[1],m[2],await json(req));status=201;}

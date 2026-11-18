@@ -225,6 +225,19 @@ test('real PostgreSQL and HTTP: distinct roles, persistence, tenant denial, revo
  await assert.rejects(pools[4].query('SELECT * FROM vv_app.document_version'),{code:'42501'});
  assert.equal((await call('POST',url+'/index-grants/'+U('c',96)+'/revoke','a')).status,200);
  assert.equal((await getFile(originalGrant.body.token)).status,404);
+ // Deterministic intelligence and explicit amendment record. No external provider configured.
+ const intelligenceResult=await call('POST',url+'/uploads/'+contractIntent2+'/intelligence','a',{useProvider:true});assert.equal(intelligenceResult.status,200);assert.equal(intelligenceResult.body.providerStatus,'not-configured');assert.equal(intelligenceResult.body.candidates[0].state,'needs-review');
+ assert.equal((await call('POST',url+'/uploads/'+contractIntent2+'/intelligence','b',{useProvider:false})).status,404);
+ const suggested=await call('GET',url+'/requirements/'+req+'/suggestions');assert.equal(suggested.status,200);assert.ok(suggested.body.candidates.some(x=>x.documentVersionId===certV));assert.ok(suggested.body.candidates.every(x=>x.documentVersionId!==contractV2&&x.state==='needs-review'));
+ const amendment=U('4',96),amendV=U('5',98),amendText='This amendment supersedes clause 2.',amendPage=await makeEvidence(amendment,U('6',99),amendV,amendText);
+ const rel={id:U('d',91),priorRevision:0,amendmentVersionId:amendV,baseVersionId:contractV2,spanId:U('d',92),page:1,start:0,end:amendText.length,quote:amendText,textSha256:amendPage.text_sha256,relation:'supersedes',state:'unresolved',note:'Reviewer must reconcile exact replacement clause'};
+ assert.equal((await call('POST',url+'/contract-relations','a',rel)).status,201);
+ rr=await call('GET',url+'/readiness');assert.equal(rr.body.contractRelations[0].requiresAttention,true);assert.equal(rr.body.ready,false);
+ const reverse={...rel,id:U('d',93),amendmentVersionId:contractV2,baseVersionId:amendV,spanId:U('d',94),quote:newCandidate.quote,start:newCandidate.start,end:newCandidate.end,textSha256:newCandidate.textSha256};
+ assert.equal((await call('POST',url+'/contract-relations','a',reverse)).status,400);
+ assert.equal((await call('POST',url+'/contract-relations','a',{...rel,priorRevision:1,spanId:U('d',95),state:'reviewed',note:'Reviewed relationship; documentary checks remain independent'})).status,201);
+ rr=await call('GET',url+'/readiness');assert.equal(rr.body.contractRelations[0].requiresAttention,false);
+ assert.equal((await share(access3.body.token)).status,404);
  await admin.query('UPDATE vv_app.scope_checkpoint SET generation=generation+1 WHERE tenant_id=$1 AND project_id=$2',[tenant,project]);
  assert.equal((await share(access3.body.token)).status,404);
  await assert.rejects(pools[0].query('SELECT * FROM vv_private.index_grant'),{code:'42501'});

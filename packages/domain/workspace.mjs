@@ -15,8 +15,9 @@ export function evaluateWorkspace(scope,w){
   return {...m,due:window.due,status,covered,requiresAttention:!current||window.status==='unknown'||!covered};
  }).sort(cmp);
  const cases=w.cases.map(c=>{const f=found.get(c.requirementId);const resolved=!!f&&f.revision===c.requirementRevision&&f.status==='verified-configured-checks';return {...c,requiresAttention:c.state==='open'||!resolved};}).sort(cmp);
- const operationalBlockers=milestones.filter(m=>m.requiresAttention).length+cases.filter(c=>c.requiresAttention).length;
- return {...report,documentaryReady:report.ready,ready:report.ready&&operationalBlockers===0,operationalBlockers,asOf:w.asOf,milestones,cases,label:'Configured documentary and workflow checks only. Evidence timing, authenticity, compliance and payment entitlement are not certified.'};
+ const contractRelations=(w.contractRelations??[]).map(r=>({...r,requiresAttention:r.state!=='withdrawn'&&(r.state!=='reviewed'||!r.current)})).sort(cmp);
+ const operationalBlockers=milestones.filter(m=>m.requiresAttention).length+cases.filter(c=>c.requiresAttention).length+contractRelations.filter(c=>c.requiresAttention).length;
+ return {...report,documentaryReady:report.ready,ready:report.ready&&operationalBlockers===0,operationalBlockers,asOf:w.asOf,milestones,cases,contractRelations,label:'Configured documentary and workflow checks only. Evidence timing, authenticity, compliance and payment entitlement are not certified.'};
 }
 export function handoverManifest(scope,stored){
  if(typeof stored?.payload!=='string'||sha(stored.payload)!==stored.sha256)throw Error('snapshot integrity failure');

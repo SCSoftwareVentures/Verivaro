@@ -4,6 +4,7 @@ import {proposeRequirements,suggestMatches} from '../domain/proposals.mjs';
 import {evaluateGraph,reviewDigest} from '../domain/graph.mjs';
 import {evaluateWorkspace,handoverManifest} from '../domain/workspace.mjs';
 import {evaluateFinance,disputePack} from '../domain/finance.mjs';
+import {createIntelligence,evidenceSuggestions} from '../domain/intelligence.mjs';
 import {randomUUID,randomBytes,createHash} from 'node:crypto';
 import {createReleaseSigner} from '../security/releases.mjs';
 import {renderDraft} from '../export/formats.mjs';
@@ -53,6 +54,7 @@ export const SQL=Object.freeze({
  grantOriginals:'SELECT vv_api.grant_originals($1,$2,$3,$4,$5,$6) AS id',
  bundleIndex:'SELECT vv_api.read_bundle_index($1,$2) AS shared',
  original:'SELECT vv_api.read_original($1,$2,$3,$4) AS receipt',
+ relation:'SELECT vv_api.save_relation($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) AS revision',
  graph:'SELECT vv_api.graph($1,$2) AS graph',
  reserve:'SELECT vv_api.reserve_file($1,$2,$3,$4) AS id',
  receipt:'SELECT vv_api.record_quarantine($1,$2,$3,$4,$5,$6,$7) AS id'
@@ -61,10 +63,11 @@ export const SQL=Object.freeze({
  * Pools must be separately provisioned, genuinely distinct restricted DB identities.
  * Never feed client-controlled SQL, claim fields, role, or pool configuration into this service.
  */
-export function createService({runtimePool,signerPool,workerPool,issuerConfig,keyId,quarantineRoot,capabilityPool,releaseSigning,downloadScanner,now=()=>Math.floor(Date.now()/1000)}){
+export function createService({runtimePool,signerPool,workerPool,issuerConfig,keyId,quarantineRoot,capabilityPool,releaseSigning,downloadScanner,intelligenceProvider,now=()=>Math.floor(Date.now()/1000)}){
  if(!runtimePool?.connect||!signerPool?.query||!workerPool?.query||new Set([runtimePool,signerPool,workerPool]).size!==3||typeof quarantineRoot!=='string'||!quarantineRoot)throw Error('separate trusted service pools required');
  uuid(keyId);
  const config=structuredClone(issuerConfig);
+ const intelligence=createIntelligence({provider:intelligenceProvider});
  const releaseSigner=releaseSigning?createReleaseSigner(releaseSigning):null;
  if(capabilityPool&&(!capabilityPool.query||[runtimePool,signerPool,workerPool].includes(capabilityPool)))throw Error('separate capability pool required');
  let activeDownloads=0;
@@ -178,6 +181,20 @@ export function createService({runtimePool,signerPool,workerPool,issuerConfig,ke
  // Serve as attachment only; never execute untrusted file contents.
  return {bytes,type:'application/octet-stream',filename:v+({ 'application/pdf':'.pdf','image/png':'.png','image/jpeg':'.jpg','text/plain':'.txt'}[receipt.mediaType]),sha256:receipt.sha256};
  }finally{activeDownloads--;}
+ },
+ async analyseDraft(b,t,p,u,body){
+ uuid(u);exact(body,['useProvider']);if(typeof body.useProvider!=='boolean')throw bad();
+ const pages=await scoped(b,t,p,async c=>(await c.query(SQL.reviewPages,[t,p,u])).rows);
+ const result=await intelligence(pages,{useProvider:body.useProvider});
+ // Re-authorise after potentially expensive provider call, verify same immutable page digest.
+ return scoped(b,t,p,async c=>{const latest=(await c.query(SQL.reviewPages,[t,p,u])).rows;if(reviewDigest(latest)!==reviewDigest(pages))throw new ServiceError(409,'draft_changed');return result;});
+ },
+ async evidenceSuggestions(b,t,p,r){uuid(r);return scoped(b,t,p,async c=>{const w=one(await c.query(SQL.workspace,[t,p])).workspace;const result=evidenceSuggestions(w,r);if(!result)throw deny();return result;});},
+ async saveRelation(b,t,p,body){
+ exact(body,['id','priorRevision','amendmentVersionId','baseVersionId','spanId','page','start','end','quote','textSha256','relation','state','note']);
+ [body.id,body.amendmentVersionId,body.baseVersionId,body.spanId].forEach(uuid);
+ if(!Number.isSafeInteger(body.priorRevision)||body.priorRevision<0||body.priorRevision>=2147483647||!Number.isSafeInteger(body.page)||body.page<1||body.page>20||!Number.isSafeInteger(body.start)||!Number.isSafeInteger(body.end)||body.start<0||body.end<=body.start||body.end-body.start>2000||typeof body.quote!=='string'||typeof body.textSha256!=='string'||!/^[a-f0-9]{64}$/.test(body.textSha256)||!['amends','supersedes','qualifies','conflicts'].includes(body.relation)||!['unresolved','reviewed','withdrawn'].includes(body.state)||typeof body.note!=='string'||!body.note.trim()||body.note.length>1000)throw bad();
+ return scoped(b,t,p,async c=>({id:body.id,revision:one(await c.query(SQL.relation,[t,p,body.id,body.priorRevision,body.amendmentVersionId,body.baseVersionId,body.spanId,body.page,body.start,body.end,body.quote,body.textSha256,body.relation,body.state,body.note])).revision}));
  },
  async financial(b,t,p){return scoped(b,t,p,async c=>evaluateFinance({tenantId:t,projectId:p},one(await c.query(SQL.financial,[t,p])).financial));},
  async saveFinance(b,t,p,body){
