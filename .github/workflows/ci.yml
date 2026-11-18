@@ -79,6 +79,7 @@ jobs:
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/022_privacy_lifecycle.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/023_erasure_reconciliation.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/024_tenant_portability_restore.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/025_original_portability.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/foundation.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/privilege_matrix.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/scoped_ingestion.sql

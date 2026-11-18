@@ -3,7 +3,7 @@
 DO $$
 DECLARE r text;f record;expected text[];actual boolean;tbl record;
 BEGIN
- FOREACH r IN ARRAY ARRAY['verivaro_runtime','verivaro_signer','verivaro_ingest_worker','verivaro_parse_worker','verivaro_recovery','verivaro_capability','verivaro_erasure_operator'] LOOP
+ FOREACH r IN ARRAY ARRAY['verivaro_runtime','verivaro_signer','verivaro_ingest_worker','verivaro_parse_worker','verivaro_recovery','verivaro_capability','verivaro_erasure_operator','verivaro_portability_operator'] LOOP
  IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname=r AND (rolsuper OR rolbypassrls OR rolcreaterole OR rolcreatedb OR rolcanlogin)) OR pg_has_role(r,'verivaro_owner','MEMBER') THEN RAISE EXCEPTION 'unsafe role %',r;END IF;
  IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname LIKE 'verivaro_%' AND rolname<>r AND pg_has_role(r,rolname,'MEMBER')) THEN RAISE EXCEPTION 'cross role inheritance %',r;END IF;
  expected:=CASE r
@@ -13,6 +13,7 @@ BEGIN
  WHEN 'verivaro_parse_worker' THEN ARRAY['vv_api.claim_extract','vv_api.finish_extract','vv_api.finish_native_extract']
  WHEN 'verivaro_recovery' THEN ARRAY['vv_api.recover_files']
  WHEN 'verivaro_erasure_operator' THEN ARRAY['vv_api.prepare_project_erasure','vv_api.apply_project_erasure','vv_api.erasure_restore_status','vv_api.replay_project_erasure','vv_api.erasure_object_safety']
+ WHEN 'verivaro_portability_operator' THEN ARRAY['vv_api.portability_original_inventory']
  WHEN 'verivaro_capability' THEN ARRAY['vv_api.read_shared_index','vv_api.read_original','vv_api.read_bundle_index'] END;
  FOR f IN SELECT p.oid,n.nspname||'.'||p.proname AS name,p.prosecdef,p.proconfig FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname IN ('vv_api','vv_private') LOOP
  actual:=has_function_privilege(r,f.oid,'EXECUTE');

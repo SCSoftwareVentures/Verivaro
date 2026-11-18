@@ -13,3 +13,6 @@ GRANT verivaro_parse_worker TO vv_test_parser;
 
 CREATE ROLE vv_test_capability LOGIN PASSWORD 'vv-ci-capability-only' NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOBYPASSRLS;
 GRANT verivaro_capability TO vv_test_capability;
+
+CREATE ROLE vv_test_portability LOGIN PASSWORD 'vv-ci-portability-only' NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOBYPASSRLS;
+GRANT verivaro_portability_operator TO vv_test_portability;

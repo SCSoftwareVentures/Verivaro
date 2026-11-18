@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import pg from 'pg';
-import {generateKeyPairSync,sign,createHash} from 'node:crypto';
+import {generateKeyPairSync,sign,createHash,randomBytes} from 'node:crypto';
 import {mkdtemp,rm,readdir,readFile,writeFile} from 'node:fs/promises';
 import {executeOfflineErasure,checkRestoreErasureLedger,reconcileErasedObjects,verifyErasureLedger,attestCommittedErasure,replayCommittedErasures} from '../../packages/security/erasure-ledger.mjs';
 import {tmpdir} from 'node:os';
@@ -9,6 +9,7 @@ import {join} from 'node:path';
 import {createPostgresService} from '../../packages/api/postgres.mjs';
 import {processOneScan} from '../../packages/worker/maintenance.mjs';
 import {processOneExtraction} from '../../packages/worker/extraction.mjs';
+import {buildTenantArchive,unpackTenantArchive} from '../../packages/security/tenant-archive.mjs';
 import {verifyRelease} from '../../packages/security/releases.mjs';
 import {createHttpServer} from '../../packages/api/http.mjs';
 const U=(p,n)=>p+'0000000-0000-0000-0000-'+String(n).padStart(12,'0');
@@ -394,6 +395,19 @@ test('real PostgreSQL and HTTP: distinct roles, persistence, tenant denial, revo
  for(const x of tenantRecords.projects){assert.equal(createHash('sha256').update(x.json).digest('hex'),x.sha256);assert.equal(JSON.parse(x.json).tenantId,tenant);}
  assert.equal((await call('POST',url+'/privacy/tenant-export','b',{id:U('d',205)})).status,404);
  assert.equal((await call('POST',url+'/privacy/tenant-export','a',tenantTicket)).status,409);
+ // Independently provisioned portability role; runtime cannot obtain object keys.
+ const portPool=new pg.Pool(cfg('portability'));t.after(()=>portPool.end());
+ const expectedProjects=tenantRecords.projects.map(x=>({projectId:x.projectId,sha256:x.sha256}));
+ await assert.rejects(pools[0].query('SELECT vv_api.portability_original_inventory($1,$2,$3::jsonb)',[tenant,tenantTicket.id,JSON.stringify(expectedProjects)]),{code:'42501'});
+ await assert.rejects(portPool.query('SELECT vv_api.portability_original_inventory($1,$2,$3::jsonb)',[otherTenant,tenantTicket.id,JSON.stringify(expectedProjects)]),{code:'42501'});
+ const archiveParent=await mkdtemp(join(tmpdir(),'vv-portability-'));t.after(()=>rm(archiveParent,{recursive:true,force:true}));
+ const archiveKeys=generateKeyPairSync('ed25519'),archiveKey=randomBytes(32),archivePath=join(archiveParent,'encrypted');
+ const archiveArgs={pool:portPool,records:tenantExport.body,quarantineRoot:root,destination:archivePath,key:archiveKey,keyId:'ci-portability',privateKey:archiveKeys.privateKey,expectedTenantId:tenant,expectedExportId:tenantTicket.id,expectedRecordsSha256:tenantExport.body.sha256,quiesced:true};
+ await assert.rejects(buildTenantArchive({...archiveArgs,quiesced:false}));
+ const builtArchive=await buildTenantArchive(archiveArgs);
+ const unpacked=await unpackTenantArchive({archive:archivePath,destination:join(archiveParent,'verified'),key:archiveKey,keyId:'ci-portability',publicKey:archiveKeys.publicKey,expectedTenantId:tenant,expectedExportId:tenantTicket.id,expectedManifestSha256:builtArchive.manifestSha256});
+ assert.equal(unpacked.originalCount,tenantRecords.projects.reduce((n,x)=>n+JSON.parse(x.json).records.quarantine_receipt.length,0));
+ assert.equal(await readFile(join(unpacked.directory,'records.json'),'utf8'),tenantExport.body.json);
  const erasurePlan=(await admin.query('SELECT vv_api.prepare_project_erasure($1,$2,$3) AS plan',[tenant,project,second.id])).rows[0].plan;
  const parsed=JSON.parse(erasurePlan.json),otherCount=(await admin.query('SELECT count(*)::int AS n FROM vv_app.project WHERE tenant_id=$1',[otherTenant])).rows[0].n;
  const args={pool:admin,quarantineRoot:root,ledgerDirectory,privateKey:erasureKey.privateKey,tenantId:tenant,projectId:project,requestId:second.id,expectedPlanSha256:erasurePlan.sha256,quiesced:true};
