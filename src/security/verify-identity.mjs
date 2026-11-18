@@ -23,7 +23,7 @@ export function verifyIdentityToken(token, { publicKey, issuer, audience, now = 
   const signature = Buffer.from(s, 'base64url');
   if (!s || signature.toString('base64url') !== s) throw new Error('invalid signature encoding');
   const key = publicKey?.type === 'public' ? publicKey : createPublicKey(publicKey);
-  if (key.asymmetricKeyType !== 'rsa' || !verifySignature('RSA-SHA256',Buffer.from(h+'.'+p),key,signature)) {
+  if (key.asymmetricKeyType !== 'rsa' || (key.asymmetricKeyDetails?.modulusLength ?? 0) < 2048 || !verifySignature('RSA-SHA256',Buffer.from(h+'.'+p),key,signature)) {
     throw new Error('invalid token signature');
   }
   if (Object.keys(claims).some(k => !['iss','aud','sub','iat','nbf','exp'].includes(k))) throw new Error('unsupported identity claim');
