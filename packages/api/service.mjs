@@ -6,6 +6,7 @@ import {evaluateWorkspace,handoverManifest} from '../domain/workspace.mjs';
 import {evaluateFinance,disputePack} from '../domain/finance.mjs';
 import {createIntelligence,evidenceSuggestions} from '../domain/intelligence.mjs';
 import {randomUUID,randomBytes,createHash} from 'node:crypto';
+import {createCapabilityGate,CapacityError} from '../security/capacity.mjs';
 import {createReleaseSigner} from '../security/releases.mjs';
 import {renderDraft} from '../export/formats.mjs';
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -71,8 +72,9 @@ export function createService({runtimePool,signerPool,workerPool,issuerConfig,ke
  const releaseSigner=releaseSigning?createReleaseSigner(releaseSigning):null;
  if(capabilityPool&&(!capabilityPool.query||[runtimePool,signerPool,workerPool].includes(capabilityPool)))throw Error('separate capability pool required');
  let activeDownloads=0;
+ const capabilityGate=createCapabilityGate();
  function shareDigest(b){if(typeof b!=='string'||!/^Share [A-Za-z0-9_-]{43}$/.test(b))throw deny();return createHash('sha256').update(b.slice(6)).digest('hex');}
- async function capability(q,args){if(!capabilityPool)throw unavailable();try{return one(await capabilityPool.query(q,args));}catch(e){throw normalize(e);}}
+ async function capability(q,args){if(!capabilityPool)throw unavailable();try{return await capabilityGate(async()=>one(await capabilityPool.query(q,args)));}catch(e){if(e instanceof CapacityError)throw new ServiceError(429,'capability_capacity');throw normalize(e);}}
 
  function identity(bearer){
  if(typeof bearer!=='string'||bearer.length>16400||!/^Bearer [A-Za-z0-9_.-]+$/.test(bearer))throw new ServiceError(401,'authentication_required');
