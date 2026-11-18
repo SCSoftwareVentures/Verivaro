@@ -1,0 +1,27 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {generateKeyPairSync,randomBytes,createHash,randomUUID} from 'node:crypto';
+import {mkdtemp,mkdir,rm,writeFile,readFile,readdir} from 'node:fs/promises';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
+import {buildTenantArchive,unpackTenantArchive} from '../../packages/security/tenant-archive.mjs';
+const sha=b=>createHash('sha256').update(b).digest('hex');
+test('encrypted archive roundtrip, audited inventory, stale scope and tamper denial',async t=>{
+ const dir=await mkdtemp(join(tmpdir(),'vv-port-test-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+ const root=join(dir,'objects');await mkdir(root,{mode:0o700});
+ const tenantId=randomUUID(),projectId=randomUUID(),exportId=randomUUID(),intentId=randomUUID(),objectKey=randomUUID(),b=Buffer.from('synthetic original content');
+ await writeFile(join(root,objectKey),b,{mode:0o600});
+ const item={projectId,intentId,objectKey,sha256:sha(b),bytes:b.length,mediaType:'text/plain'};
+ const pj=JSON.stringify({schema:'verivaro-project-records-v1',tenantId,projectId,exportId,records:{quarantine_receipt:[{tenant_id:tenantId,project_id:projectId,intent_id:intentId,actual_sha256:item.sha256,actual_bytes:item.bytes,media_type:item.mediaType}]}});
+ const json=JSON.stringify({schema:'verivaro-tenant-records-v1',tenantId,exportId,projectCount:1,allProjectRecordsIncluded:true,containsOriginalBytes:false,projects:[{projectId,json:pj,sha256:sha(pj)}]});
+ const records={json,sha256:sha(json)},inv={tenantId,exportId,projectCount:1,objects:[item]},pool={query:async()=>({rows:[{inventory:inv}]})};
+ const keys=generateKeyPairSync('ed25519'),key=randomBytes(32),archive=join(dir,'archive');
+ const args={pool,records,quarantineRoot:root,destination:archive,key,keyId:'test',privateKey:keys.privateKey,expectedTenantId:tenantId,expectedExportId:exportId,expectedRecordsSha256:records.sha256,quiesced:true};
+ await assert.rejects(buildTenantArchive({...args,maxTotalBytes:1}));await assert.rejects(buildTenantArchive({...args,expectedTenantId:randomUUID()}));
+ const built=await buildTenantArchive(args);
+ const read={archive,destination:join(dir,'unpacked'),key,keyId:'test',publicKey:keys.publicKey,expectedTenantId:tenantId,expectedExportId:exportId,expectedManifestSha256:built.manifestSha256};
+ await assert.rejects(unpackTenantArchive({...read,key:randomBytes(32)}));await assert.rejects(unpackTenantArchive({...read,publicKey:generateKeyPairSync('ed25519').publicKey}));
+ const unpacked=await unpackTenantArchive(read);assert.equal(unpacked.originalCount,1);assert.deepEqual(await readFile(join(unpacked.directory,'original-000001.quarantined')),b);
+ const ciphertext=join(archive,'original-000001.vvb'),tampered=await readFile(ciphertext);tampered[80]^=255;await writeFile(ciphertext,tampered);
+ await assert.rejects(unpackTenantArchive({...read,destination:join(dir,'tampered')}));assert.equal((await readdir(dir)).includes('tampered'),false);
+});

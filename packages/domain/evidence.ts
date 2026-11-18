@@ -26,9 +26,9 @@ export function evaluate(input:Input){const {sm}=validate(input);const findings:
  if(!r.approved||r.applicability==='unknown'||!usable(r.span,sm)){status='unknown';reason='Requirement approval, applicability or current source is unresolved.';}
  else if(r.applicability==='not-applicable'){status='not-applicable';reason='Approved not-applicable requirement.';}
  else if(related.length===0){status='missing';reason='No current candidate evidence.';}
- else {const relevant=related.filter(e=>e.kind===r.criterion.kind);const usableEvidence=relevant.filter(e=>usable(e.span,sm)&&e.span.quote===e.value);const values=new Set(usableEvidence.map(e=>e.value));
+ else {const relevant=related.filter(e=>e.kind===r.criterion.kind);const independent=(e:Evidence)=>sm.get(e.span.sourceId)?.documentId!==sm.get(r.span.sourceId)?.documentId;const usableEvidence=relevant.filter(e=>independent(e)&&usable(e.span,sm)&&e.span.quote===e.value);const values=new Set(usableEvidence.map(e=>e.value));
  if(values.size>1||(values.size===1&&!values.has(r.criterion.expected))){status='conflicting';reason='Current evidence contradicts the configured criterion.';}
- else if(relevant.some(e=>!usable(e.span,sm)||e.span.quote!==e.value)){status='unknown';reason='Evidence provenance, asserted value or revision is unresolved.';}
+ else if(relevant.some(e=>!independent(e)||!usable(e.span,sm)||e.span.quote!==e.value)){status='unknown';reason='Evidence provenance, asserted value or revision is unresolved.';}
  else if(usableEvidence.some(e=>e.review==='approved'&&e.value===r.criterion.expected)){status='verified-configured-checks';reason='Approved current evidence matches the configured exact-text criterion.';}
  else {status='provisional';reason='No approved evidence matching the configured criterion.';}}
  findings.push(Object.freeze({requirementId:r.id,revision:r.revision,status,blocker:r.mandatory&&!['verified-configured-checks','not-applicable'].includes(status),reason,sourceIds:Object.freeze([...new Set(ids)].sort(compare))}));}

@@ -1,0 +1,12 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
+import {renderDraft,zipStore} from '../../packages/export/formats.mjs';
+const sha=b=>createHash('sha256').update(b).digest('hex');
+const json=JSON.stringify({id:'draft',generation:'1',asOf:'2026-11-18',disposition:'BLOCKED_DRAFT',sources:[{id:'doc',revision:1,originalSha256:'a'.repeat(64),textSha256:'b'.repeat(64),current:true}],report:{findings:[{requirementId:'r',revision:1,status:'missing',blocker:true,reason:'=HYPERLINK("evil") & <test> 📄'}]}});
+const m={json,sha256:sha(json),stale:false,releaseAuthorised:false};
+test('PDF has header and exact xref offset',()=>{const b=renderDraft(m,'pdf').bytes,s=b.toString();assert.ok(s.startsWith('%PDF-1.4'));const offset=Number(/startxref\n(\d+)/.exec(s)[1]);assert.equal(s.slice(offset,offset+4),'xref');assert.match(s,/INTERNAL DRAFT/);});
+test('XLSX stores literal text, XML escaping and package parts',()=>{const b=renderDraft(m,'xlsx').bytes,s=b.toString();assert.equal(b.readUInt32LE(),0x04034b50);assert.match(s,/\[Content_Types\].xml/);assert.match(s,/t="inlineStr"/);assert.match(s,/&amp; &lt;test&gt;/);assert.doesNotMatch(s,/<f>/);});
+test('ZIP deterministic and contains checksums',()=>{const a=renderDraft(m,'zip').bytes,b=renderDraft(m,'zip').bytes;assert.deepEqual(a,b);assert.match(a.toString(),/SHA256SUMS.txt/);assert.match(a.toString(),new RegExp(sha(json)));});
+test('stale PDF marked historical and altered manifest denied',()=>{assert.match(renderDraft({...m,stale:true},'pdf').bytes.toString(),/STALE - HISTORICAL DRAFT/);assert.throws(()=>renderDraft({...m,json:json+' '},'zip'));});
+test('archive refuses unsafe or duplicate names',()=>{assert.throws(()=>zipStore([['../escape','x']]));assert.throws(()=>zipStore([['a','1'],['a','2']]));});

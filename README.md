@@ -1,32 +1,27 @@
-# Verivaro — engineering increment 0.1.0
+# Verivaro — engineering candidate 0.1.0
 
 Intelligence. Verified.
 
-**Status:** Initial engineering foundation, synthetic data only. Not a production application or release. The approved [V4.0 master blueprint](docs/product/MASTER_BLUEPRINT.md) is the source of truth. The [engineering status](docs/engineering/STATUS.md) records partial implementation and outstanding acceptance gates.
+**Status:** Draft engineering branch, synthetic data only. No production release, live customer deployment, independent certification or trademark clearance. The [V4.0 master blueprint](docs/product/MASTER_BLUEPRINT.md) defines the agreed scope. [Acquisition guide](docs/acquisition/HANDOVER.md) describes the implemented architecture and outstanding buyer gates; do not rely on the historical initial status file as current completion.
 
-This public repository is restricted to synthetic examples and source code. Never commit actual project documents, customer records, credentials or confidential data. No license granting redistribution is implied; ownership and license review remain open.
+This public repository contains synthetic examples and source code only. Never commit actual project documents, customer records, credentials or confidential data. No licence granting redistribution is implied; ownership and licence review remain open.
 
-## Local verification
+## Verification
 
-Node.js 22.16.0 is the exact local baseline, not a production security endorsement. The temporary runner uses experimental native TypeScript stripping. There are no runtime dependencies.
+Pin Node.js 22.16.0 for reproducible test execution (not a production patch endorsement). PostgreSQL 16 and distinct database role credentials are required for integrated tests. The locked runtime dependency is pg and its transitive packages.
 
 ```sh
-npm ci --ignore-scripts
+npm ci --ignore-scripts --no-audit --no-fund
 npm test
 npm run demo
+node --experimental-strip-types tests/benchmarks/run.mjs holdout
+node --experimental-strip-types tests/benchmarks/performance.mjs
 ```
 
-The demo prints a blocked finding for a synthetic mismatched equipment serial; it does not host a website.
+The demo prints a synthetic blocked finding. Hosted CI runs database, HTTP, Chromium, parsing, scanner, isolation, restore and benchmark suites using synthetic fixtures only. See the exact checkout revision and run result; a green prior revision is not a release approval.
 
-## Components
+## Implemented architecture
 
-- Evidence verification: exact-source checks, revision consistency, mandatory submission blockers and dependency impact.
-- ProofLock: confirmed UTC evidence deadlines, not a live schedule or notification service.
-- Financial rules: exact AUD cents, basis grouping, confirmed milestone deduplication, unknown counts; not legal or payment entitlement.
-- Draft snapshots: deterministic index and text digest verification; not a signed or released handover.
+Separate scoped PostgreSQL roles and append-only evidence revisions; authenticated HTTP API and mobile reviewer workspace; quarantine and extraction workers; ProofLock schedules and capture; source-grounded advisory intelligence; correction workflows; financial records; internal draft PDF/ZIP/XLSX; separately authorised time-limited metadata/original sharing. External AI remains disabled. Production monitoring, legal and security acceptance gates remain open.
 
-## Security boundary
-
-The present components are local domain functions, not an authenticated API. Input scope, review, source and scan assertions are supplied by the caller. Real authentication, tenant/project isolation, storage quarantine, scanning, document parsing, authorisation and production operations are outstanding.
-
-No production deployment or real-data ingestion is authorised. ProfitPilot code and data are not reused.
+[Candidate packaging and verification](docs/acquisition/HANDOVER.md) includes reproducible source archives, SBOM, dependency licence evidence, dependency advisory gate, and signed candidate integrity verification. No deployment authorised.

@@ -23,5 +23,309 @@ jobs:
         with:
           node-version: '22.16.0'
       - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: find packages tests scripts -name '*.mjs' -print0 | xargs -0 -n1 node --check
       - run: npm test
       - run: npm run demo
+
+  database:
+    name: PostgreSQL 16 foundation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ephemeral-ci-only
+          POSTGRES_DB: verivaro_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: ephemeral-ci-only
+      PGDATABASE: verivaro_test
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/001_foundation.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/002_scoped_ingestion.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/003_quarantine_audit.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/004_upload_status.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/005_recovery_queue.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/006_draft_extraction.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/007_document_review.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/008_evidence_graph.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/009_workflow_handover.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/010_case_rebind.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/011_financial_intelligence.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/012_index_access.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/013_original_access.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/014_contract_relations.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/015_workspace_catalog.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/016_release_catalog.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/017_capture_identity.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/018_reviewer_capture.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/019_authority_inventory.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/020_rejection_notices.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/021_correction_plans.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/022_privacy_lifecycle.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/023_erasure_reconciliation.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/024_tenant_portability_restore.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/025_original_portability.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/foundation.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/privilege_matrix.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/scoped_ingestion.sql
+
+      - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/quarantine_audit.sql
+
+      - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/upload_status.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/recovery_queue.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/draft_extraction.sql
+
+  live-api:
+    name: Real PostgreSQL HTTP integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ephemeral-ci-only
+          POSTGRES_DB: verivaro_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: ephemeral-ci-only
+      PGDATABASE: verivaro_test
+      VV_LIVE_TEST: '1'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.16.0'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: |
+          for migration in database/migrations/*.sql; do psql -X -v ON_ERROR_STOP=1 -f "$migration"; done
+          psql -X -v ON_ERROR_STOP=1 -f tests/database/foundation.sql
+          psql -X -v ON_ERROR_STOP=1 -f tests/database/live_logins.sql
+      - run: node --experimental-strip-types --test tests/integration/live-api.test.mjs
+
+  recovery-benchmark:
+    name: PostgreSQL load and quiesced restore drill
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ephemeral-ci-only
+          POSTGRES_DB: verivaro_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: ephemeral-ci-only
+      PGDATABASE: verivaro_test
+      VV_LIVE_TEST: '1'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.16.0'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: |
+          for migration in database/migrations/*.sql; do psql -X -v ON_ERROR_STOP=1 -f "$migration"; done
+          psql -X -v ON_ERROR_STOP=1 -f tests/database/foundation.sql
+          psql -X -v ON_ERROR_STOP=1 -f tests/database/live_logins.sql
+      - run: node --experimental-strip-types --test tests/integration/recovery-benchmark.test.mjs
+        env:
+          VV_PG_CONTAINER: ${{ job.services.postgres.id }}
+
+  live-browser:
+    name: Real Chromium to PostgreSQL user workflow
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ephemeral-ci-only
+          POSTGRES_DB: verivaro_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: ephemeral-ci-only
+      PGDATABASE: verivaro_test
+      VV_LIVE_TEST: '1'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.16.0'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: |
+          for migration in database/migrations/*.sql; do psql -X -v ON_ERROR_STOP=1 -f "$migration"; done
+          psql -X -v ON_ERROR_STOP=1 -f tests/database/foundation.sql
+          psql -X -v ON_ERROR_STOP=1 -f tests/database/live_logins.sql
+      - run: node --experimental-strip-types --test tests/integration/live-browser.test.mjs
+
+  native-extraction:
+    name: Actual Poppler and Tesseract fixture tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.16.0'
+      - run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends poppler-utils tesseract-ocr tesseract-ocr-eng imagemagick fonts-dejavu-core zbar-tools
+      - run: node --test tests/integration/native-extraction.test.mjs tests/integration/qr-decoder.test.mjs
+
+  malware-engine:
+    name: Actual ClamAV daemon fixture verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.16.0'
+      - run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends clamav-daemon
+      - run: node --test tests/integration/clamav.test.mjs
+
+  browser:
+    name: Chromium mobile workspace smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.16.0'
+      - run: google-chrome --version
+      - run: node --check packages/web/app.mjs
+      - run: node --experimental-strip-types --test tests/integration/browser.test.mjs
+
+  intelligence-isolation:
+    name: Linux offline intelligence containment
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.16.0'
+      - name: Build offline worker
+        run: docker build --network=none -f deploy/intelligence/Dockerfile -t verivaro-intelligence:ci .
+      - name: Exercise kernel controls and actual worker
+        run: |
+          export VV_INTELLIGENCE_IMAGE="$(docker image inspect --format '{{.Id}}' verivaro-intelligence:ci)"
+          node --test tests/integration/intelligence-container.test.mjs
+
+  intelligence-benchmark:
+    name: Synthetic configured-checks benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.16.0'
+      - name: Developer regression split
+        run: node --experimental-strip-types tests/benchmarks/run.mjs development
+      - name: Fixed project holdout and critical readiness gate
+        run: node --experimental-strip-types tests/benchmarks/run.mjs holdout
+      - name: Sparse graph and incremental cache performance
+        run: node --experimental-strip-types tests/benchmarks/performance.mjs
+
+  software-candidate:
+    name: Software candidate integrity and acquisition smoke
+    needs: [unit, database, live-api, recovery-benchmark, live-browser, native-extraction, malware-engine, browser, intelligence-isolation, intelligence-benchmark]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.16.0'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Dependency advisory gate
+        run: npm audit --omit=dev --audit-level=high --json > "$RUNNER_TEMP/vv-npm-audit.json"
+      - name: Build reproducible signed internal candidate
+        env:
+          VV_AUDIT_JSON: ${{ runner.temp }}/vv-npm-audit.json
+        run: |
+          set -euo pipefail
+          node scripts/candidate-build.mjs "$RUNNER_TEMP/vv-candidate" ci-ephemeral | tee "$RUNNER_TEMP/vv-signing.json"
+          fingerprint="$(node -p "JSON.parse(require('fs').readFileSync(process.env.RUNNER_TEMP+'/vv-signing.json','utf8')).fingerprint")"
+          node scripts/candidate-verify.mjs "$RUNNER_TEMP/vv-candidate" "$RUNNER_TEMP/vv-candidate/candidate-public.pem" "$(git rev-parse HEAD)" "$fingerprint" ci-ephemeral
+          mkdir "$RUNNER_TEMP/vv-unpacked"
+          tar -xf "$RUNNER_TEMP/vv-candidate/source.tar" -C "$RUNNER_TEMP/vv-unpacked"
+          node scripts/verify-unpacked-source.mjs "$RUNNER_TEMP/vv-unpacked/verivaro" "$RUNNER_TEMP/vv-candidate/source-files.json"
+          cd "$RUNNER_TEMP/vv-unpacked/verivaro"
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm test
+          npm run demo
+          docker pull postgres:16
+          pg_image="$(docker image inspect --format '{{.Id}}' postgres:16)"
+          echo "Synthetic PostgreSQL image ID: $pg_image"
+          bash scripts/synthetic-acquisition-smoke.sh "$pg_image"
+      - name: Retain internal candidate for review (not a release)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: verivaro-internal-candidate-${{ github.run_id }}
+          path: ${{ runner.temp }}/vv-candidate/
+          if-no-files-found: error
+          retention-days: 7

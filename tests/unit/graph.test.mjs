@@ -1,0 +1,20 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {evaluateGraph,reviewDigest} from '../../packages/domain/graph.mjs';
+const scope={tenantId:'t',projectId:'p'},source=(id,documentId,text,current=true,revision=1)=>({id,documentId,text,current,revision,scan:'clean',reviewed:true});
+const fixture=()=>({generation:'3',scopeConfirmed:true,sources:[source('d','contract','📄 MUST ABC'),source('e','certificate','📄 ABC')],requirements:[{id:'r',revision:1,approved:true,applicability:'applicable',mandatory:true,criterion:{kind:'serial',expected:'ABC'},span:{sourceId:'d',start:2,end:10,quote:'MUST ABC'}}],evidence:[{id:'e1',requirementId:'r',requirementRevision:1,span:{sourceId:'e',start:2,end:5,quote:'ABC'},kind:'serial',value:'ABC',review:'approved'}]});
+test('codepoint offsets round-trip through UTF-16 including astral characters',()=>assert.equal(evaluateGraph(scope,fixture()).ready,true));
+test('explicit scope confirmation required even if configured checks pass',()=>{const f=fixture();f.scopeConfirmed=false;const r=evaluateGraph(scope,f);assert.equal(r.configuredChecksReady,true);assert.equal(r.ready,false);});
+test('superseded evidence fails closed',()=>{const f=fixture();f.sources[1].current=false;f.sources.push(source('e2','certificate','new evidence',true,2));assert.equal(evaluateGraph(scope,f).findings[0].status,'unknown');});
+test('conflicting current evidence takes priority',()=>{const f=fixture();f.sources.push(source('e3','other','XYZ'));f.evidence.push({...f.evidence[0],id:'e2',value:'XYZ',span:{sourceId:'e3',start:0,end:3,quote:'XYZ'}});const r=evaluateGraph(scope,f);assert.equal(r.ready,false);assert.equal(r.findings[0].status,'conflicting');assert.equal(r.actions[0].priority,'mandatory');});
+test('page digest is deterministic and separator bound',()=>assert.notEqual(reviewDigest([{text_value:'a'},{text_value:'b'}]),reviewDigest([{text_value:'ab'}])));
+
+test('sparse Unicode conversion preserves exact late offsets and rejects out-of-range code points',()=>{
+ const g=fixture(),text='𐐀a'.repeat(20000)+'📄 ABC';
+ g.sources[1].text=text;g.evidence[0].span={sourceId:'e',start:40002,end:40005,quote:'ABC'};
+ assert.equal(evaluateGraph(scope,g).ready,true);
+ g.evidence[0].span.end=40006;assert.throws(()=>evaluateGraph(scope,g),/invalid persisted span/);
+});
+test('many shared offsets on one source are evaluated without changing findings',()=>{
+ const g=fixture();g.evidence=Array.from({length:1000},(_,i)=>({...g.evidence[0],id:'e'+i}));assert.equal(evaluateGraph(scope,g).ready,true);
+});
