@@ -15,6 +15,7 @@ const intelligence=new RegExp('^'+prefix+'/uploads/'+UUID+'/intelligence$'),sugg
 const rejectionNotice=new RegExp('^'+prefix+'/rejection-notices$'),objectionCandidates=new RegExp('^'+prefix+'/uploads/'+UUID+'/objections$');
 const correctionPlan=new RegExp('^'+prefix+'/correction-plans$'),correctionCover=new RegExp('^'+prefix+'/correction-plans/'+UUID+'/cover$');
 const privacy=new RegExp('^'+prefix+'/privacy$'),retention=new RegExp('^'+prefix+'/privacy/retention$'),erasure=new RegExp('^'+prefix+'/privacy/erasure$'),projectExport=new RegExp('^'+prefix+'/privacy/export$');
+const tenantPortability=new RegExp('^'+prefix+'/privacy/tenant-inventory$');
 const catalog=new RegExp('^'+prefix+'/catalog$');
 const milestoneUpload=new RegExp('^'+prefix+'/documents/'+UUID+'/milestone-uploads$'),reviewerOriginal=new RegExp('^'+prefix+'/uploads/'+UUID+'/original$');
 function rejectAmbiguity(req,path){
@@ -87,6 +88,7 @@ export function createHttpServer(service){
  else if(req.method==='POST'&&(m=dispute.exec(path))){out=await service.recordDispute(b,m[1],m[2],await json(req));status=201;}
  else if(req.method==='GET'&&(m=pack.exec(path)))out=await service.disputePack(b,m[1],m[2],m[3]);
  else if(req.method==='GET'&&(m=catalog.exec(path)))out=await service.catalog(b,m[1],m[2]);
+ else if(req.method==='GET'&&(m=tenantPortability.exec(path)))out=await service.tenantPortability(b,m[1],m[2]);
  else if(req.method==='GET'&&(m=privacy.exec(path)))out=await service.privacyStatus(b,m[1],m[2]);
  else if(req.method==='POST'&&(m=retention.exec(path))){out=await service.saveRetention(b,m[1],m[2],await json(req));status=201;}
  else if(req.method==='POST'&&(m=erasure.exec(path))){out=await service.saveErasureRequest(b,m[1],m[2],await json(req));status=201;}
