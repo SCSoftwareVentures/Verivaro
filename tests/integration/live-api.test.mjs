@@ -47,13 +47,26 @@ test('real PostgreSQL and HTTP: distinct roles, persistence, tenant denial, revo
  // First PDF enters unsupported extraction status, never silently verified.
  assert.equal((await processOneScan(pools[2],root,(b,m)=>({sha256:m.sha256,outcome:'clean',engine:'synthetic-only',engineVersion:'1'}))).state,'complete');
  assert.equal((await processOneExtraction(pools[3],root)).state,'unsupported');
- const text=Buffer.from('exact synthetic text \u{1f4c4}'),textHash=createHash('sha256').update(text).digest('hex'),textIntent=U('6',92);
+ const text=Buffer.from('Exact synthetic text \u{1f4c4}\nSerial MUST be ABC-123'),textHash=createHash('sha256').update(text).digest('hex'),textIntent=U('6',92);
  assert.equal((await call('POST',url+'/documents/'+doc+'/uploads','a',{id:textIntent,sha256:textHash,bytes:text.length,mediaType:'text/plain'})).status,202);
  assert.equal((await call('PUT',url+'/uploads/'+textIntent,'a',text,'application/octet-stream')).status,202);
  assert.equal((await processOneScan(pools[2],root,(b,m)=>({sha256:m.sha256,outcome:'clean',engine:'synthetic-only',engineVersion:'1'}))).state,'complete');
  assert.equal((await processOneExtraction(pools[3],root)).state,'complete');
  const draft=await admin.query('SELECT text_value,source_sha256 FROM vv_app.extracted_text_draft WHERE intent_id=$1',[textIntent]);assert.deepEqual(draft.rows,[{text_value:text.toString(),source_sha256:textHash}]);
  assert.equal(Number((await admin.query('SELECT count(*) FROM vv_app.document_version')).rows[0].count),0);
+ const reviewed=await call('GET',url+'/uploads/'+textIntent+'/review');assert.equal(reviewed.status,200);assert.equal(reviewed.body.candidates.length,1);
+ const candidate=reviewed.body.candidates[0],decision={id:U('9',91),page:candidate.page,start:candidate.start,end:candidate.end,quote:candidate.quote,textSha256:candidate.textSha256,decision:'approved',kind:'serial',expected:'ABC-123',mandatory:true};
+ assert.equal((await call('GET',url+'/uploads/'+textIntent+'/review','b')).status,404);
+ assert.equal((await call('POST',url+'/uploads/'+textIntent+'/review','a',{...decision,quote:'forged'})).status,400);
+ const matches=await call('POST',url+'/uploads/'+textIntent+'/matches','a',{expected:'ABC-123'});assert.equal(matches.body.matches.length,1);
+ await admin.query("UPDATE vv_private.project_member SET role='contributor' WHERE actor_id=$1 AND project_id=$2",[actor,project]);
+ assert.equal((await call('POST',url+'/uploads/'+textIntent+'/review','a',decision)).status,404);
+ await admin.query("UPDATE vv_private.project_member SET role='owner' WHERE actor_id=$1 AND project_id=$2",[actor,project]);
+ assert.equal((await call('POST',url+'/uploads/'+textIntent+'/review','a',decision)).status,201);
+ assert.equal((await call('POST',url+'/uploads/'+textIntent+'/review','a',decision)).status,201);
+ assert.equal((await call('POST',url+'/uploads/'+textIntent+'/review','a',{...decision,mandatory:false})).status,409);
+ assert.equal(Number((await admin.query('SELECT count(*) FROM vv_app.requirement_decision')).rows[0].count),1);
+ assert.equal(Number((await admin.query('SELECT count(*) FROM vv_app.requirement_version')).rows[0].count),0);
  await admin.query('UPDATE vv_private.project_member SET active=false,version=version+1 WHERE tenant_id=$1 AND project_id=$2 AND actor_id=$3',[tenant,project,actor]);
  assert.equal((await call('GET',path)).status,404);
  assert.equal((await call('PUT',path,'a',payload,'application/octet-stream')).status,404);

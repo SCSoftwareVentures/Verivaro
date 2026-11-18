@@ -60,6 +60,7 @@ jobs:
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/004_upload_status.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/005_recovery_queue.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/006_draft_extraction.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/007_document_review.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/foundation.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/scoped_ingestion.sql
 
@@ -107,3 +108,17 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f tests/database/foundation.sql
           psql -X -v ON_ERROR_STOP=1 -f tests/database/live_logins.sql
       - run: node --test tests/integration/live-api.test.mjs
+
+  native-extraction:
+    name: Actual Poppler and Tesseract fixture tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.16.0'
+      - run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends poppler-utils tesseract-ocr tesseract-ocr-eng imagemagick fonts-dejavu-core
+      - run: node --test tests/integration/native-extraction.test.mjs

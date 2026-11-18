@@ -1,5 +1,6 @@
 import {verifyAccessToken} from '../security/oidc.mjs';
 import {quarantineUpload} from '../security/quarantine.mjs';
+import {proposeRequirements,suggestMatches} from '../domain/proposals.mjs';
 import {randomUUID} from 'node:crypto';
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const MIME=new Set(['application/pdf','image/jpeg','image/png','text/plain']);
@@ -24,6 +25,8 @@ export const SQL=Object.freeze({
  document:'SELECT vv_api.create_document($1,$2,$3,$4) AS id',
  intent:'SELECT vv_api.request_upload($1,$2,$3,$4,$5,$6,$7) AS id',
  status:'SELECT * FROM vv_api.upload_status($1,$2,$3)',
+ reviewPages:'SELECT * FROM vv_api.review_pages($1,$2,$3)',
+ decision:'SELECT vv_api.decide_requirement($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) AS id',
  reserve:'SELECT vv_api.reserve_file($1,$2,$3,$4) AS id',
  receipt:'SELECT vv_api.record_quarantine($1,$2,$3,$4,$5,$6,$7) AS id'
 });
@@ -72,6 +75,15 @@ export function createService({runtimePool,signerPool,workerPool,issuerConfig,ke
  uuid(d);exact(body,['id','sha256','bytes','mediaType']);uuid(body.id);
  if(typeof body.sha256!=='string'||!/^[a-f0-9]{64}$/.test(body.sha256)||!Number.isSafeInteger(body.bytes)||body.bytes<1||body.bytes>52428800||!MIME.has(body.mediaType))throw bad();
  return scoped(b,t,p,async c=>({id:one(await c.query(SQL.intent,[t,p,d,body.id,body.sha256,body.bytes,body.mediaType])).id,state:'pending'}));
+ },
+ async reviewDraft(b,t,p,u){uuid(u);return scoped(b,t,p,async c=>{const {rows}=await c.query(SQL.reviewPages,[t,p,u]);return {pages:rows,...proposeRequirements(rows)};});},
+ async matchDraft(b,t,p,u,body){uuid(u);exact(body,['expected']);if(typeof body.expected!=='string'||!body.expected.trim()||body.expected.length>500)throw bad();return scoped(b,t,p,async c=>suggestMatches((await c.query(SQL.reviewPages,[t,p,u])).rows,body.expected));},
+ async decideRequirement(b,t,p,u,body){
+ uuid(u);exact(body,['id','page','start','end','quote','textSha256','decision','kind','expected','mandatory']);uuid(body.id);
+ if(!Number.isSafeInteger(body.page)||body.page<1||body.page>20||!Number.isSafeInteger(body.start)||!Number.isSafeInteger(body.end)||body.start<0||body.end<=body.start||body.end-body.start>2000||typeof body.quote!=='string'||typeof body.textSha256!=='string'||!/^[a-f0-9]{64}$/.test(body.textSha256)||!['approved','rejected'].includes(body.decision))throw bad();
+ if(body.decision==='approved'&&(typeof body.kind!=='string'||typeof body.expected!=='string'||typeof body.mandatory!=='boolean'))throw bad();
+ if(body.decision==='rejected'&&(body.kind!==null||body.expected!==null||body.mandatory!==null))throw bad();
+ return scoped(b,t,p,async c=>({id:one(await c.query(SQL.decision,[t,p,u,body.id,body.page,body.start,body.end,body.quote,body.textSha256,body.decision,body.kind,body.expected,body.mandatory])).id,state:body.decision+'-proposal'}));
  },
  async status(b,t,p,u){const m=await getStatus(b,t,p,u);return {id:u,state:m.received?'quarantined':'pending'};},
  async upload(b,t,p,u,body){
