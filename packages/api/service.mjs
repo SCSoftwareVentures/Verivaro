@@ -1,10 +1,11 @@
 import {verifyAccessToken} from '../security/oidc.mjs';
-import {quarantineUpload} from '../security/quarantine.mjs';
+import {quarantineUpload,readVerifiedQuarantine,scanQuarantine} from '../security/quarantine.mjs';
 import {proposeRequirements,suggestMatches} from '../domain/proposals.mjs';
 import {evaluateGraph,reviewDigest} from '../domain/graph.mjs';
 import {evaluateWorkspace,handoverManifest} from '../domain/workspace.mjs';
 import {evaluateFinance,disputePack} from '../domain/finance.mjs';
 import {randomUUID,randomBytes,createHash} from 'node:crypto';
+import {createReleaseSigner} from '../security/releases.mjs';
 import {renderDraft} from '../export/formats.mjs';
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const MIME=new Set(['application/pdf','image/jpeg','image/png','text/plain']);
@@ -48,6 +49,10 @@ export const SQL=Object.freeze({
  grantIndex:'SELECT vv_api.grant_index($1,$2,$3,$4,$5,$6) AS id',
  revokeIndex:'SELECT vv_api.revoke_index($1,$2,$3) AS id',
  sharedIndex:'SELECT vv_api.read_shared_index($1,$2) AS shared',
+ approveOriginals:'SELECT vv_api.approve_originals($1,$2,$3,$4::uuid[]) AS id',
+ grantOriginals:'SELECT vv_api.grant_originals($1,$2,$3,$4,$5,$6) AS id',
+ bundleIndex:'SELECT vv_api.read_bundle_index($1,$2) AS shared',
+ original:'SELECT vv_api.read_original($1,$2,$3,$4) AS receipt',
  graph:'SELECT vv_api.graph($1,$2) AS graph',
  reserve:'SELECT vv_api.reserve_file($1,$2,$3,$4) AS id',
  receipt:'SELECT vv_api.record_quarantine($1,$2,$3,$4,$5,$6,$7) AS id'
@@ -56,10 +61,16 @@ export const SQL=Object.freeze({
  * Pools must be separately provisioned, genuinely distinct restricted DB identities.
  * Never feed client-controlled SQL, claim fields, role, or pool configuration into this service.
  */
-export function createService({runtimePool,signerPool,workerPool,issuerConfig,keyId,quarantineRoot,now=()=>Math.floor(Date.now()/1000)}){
+export function createService({runtimePool,signerPool,workerPool,issuerConfig,keyId,quarantineRoot,capabilityPool,releaseSigning,downloadScanner,now=()=>Math.floor(Date.now()/1000)}){
  if(!runtimePool?.connect||!signerPool?.query||!workerPool?.query||new Set([runtimePool,signerPool,workerPool]).size!==3||typeof quarantineRoot!=='string'||!quarantineRoot)throw Error('separate trusted service pools required');
  uuid(keyId);
  const config=structuredClone(issuerConfig);
+ const releaseSigner=releaseSigning?createReleaseSigner(releaseSigning):null;
+ if(capabilityPool&&(!capabilityPool.query||[runtimePool,signerPool,workerPool].includes(capabilityPool)))throw Error('separate capability pool required');
+ let activeDownloads=0;
+ function shareDigest(b){if(typeof b!=='string'||!/^Share [A-Za-z0-9_-]{43}$/.test(b))throw deny();return createHash('sha256').update(b.slice(6)).digest('hex');}
+ async function capability(q,args){if(!capabilityPool)throw unavailable();try{return one(await capabilityPool.query(q,args));}catch(e){throw normalize(e);}}
+
  function identity(bearer){
  if(typeof bearer!=='string'||bearer.length>16400||!/^Bearer [A-Za-z0-9_.-]+$/.test(bearer))throw new ServiceError(401,'authentication_required');
  try{return verifyAccessToken(bearer.slice(7),config,now());}catch{throw new ServiceError(401,'authentication_required');}
@@ -152,10 +163,21 @@ export function createService({runtimePool,signerPool,workerPool,issuerConfig,ke
  return scoped(b,t,p,async c=>({id:one(await c.query(SQL.grantIndex,[t,p,r,body.id,digest,body.ttlSeconds])).id,token,ttlSeconds:body.ttlSeconds}));
  },
  async revokeIndex(b,t,p,i){uuid(i);return scoped(b,t,p,async c=>({id:one(await c.query(SQL.revokeIndex,[t,p,i])).id}));},
- async readSharedIndex(b,r){uuid(r);if(typeof b!=='string'||!/^Share [A-Za-z0-9_-]{43}$/.test(b))throw deny();
- let c;try{c=await runtimePool.connect();const row=one(await c.query(SQL.sharedIndex,[r,createHash('sha256').update(b.slice(6)).digest('hex')])).shared;
- if(typeof row.json!=='string'||createHash('sha256').update(row.json).digest('hex')!==row.sha256)throw unavailable();return row;
- }catch(e){throw normalize(e);}finally{if(c)c.release();}
+ async readSharedIndex(b,r){uuid(r);const row=(await capability(SQL.sharedIndex,[r,shareDigest(b)])).shared;if(typeof row.json!=='string'||createHash('sha256').update(row.json).digest('hex')!==row.sha256)throw unavailable();return releaseSigner?releaseSigner.sign(row):row;},
+ async approveOriginals(b,t,p,r,body){uuid(r);exact(body,['documentVersionIds']);if(!Array.isArray(body.documentVersionIds)||body.documentVersionIds.length<1||body.documentVersionIds.length>50||new Set(body.documentVersionIds).size!==body.documentVersionIds.length)throw bad();body.documentVersionIds.forEach(uuid);return scoped(b,t,p,async c=>({id:one(await c.query(SQL.approveOriginals,[t,p,r,body.documentVersionIds])).id}));},
+ async grantOriginals(b,t,p,r,body){uuid(r);exact(body,['id','ttlSeconds']);uuid(body.id);if(!Number.isSafeInteger(body.ttlSeconds)||body.ttlSeconds<60||body.ttlSeconds>604800)throw bad();if(!releaseSigner||typeof downloadScanner!=='function'||!capabilityPool)throw unavailable();
+ const token=randomBytes(32).toString('base64url');return scoped(b,t,p,async c=>({id:one(await c.query(SQL.grantOriginals,[t,p,r,body.id,createHash('sha256').update(token).digest('hex'),body.ttlSeconds])).id,token,ttlSeconds:body.ttlSeconds}));},
+ async readBundleIndex(b,r){uuid(r);if(!releaseSigner)throw unavailable();return releaseSigner.sign((await capability(SQL.bundleIndex,[r,shareDigest(b)])).shared);},
+ async downloadOriginal(b,r,v){uuid(r);uuid(v);const digest=shareDigest(b);if(!releaseSigner||typeof downloadScanner!=='function')throw unavailable();
+ if(activeDownloads>=2)throw new ServiceError(429,'download_capacity');activeDownloads++;
+ try{
+ const receipt=(await capability(SQL.original,[r,v,digest,false])).receipt;
+ let bytes;try{bytes=await readVerifiedQuarantine(quarantineRoot,receipt,{maxBytes:10485760});const verdict=await scanQuarantine(quarantineRoot,receipt,downloadScanner);if(verdict.outcome!=='clean')throw Error('not clean');}catch{throw unavailable();}
+ const current=(await capability(SQL.original,[r,v,digest,true])).receipt;
+ if(current.objectKey!==receipt.objectKey||current.sha256!==receipt.sha256||current.bytes!==receipt.bytes||current.mediaType!==receipt.mediaType)throw unavailable();
+ // Serve as attachment only; never execute untrusted file contents.
+ return {bytes,type:'application/octet-stream',filename:v+({ 'application/pdf':'.pdf','image/png':'.png','image/jpeg':'.jpg','text/plain':'.txt'}[receipt.mediaType]),sha256:receipt.sha256};
+ }finally{activeDownloads--;}
  },
  async financial(b,t,p){return scoped(b,t,p,async c=>evaluateFinance({tenantId:t,projectId:p},one(await c.query(SQL.financial,[t,p])).financial));},
  async saveFinance(b,t,p,body){

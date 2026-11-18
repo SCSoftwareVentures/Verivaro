@@ -10,3 +10,6 @@ UPDATE vv_private.identity SET issuer='https://issuer.invalid' WHERE issuer='syn
 
 CREATE ROLE vv_test_parser LOGIN PASSWORD 'vv-ci-parser-only' NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOBYPASSRLS;
 GRANT verivaro_parse_worker TO vv_test_parser;
+
+CREATE ROLE vv_test_capability LOGIN PASSWORD 'vv-ci-capability-only' NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOBYPASSRLS;
+GRANT verivaro_capability TO vv_test_capability;

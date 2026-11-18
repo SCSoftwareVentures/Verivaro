@@ -66,6 +66,7 @@ jobs:
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/010_case_rebind.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/011_financial_intelligence.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/012_index_access.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/013_original_access.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/foundation.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/scoped_ingestion.sql
 

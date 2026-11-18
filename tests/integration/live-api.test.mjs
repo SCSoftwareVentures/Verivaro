@@ -8,6 +8,7 @@ import {join} from 'node:path';
 import {createPostgresService} from '../../packages/api/postgres.mjs';
 import {processOneScan} from '../../packages/worker/maintenance.mjs';
 import {processOneExtraction} from '../../packages/worker/extraction.mjs';
+import {verifyRelease} from '../../packages/security/releases.mjs';
 import {createHttpServer} from '../../packages/api/http.mjs';
 const U=(p,n)=>p+'0000000-0000-0000-0000-'+String(n).padStart(12,'0');
 const tenant=U('0',1),project=U('2',1),actor=U('1',1),key=U('3',1),doc=U('4',91),intent=U('6',91);
@@ -19,8 +20,9 @@ function token(sub){const now=Math.floor(Date.now()/1000);const s=enc({alg:'RS25
 const payload=Buffer.from('%PDF-1.7\nreal integration synthetic bytes'),hash=createHash('sha256').update(payload).digest('hex');
 const cfg=(role)=>({host:process.env.PGHOST,port:Number(process.env.PGPORT),database:process.env.PGDATABASE,user:'vv_test_'+role,password:'vv-ci-'+role+'-only'});
 test('real PostgreSQL and HTTP: distinct roles, persistence, tenant denial, revocation, quarantine and audit', {skip:process.env.VV_LIVE_TEST!=='1'},async t=>{
- const root=await mkdtemp(join(tmpdir(),'vv-live-api-'));const admin=new pg.Pool();const pools=['runtime','signer','worker','parser'].map(r=>new pg.Pool(cfg(r)));
- const app=createPostgresService({database:{runtime:cfg('runtime'),signer:cfg('signer'),worker:cfg('worker')},issuerConfig:config,keyId:key,quarantineRoot:root});
+ const root=await mkdtemp(join(tmpdir(),'vv-live-api-'));const admin=new pg.Pool();const pools=['runtime','signer','worker','parser','capability'].map(r=>new pg.Pool(cfg(r)));
+ const releaseKeys=generateKeyPairSync('ed25519');let scanMode='clean';
+ const app=createPostgresService({database:{runtime:cfg('runtime'),signer:cfg('signer'),worker:cfg('worker'),capability:cfg('capability')},issuerConfig:config,keyId:key,quarantineRoot:root,releaseSigning:{keyId:'ci-ephemeral',privateKey:releaseKeys.privateKey},downloadScanner:(bytes,m)=>({sha256:m.sha256,outcome:scanMode,engine:'synthetic-only',engineVersion:'1'})});
  const server=createHttpServer(app.service);
  t.after(async()=>{await new Promise(r=>server.close(r));await app.close();await Promise.all(pools.map(p=>p.end()));await admin.end();await rm(root,{recursive:true,force:true});});
  await new Promise((r,j)=>{server.once('error',j);server.listen(0,'127.0.0.1',r);});
@@ -206,6 +208,23 @@ test('real PostgreSQL and HTTP: distinct roles, persistence, tenant denial, revo
  assert.equal((await share(access2.body.token)).status,404);
  const access3=await call('POST',url+'/index-releases/'+releaseId+'/grants','a',{id:U('c',95),ttlSeconds:3600});assert.equal(access3.status,201);
  assert.equal((await share(access3.body.token)).status,200);
+ // Original-file share grants deliberately cannot be inferred from metadata access.
+ const fileRoute=shareUrl+'/originals/'+certV;
+ const getFile=secret=>fetch(fileRoute,{headers:{authorization:'Share '+secret}});
+ assert.equal((await getFile(access3.body.token)).status,404);
+ assert.equal((await call('POST',url+'/index-releases/'+releaseId+'/approve-originals','a',{documentVersionIds:[contractV2]})).status,404);
+ assert.equal((await call('POST',url+'/index-releases/'+releaseId+'/approve-originals','a',{documentVersionIds:[certV]})).status,201);
+ assert.equal((await getFile(access3.body.token)).status,404);
+ const originalGrant=await call('POST',url+'/index-releases/'+releaseId+'/original-grants','a',{id:U('c',96),ttlSeconds:300});assert.equal(originalGrant.status,201);
+ const bundle=await share(originalGrant.body.token,shareUrl+'/bundle');assert.equal(bundle.status,200);assert.equal(verifyRelease(bundle.body,{keyId:'ci-ephemeral',publicKey:releaseKeys.publicKey}),true);
+ assert.equal(JSON.parse(bundle.body.json).originalDocumentVersionIds[0],certV);
+ const file=await getFile(originalGrant.body.token);assert.equal(file.status,200);assert.equal(await file.text(),'📄 ABC-123');assert.match(file.headers.get('content-disposition'),/^attachment/);
+ scanMode='rejected';assert.equal((await getFile(originalGrant.body.token)).status,503);scanMode='clean';
+ assert.equal(Number((await admin.query('SELECT count(*) FROM vv_private.capability_audit')).rows[0].count),1);
+ await assert.rejects(pools[0].query("SELECT vv_api.read_shared_index(NULL,NULL)"),{code:'42501'});
+ await assert.rejects(pools[4].query('SELECT * FROM vv_app.document_version'),{code:'42501'});
+ assert.equal((await call('POST',url+'/index-grants/'+U('c',96)+'/revoke','a')).status,200);
+ assert.equal((await getFile(originalGrant.body.token)).status,404);
  await admin.query('UPDATE vv_app.scope_checkpoint SET generation=generation+1 WHERE tenant_id=$1 AND project_id=$2',[tenant,project]);
  assert.equal((await share(access3.body.token)).status,404);
  await assert.rejects(pools[0].query('SELECT * FROM vv_private.index_grant'),{code:'42501'});

@@ -9,6 +9,7 @@ const promoteDoc=new RegExp('^'+prefix+'/uploads/'+UUID+'/promote$'),promoteReq=
 const milestone=new RegExp('^'+prefix+'/prooflock$'),rejection=new RegExp('^'+prefix+'/rejections$'),handover=new RegExp('^'+prefix+'/handover$'),draft=new RegExp('^'+prefix+'/handover/'+UUID+'$');
 const financial=new RegExp('^'+prefix+'/finance$'),dispute=new RegExp('^'+prefix+'/finance/events$'),pack=new RegExp('^'+prefix+'/finance/'+UUID+'/dispute-pack$');
 const exportDraft=new RegExp('^'+prefix+'/handover/'+UUID+'/export/(pdf|xlsx|zip)$'),approveIndex=new RegExp('^'+prefix+'/handover/'+UUID+'/approve-index$'),grantIndex=new RegExp('^'+prefix+'/index-releases/'+UUID+'/grants$'),revokeIndex=new RegExp('^'+prefix+'/index-grants/'+UUID+'/revoke$'),sharedIndex=new RegExp('^/v1/shared-index/'+UUID+'$');
+const approveOriginals=new RegExp('^'+prefix+'/index-releases/'+UUID+'/approve-originals$'),grantOriginals=new RegExp('^'+prefix+'/index-releases/'+UUID+'/original-grants$'),bundleIndex=new RegExp('^/v1/shared-index/'+UUID+'/bundle$'),downloadOriginal=new RegExp('^/v1/shared-index/'+UUID+'/originals/'+UUID+'$');
 async function json(req){
  if(req.headers['content-type']!=='application/json')throw new ServiceError(415,'unsupported_media_type');
  let n=0,parts=[];for await(const b of req){n+=b.length;if(n>16384)throw new ServiceError(413,'payload_too_large');parts.push(b);}
@@ -45,6 +46,12 @@ export function createHttpServer(service){
  else if(req.method==='POST'&&(m=approveIndex.exec(path))){out=await service.approveIndex(b,m[1],m[2],m[3],await json(req));status=201;}
  else if(req.method==='POST'&&(m=grantIndex.exec(path))){out=await service.grantIndex(b,m[1],m[2],m[3],await json(req));status=201;}
  else if(req.method==='POST'&&(m=revokeIndex.exec(path)))out=await service.revokeIndex(b,m[1],m[2],m[3]);
+ else if(req.method==='POST'&&(m=approveOriginals.exec(path))){out=await service.approveOriginals(b,m[1],m[2],m[3],await json(req));status=201;}
+ else if(req.method==='POST'&&(m=grantOriginals.exec(path))){out=await service.grantOriginals(b,m[1],m[2],m[3],await json(req));status=201;}
+ else if(req.method==='GET'&&(m=bundleIndex.exec(path)))out=await service.readBundleIndex(b,m[1]);
+ else if(req.method==='GET'&&(m=downloadOriginal.exec(path))){
+ const file=await service.downloadOriginal(b,m[1],m[2]);if(!res.destroyed){res.writeHead(200,{'content-type':file.type,'content-disposition':'attachment; filename="'+file.filename+'"','cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'none'; sandbox",'x-content-sha256':file.sha256,'x-request-id':id,'content-length':file.bytes.length,'connection':'close'});res.end(file.bytes);}return;
+ }
  else if(req.method==='GET'&&(m=sharedIndex.exec(path)))out=await service.readSharedIndex(b,m[1]);
  else if(req.method==='GET'&&(m=draft.exec(path)))out=await service.readHandover(b,m[1],m[2],m[3]);
  else if(req.method==='GET'&&(m=financial.exec(path)))out=await service.financial(b,m[1],m[2]);
