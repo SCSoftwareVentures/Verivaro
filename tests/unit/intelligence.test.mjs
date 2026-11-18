@@ -38,3 +38,18 @@ test('provider cannot change the authoritative page snapshot or returned tag arr
  assert.equal([...p.text_value].slice(proposed.start,proposed.end).join(''),proposed.quote);
 });
 test('invalid provider timeout rejected at configuration',()=>{for(const timeoutMs of [0,-1,8001,NaN,1.5])assert.throws(()=>createIntelligence({timeoutMs}),/invalid provider timeout/);});
+
+test('explicit field discrepancies and formatting variants stay separate from approvals',()=>{
+ const docs=[{id:'a',documentId:'contract',text:'Serial: ABC-123'},{id:'b',documentId:'cert',text:'📄 Certificate\nSerial: ABC-1234\nSerial: abc-123'},{id:'c',documentId:'cert2',text:'Serial: ABC-123'},{id:'d',documentId:'old',text:'Serial: ABC-999',current:false}].map(x=>({current:true,reviewed:true,scan:'clean',...x}));
+ const lineage=docs.map(d=>({id:d.id,textSha256:sha(d.text),pages:[{page:1,start:0,length:[...d.text].length,sha256:sha(d.text),method:'utf8-exact'}]}));
+ const w={graph:{sources:docs,requirements:[{id:'r',criterion:{kind:'serial number',expected:'ABC-123'},span:{sourceId:'a'}}]},lineage};
+ const result=evidenceSuggestions(w,'r');
+ assert.deepEqual(result.candidates.map(x=>x.documentVersionId),['c']);
+ assert.deepEqual(result.contextual.map(x=>x.classification),['potential-mismatch','format-variation']);
+ for(const x of result.contextual){assert.equal(x.state,'needs-review');assert.equal([...docs.find(d=>d.id===x.documentVersionId).text].slice(x.start,x.end).join(''),x.quote);assert.ok(x.recommendation);assert.equal(x.textSha256,lineage.find(l=>l.id===x.documentVersionId).textSha256);}
+});
+test('typed matching never interprets unlabeled dates or unsupported criterion types as discrepancies',()=>{
+ const docs=[{id:'a',documentId:'contract',text:'Expiry date: 2027-01-01'},{id:'b',documentId:'cert',text:'Issued: 2026-04-02\nExpiry date: 2027-01-02'}].map(d=>({...d,current:true,reviewed:true,scan:'clean'}));
+ const w={graph:{sources:docs,requirements:[{id:'r',criterion:{kind:'expiry date',expected:'2027-01-01'},span:{sourceId:'a'}}]},lineage:docs.map(d=>({id:d.id,textSha256:sha(d.text),pages:[{page:1,start:0,length:[...d.text].length,sha256:sha(d.text),method:'utf8-exact'}]}))};
+ assert.deepEqual(evidenceSuggestions(w,'r').contextual.map(x=>x.observed),['2027-01-02']);w.graph.requirements[0].criterion.kind='arbitrary';assert.deepEqual(evidenceSuggestions(w,'r').contextual,[]);
+});

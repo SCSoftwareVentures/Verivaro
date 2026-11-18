@@ -64,24 +64,67 @@ export function createIntelligence({provider=null,timeoutMs=8000}={}){
  }catch{return {...fallback,providerStatus:'rejected-or-unavailable'};}finally{clearTimeout(timer);}
  };
 }
-/** Search only reviewed current independent documents, never approve a literal candidate or infer equivalence. */
+// Explicit attribute labels only. Similar strings are suggestions, not equivalent values.
+const attributeLabels={
+ serial:/^\s*(?:serial(?:\s*(?:number|no\.?))?|s\/n)\s*[:=]\s*(.+?)\s*$/iu,
+ model:/^\s*(?:model(?:\s*(?:number|no\.?))?)\s*[:=]\s*(.+?)\s*$/iu,
+ date:/^\s*(?:expiry date|expiration date|warranty expiry|valid until)\s*[:=]\s*(.+?)\s*$/iu,
+ document:/^\s*(?:document type|certificate type)\s*[:=]\s*(.+?)\s*$/iu
+};
+function attributeKind(kind){
+ const k=String(kind??'').trim().toLowerCase().replace(/[_-]+/g,' ').replace(/\s+/g,' ');
+ if(['serial','serial number','equipment serial','equipment serial number'].includes(k))return 'serial';
+ if(['model','model number','equipment model'].includes(k))return 'model';
+ if(['expiry','expiry date','expiration date','warranty expiry','valid until'].includes(k))return 'date';
+ if(['document type','certificate type'].includes(k))return 'document';
+ return null;
+}
+const word=c=>typeof c==='string'&&/[\p{L}\p{N}_-]/u.test(c);
+function boundedOccurrence(text,i,expected){
+ const last=text.charCodeAt(i-1);const before=i===0?undefined:text.slice(i-(last>=0xDC00&&last<=0xDFFF?2:1),i);const end=i+expected.length;const after=end===text.length?undefined:String.fromCodePoint(text.codePointAt(end));
+ return !(word([...expected][0])&&word(before))&&!(word([...expected].at(-1))&&word(after));
+}
+function contextual(pageText,p,d,r,kind,expected,out){
+ if(!kind)return false;
+ let start=0;
+ for(const line of pageText.split('\n')){
+ const quote=line.replace(/\r$/,''),length=[...quote].length;
+ const m=attributeLabels[kind].exec(quote);
+ if(m&&length<=2000&&m[1].length<=500&&m[1]!==expected){
+ const observed=m[1],normalised=observed.normalize('NFC').toLowerCase()===expected.normalize('NFC').toLowerCase();
+ out.push({documentVersionId:d.id,page:p.page,start,end:start+length,quote,textSha256:p.sha256,method:p.method,state:'needs-review',attribute:kind,expected,observed,classification:normalised?'format-variation':'potential-mismatch',recommendation:normalised?'Verify formatting against the original; retain the exact issued value.':'Compare the source with the approved requirement. Request corrected or replacement evidence if the discrepancy is confirmed. Never edit issued evidence.'});
+ if(out.length>=100)return true;
+ }
+ start+=[...line].length+1;
+ }
+ return false;
+}
+/** Exact candidates and source-linked correction suggestions are separate.
+ * Neither normalisation nor context changes the approved exact-text rule.
+ */
 export function evidenceSuggestions(w,requirementId){
  const r=w.graph.requirements.find(x=>x.id===requirementId);if(!r)return null;
  const source=w.graph.sources.find(x=>x.id===r.span.sourceId);
- if(!source?.current||!source.reviewed||source.scan!=='clean')return {candidates:[],status:'requirement-source-stale'};
+ if(!source?.current||!source.reviewed||source.scan!=='clean')return {candidates:[],contextual:[],status:'requirement-source-stale',truncated:false};
  const needle=r.criterion.expected;if(typeof needle!=='string'||!needle.trim()||needle.length>500)throw Error('invalid criterion');
- const candidates=[],lines=new Map(w.lineage.map(l=>[l.id,l]));
+ const candidates=[],alternatives=[],lines=new Map(w.lineage.map(l=>[l.id,l])),kind=attributeKind(r.criterion.kind);
+ let scanned=0,truncated=false;
  for(const d of [...w.graph.sources].sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0)){
  if(!d.current||!d.reviewed||d.scan!=='clean'||d.documentId===source.documentId)continue;
- const cp=[...d.text],l=lines.get(d.id);if(!l||hash(d.text)!==l.textSha256)continue;
+ const l=lines.get(d.id);if(!l||hash(d.text)!==l.textSha256)continue;
+ scanned+=Buffer.byteLength(d.text);if(scanned>8*1024*1024){truncated=true;break;}
+ const cp=[...d.text];
  for(const p of l.pages){
  const text=cp.slice(p.start,p.start+p.length).join('');if(hash(text)!==p.sha256)throw Error('page digest mismatch');
+ if(alternatives.length<100){if(contextual(text,p,d,r,kind,needle,alternatives))truncated=true;}else truncated=true;
+ if(candidates.length>=100){truncated=true;continue;}
  let pos=0;for(let i=text.indexOf(needle,pos);i!==-1;i=text.indexOf(needle,pos)){
- const start=[...text.slice(0,i)].length;pos=i+needle.length;
- candidates.push({documentVersionId:d.id,page:p.page,start,end:start+[...needle].length,quote:needle,textSha256:p.sha256,method:p.method,state:'needs-review',reason:'Exact literal occurrence; context and document type require review'});
- if(candidates.length>=100)return {candidates,status:'review-required',truncated:true};
+ pos=i+needle.length;if(!boundedOccurrence(text,i,needle))continue;
+ if(candidates.length>=100){truncated=true;break;}
+ const start=[...text.slice(0,i)].length;
+ candidates.push({documentVersionId:d.id,page:p.page,start,end:start+[...needle].length,quote:needle,textSha256:p.sha256,method:p.method,state:'needs-review',reason:'Exact bounded literal occurrence; context and document type require review'});
  }
  }
  }
- return {candidates,status:'review-required',truncated:false};
+ return {candidates,contextual:alternatives,status:'review-required',truncated,label:'Potential discrepancies are source-linked review suggestions only, not verified equivalence or authority.'};
 }

@@ -5,6 +5,7 @@ import {evaluateGraph,reviewDigest} from '../domain/graph.mjs';
 import {evaluateWorkspace,handoverManifest} from '../domain/workspace.mjs';
 import {evaluateFinance,disputePack} from '../domain/finance.mjs';
 import {createIntelligence,evidenceSuggestions} from '../domain/intelligence.mjs';
+import {createLocalIntelligenceProvider} from '../security/intelligence-process.mjs';
 import {randomUUID,randomBytes,createHash} from 'node:crypto';
 import {createCapabilityGate,CapacityError} from '../security/capacity.mjs';
 import {createReleaseSigner} from '../security/releases.mjs';
@@ -67,11 +68,12 @@ export const SQL=Object.freeze({
  * Pools must be separately provisioned, genuinely distinct restricted DB identities.
  * Never feed client-controlled SQL, claim fields, role, or pool configuration into this service.
  */
-export function createService({runtimePool,signerPool,workerPool,issuerConfig,keyId,quarantineRoot,capabilityPool,releaseSigning,downloadScanner,intelligenceProvider,now=()=>Math.floor(Date.now()/1000)}){
+export function createService({runtimePool,signerPool,workerPool,issuerConfig,keyId,quarantineRoot,capabilityPool,releaseSigning,downloadScanner,localIntelligence=false,intelligenceProvider,now=()=>Math.floor(Date.now()/1000)}){
  if(!runtimePool?.connect||!signerPool?.query||!workerPool?.query||new Set([runtimePool,signerPool,workerPool]).size!==3||typeof quarantineRoot!=='string'||!quarantineRoot)throw Error('separate trusted service pools required');
  uuid(keyId);
  const config=structuredClone(issuerConfig);
- const intelligence=createIntelligence({provider:intelligenceProvider});
+ if(intelligenceProvider!==undefined||typeof localIntelligence!=='boolean')throw Error('only fixed offline intelligence provider supported');
+ const intelligence=createIntelligence({provider:localIntelligence?createLocalIntelligenceProvider():null});
  const releaseSigner=releaseSigning?createReleaseSigner(releaseSigning):null;
  if(capabilityPool&&(!capabilityPool.query||[runtimePool,signerPool,workerPool].includes(capabilityPool)))throw Error('separate capability pool required');
  let activeDownloads=0;
