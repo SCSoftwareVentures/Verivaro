@@ -62,6 +62,7 @@ jobs:
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/006_draft_extraction.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/007_document_review.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/008_evidence_graph.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/009_workflow_handover.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/foundation.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/scoped_ingestion.sql
 

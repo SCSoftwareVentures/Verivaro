@@ -6,6 +6,7 @@ const prefix='/v1/tenants/'+UUID+'/projects/'+UUID;
 const project=new RegExp('^'+prefix+'$'),doc=new RegExp('^'+prefix+'/documents$'),intent=new RegExp('^'+prefix+'/documents/'+UUID+'/uploads$'),upload=new RegExp('^'+prefix+'/uploads/'+UUID+'$');
 const review=new RegExp('^'+prefix+'/uploads/'+UUID+'/review$'),match=new RegExp('^'+prefix+'/uploads/'+UUID+'/matches$');
 const promoteDoc=new RegExp('^'+prefix+'/uploads/'+UUID+'/promote$'),promoteReq=new RegExp('^'+prefix+'/decisions/'+UUID+'/promote$'),evidence=new RegExp('^'+prefix+'/evidence$'),retire=new RegExp('^'+prefix+'/evidence/'+UUID+'/retire$'),readiness=new RegExp('^'+prefix+'/readiness$'),confirm=new RegExp('^'+prefix+'/scope/confirm$');
+const milestone=new RegExp('^'+prefix+'/prooflock$'),rejection=new RegExp('^'+prefix+'/rejections$'),handover=new RegExp('^'+prefix+'/handover$'),draft=new RegExp('^'+prefix+'/handover/'+UUID+'$');
 async function json(req){
  if(req.headers['content-type']!=='application/json')throw new ServiceError(415,'unsupported_media_type');
  let n=0,parts=[];for await(const b of req){n+=b.length;if(n>16384)throw new ServiceError(413,'payload_too_large');parts.push(b);}
@@ -32,6 +33,10 @@ export function createHttpServer(service){
  else if(req.method==='POST'&&(m=promoteReq.exec(path))){out=await service.promoteRequirement(b,m[1],m[2],m[3],await json(req));status=201;}
  else if(req.method==='POST'&&(m=evidence.exec(path))){out=await service.linkEvidence(b,m[1],m[2],await json(req));status=201;}
  else if(req.method==='POST'&&(m=retire.exec(path)))out=await service.retireEvidence(b,m[1],m[2],m[3],await json(req));
+ else if(req.method==='POST'&&(m=milestone.exec(path))){out=await service.saveMilestone(b,m[1],m[2],await json(req));status=201;}
+ else if(req.method==='POST'&&(m=rejection.exec(path))){out=await service.saveRejection(b,m[1],m[2],await json(req));status=201;}
+ else if(req.method==='POST'&&(m=handover.exec(path))){out=await service.createHandover(b,m[1],m[2],await json(req));status=201;}
+ else if(req.method==='GET'&&(m=draft.exec(path)))out=await service.readHandover(b,m[1],m[2],m[3]);
  else if(req.method==='GET'&&(m=readiness.exec(path)))out=await service.readiness(b,m[1],m[2]);
  else if(req.method==='POST'&&(m=confirm.exec(path)))out=await service.confirmScope(b,m[1],m[2],await json(req));
  else if(req.method==='GET'&&(m=review.exec(path)))out=await service.reviewDraft(b,m[1],m[2],m[3]);

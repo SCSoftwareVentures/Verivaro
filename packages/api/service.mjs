@@ -2,6 +2,7 @@ import {verifyAccessToken} from '../security/oidc.mjs';
 import {quarantineUpload} from '../security/quarantine.mjs';
 import {proposeRequirements,suggestMatches} from '../domain/proposals.mjs';
 import {evaluateGraph,reviewDigest} from '../domain/graph.mjs';
+import {evaluateWorkspace,handoverManifest} from '../domain/workspace.mjs';
 import {randomUUID} from 'node:crypto';
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const MIME=new Set(['application/pdf','image/jpeg','image/png','text/plain']);
@@ -33,6 +34,11 @@ export const SQL=Object.freeze({
  linkEvidence:'SELECT vv_api.link_evidence($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) AS id',
  retireEvidence:'SELECT vv_api.retire_evidence($1,$2,$3,$4) AS id',
  confirmScope:'SELECT vv_api.confirm_scope($1,$2,$3) AS generation',
+ workspace:'SELECT vv_api.workspace($1,$2) AS workspace',
+ milestone:'SELECT vv_api.save_prooflock($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) AS revision',
+ rejection:'SELECT vv_api.save_rejection($1,$2,$3,$4,$5,$6,$7) AS revision',
+ createHandover:'SELECT vv_api.create_handover($1,$2,$3,$4) AS id',
+ readHandover:'SELECT vv_api.read_handover($1,$2,$3) AS draft',
  graph:'SELECT vv_api.graph($1,$2) AS graph',
  reserve:'SELECT vv_api.reserve_file($1,$2,$3,$4) AS id',
  receipt:'SELECT vv_api.record_quarantine($1,$2,$3,$4,$5,$6,$7) AS id'
@@ -108,7 +114,23 @@ export function createService({runtimePool,signerPool,workerPool,issuerConfig,ke
  return scoped(b,t,p,async c=>({id:one(await c.query(SQL.linkEvidence,[t,p,body.id,body.requirementVersionId,body.spanId,body.documentVersionId,body.page,body.start,body.end,body.quote,body.textSha256,body.decision])).id}));
  },
  async retireEvidence(b,t,p,e,body){uuid(e);exact(body,['reason']);if(typeof body.reason!=='string'||!body.reason.trim()||body.reason.length>500)throw bad();return scoped(b,t,p,async c=>({id:one(await c.query(SQL.retireEvidence,[t,p,e,body.reason])).id}));},
- async readiness(b,t,p){return scoped(b,t,p,async c=>evaluateGraph({tenantId:t,projectId:p},one(await c.query(SQL.graph,[t,p])).graph));},
+ async readiness(b,t,p){return scoped(b,t,p,async c=>evaluateWorkspace({tenantId:t,projectId:p},one(await c.query(SQL.workspace,[t,p])).workspace));},
+ async saveMilestone(b,t,p,body){
+ exact(body,['id','priorRevision','requirementVersionId','title','milestone','confirmed','leadMinutes','irreversibility']);uuid(body.id);uuid(body.requirementVersionId);
+ if(!Number.isSafeInteger(body.priorRevision)||body.priorRevision<0||body.priorRevision>=2147483647||typeof body.title!=='string'||!body.title.trim()||body.title.length>200||typeof body.confirmed!=='boolean'||!Number.isSafeInteger(body.leadMinutes)||body.leadMinutes<0||body.leadMinutes>525600||!['reversible','costly','irreversible'].includes(body.irreversibility))throw bad();
+ if(body.confirmed){if(typeof body.milestone!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(body.milestone)||!Number.isFinite(Date.parse(body.milestone))||new Date(body.milestone).toISOString()!==body.milestone)throw bad();}else if(body.milestone!==null)throw bad();
+ return scoped(b,t,p,async c=>({id:body.id,revision:one(await c.query(SQL.milestone,[t,p,body.id,body.priorRevision,body.requirementVersionId,body.title,body.milestone,body.confirmed,body.leadMinutes,body.irreversibility])).revision}));
+ },
+ async saveRejection(b,t,p,body){
+ exact(body,['id','priorRevision','requirementVersionId','state','note']);uuid(body.id);uuid(body.requirementVersionId);
+ if(!Number.isSafeInteger(body.priorRevision)||body.priorRevision<0||body.priorRevision>=2147483647||!['open','resolution-recorded'].includes(body.state)||typeof body.note!=='string'||!body.note.trim()||body.note.length>1000)throw bad();
+ return scoped(b,t,p,async c=>({id:body.id,revision:one(await c.query(SQL.rejection,[t,p,body.id,body.priorRevision,body.requirementVersionId,body.state,body.note])).revision}));
+ },
+ async createHandover(b,t,p,body){
+ exact(body,['id','generation']);uuid(body.id);if(typeof body.generation!=='string'||!/^\d{1,18}$/.test(body.generation))throw bad();
+ return scoped(b,t,p,async c=>{await c.query(SQL.createHandover,[t,p,body.id,body.generation]);return handoverManifest({tenantId:t,projectId:p},one(await c.query(SQL.readHandover,[t,p,body.id])).draft);});
+ },
+ async readHandover(b,t,p,h){uuid(h);return scoped(b,t,p,async c=>handoverManifest({tenantId:t,projectId:p},one(await c.query(SQL.readHandover,[t,p,h])).draft));},
  async confirmScope(b,t,p,body){exact(body,['generation']);if(typeof body.generation!=='string'||!/^\d{1,18}$/.test(body.generation))throw bad();return scoped(b,t,p,async c=>({generation:one(await c.query(SQL.confirmScope,[t,p,body.generation])).generation}));},
  async status(b,t,p,u){const m=await getStatus(b,t,p,u);return {id:u,state:m.received?'quarantined':'pending'};},
  async upload(b,t,p,u,body){
