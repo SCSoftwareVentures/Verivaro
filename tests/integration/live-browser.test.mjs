@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import pg from 'pg';
 import {generateKeyPairSync,sign} from 'node:crypto';
 import {spawn} from 'node:child_process';
-import {mkdtemp,rm} from 'node:fs/promises';
+import {mkdtemp,rm,readFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {setTimeout as sleep} from 'node:timers/promises';
@@ -23,7 +23,7 @@ async function chrome(base,profile){
  let endpoint,logs='',ws,exited=false;child.on('exit',()=>{exited=true;});child.stderr.on('data',b=>{logs=(logs+b.toString()).slice(-12000);endpoint=/DevTools listening on (ws:\/\/\S+)/.exec(logs)?.[1]??endpoint;});
  const close=async()=>{ws?.close();if(!exited){child.kill('SIGTERM');for(let i=0;i<30&&!exited;i++)await sleep(100);if(!exited)child.kill('SIGKILL');}};
  try{
- for(let i=0;i<100&&!endpoint&&!exited;i++)await sleep(100);
+ for(let i=0;i<300&&!endpoint&&!exited;i++){try{const [port,path]=(await readFile(join(profile,'DevToolsActivePort'),'utf8')).trim().split('\n');if(/^\d+$/.test(port)&&path?.startsWith('/devtools/browser/'))endpoint='ws://127.0.0.1:'+port+path;}catch{}if(!endpoint)await sleep(100);}
  assert.ok(endpoint,logs);
  const targets=await(await fetch('http://'+new URL(endpoint).host+'/json/list')).json();
  ws=new WebSocket(targets.find(x=>x.type==='page').webSocketDebuggerUrl);await new Promise((r,j)=>{ws.addEventListener('open',r,{once:true});ws.addEventListener('error',j,{once:true});});
@@ -36,7 +36,7 @@ async function chrome(base,profile){
  return {js,wait,close};
  }catch(e){await close();throw e;}
 }
-test('actual mobile browser to PostgreSQL: capture, original review, requirement, independent evidence, scope, release and revocation',{skip:process.env.VV_LIVE_TEST!=='1',timeout:120000},async t=>{
+test('actual mobile browser to PostgreSQL: capture, original review, requirement, independent evidence, scope, release and revocation',{skip:process.env.VV_LIVE_TEST!=='1',timeout:180000},async t=>{
  const root=await mkdtemp(join(tmpdir(),'vv-browser-files-')),profile=await mkdtemp(join(tmpdir(),'vv-browser-db-')),admin=new pg.Pool(),worker=new pg.Pool(cfg('worker')),parser=new pg.Pool(cfg('parser'));
  const scanner=(bytes,m)=>({sha256:m.sha256,outcome:'clean',engine:'synthetic-only',engineVersion:'1'});
  const keys=generateKeyPairSync('ed25519');

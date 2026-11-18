@@ -120,6 +120,45 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f tests/database/live_logins.sql
       - run: node --experimental-strip-types --test tests/integration/live-api.test.mjs
 
+  recovery-benchmark:
+    name: PostgreSQL load and quiesced restore drill
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ephemeral-ci-only
+          POSTGRES_DB: verivaro_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: ephemeral-ci-only
+      PGDATABASE: verivaro_test
+      VV_LIVE_TEST: '1'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.16.0'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: |
+          for migration in database/migrations/*.sql; do psql -X -v ON_ERROR_STOP=1 -f "$migration"; done
+          psql -X -v ON_ERROR_STOP=1 -f tests/database/foundation.sql
+          psql -X -v ON_ERROR_STOP=1 -f tests/database/live_logins.sql
+      - run: node --experimental-strip-types --test tests/integration/recovery-benchmark.test.mjs
+
   live-browser:
     name: Real Chromium to PostgreSQL user workflow
     runs-on: ubuntu-latest
