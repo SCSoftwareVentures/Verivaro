@@ -63,3 +63,9 @@ export function renderDraft(manifest,kind){
  }
  throw Error('unsupported format');
 }
+
+export function renderCorrectionCover(cover){
+ if(cover?.releaseAuthorised!==false||cover.originalUnchanged!==true)throw Error('invalid correction cover');
+ const lines=[cover.title,'Not a certificate, customer release or evidence modification.','Notice: '+cover.noticeId,'Plan revision: '+cover.planRevision,'Case revision: '+cover.caseRevision,'Target document version: '+cover.documentVersionId,'Original SHA256: '+cover.originalSha256,'Proposed submission filename: '+cover.proposedFilename,'Reviewer note: '+cover.reviewNote];
+ return {bytes:pdf(lines),type:'application/pdf',filename:'correction-cover.pdf'};
+}

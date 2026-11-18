@@ -9,7 +9,8 @@ import {createLocalIntelligenceProvider} from '../security/intelligence-process.
 import {randomUUID,randomBytes,createHash} from 'node:crypto';
 import {createCapabilityGate,CapacityError} from '../security/capacity.mjs';
 import {createReleaseSigner} from '../security/releases.mjs';
-import {renderDraft} from '../export/formats.mjs';
+import {renderDraft,renderCorrectionCover} from '../export/formats.mjs';
+import {extractObjectionCandidates,correctionCover} from '../domain/rejections.mjs';
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const MIME=new Set(['application/pdf','image/jpeg','image/png','text/plain']);
 export class ServiceError extends Error {constructor(status,code){super(code);this.status=status;this.code=code;}}
@@ -42,6 +43,8 @@ export const SQL=Object.freeze({
  confirmScope:'SELECT vv_api.confirm_scope($1,$2,$3) AS generation',
  workspace:'SELECT vv_api.workspace($1,$2) AS workspace',
  milestone:'SELECT vv_api.save_prooflock($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) AS revision',
+ correctionPlan:'SELECT vv_api.save_correction_plan($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) AS revision',
+ correctionQueue:'SELECT vv_api.correction_queue($1,$2) AS queue',
  notice:'SELECT vv_api.import_rejection_notice($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) AS id',
  rejection:'SELECT vv_api.save_rejection($1,$2,$3,$4,$5,$6,$7) AS revision',
  createHandover:'SELECT vv_api.create_handover($1,$2,$3,$4) AS id',
@@ -168,6 +171,15 @@ export function createService({runtimePool,signerPool,workerPool,issuerConfig,ke
  if(body.confirmed){if(typeof body.milestone!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(body.milestone)||!Number.isFinite(Date.parse(body.milestone))||new Date(body.milestone).toISOString()!==body.milestone)throw bad();}else if(body.milestone!==null)throw bad();
  return scoped(b,t,p,async c=>({id:body.id,revision:one(await c.query(SQL.milestone,[t,p,body.id,body.priorRevision,body.requirementVersionId,body.title,body.milestone,body.confirmed,body.leadMinutes,body.irreversibility])).revision}));
  },
+ async objectionCandidates(b,t,p,u){uuid(u);return scoped(b,t,p,async c=>extractObjectionCandidates((await c.query(SQL.reviewPages,[t,p,u])).rows));},
+ async correctionQueue(b,t,p){return scoped(b,t,p,async c=>one(await c.query(SQL.correctionQueue,[t,p])).queue);},
+ async saveCorrectionPlan(b,t,p,body){
+ exact(body,['noticeId','priorRevision','caseRevision','assignee','documentVersionId','filename','coverNote','state']);
+ [body.noticeId,body.assignee,body.documentVersionId].forEach(uuid);
+ if(!Number.isSafeInteger(body.priorRevision)||body.priorRevision<0||body.priorRevision>=2147483647||!Number.isSafeInteger(body.caseRevision)||body.caseRevision<1||body.caseRevision>2147483647||typeof body.filename!=='string'||! /^[A-Za-z0-9][A-Za-z0-9_-]{0,99}[.](pdf|png|jpg|txt)$/.test(body.filename)||typeof body.coverNote!=='string'||!body.coverNote.trim()||body.coverNote.length>1500||!['draft','approved'].includes(body.state))throw bad();
+ return scoped(b,t,p,async c=>({revision:one(await c.query(SQL.correctionPlan,[t,p,body.noticeId,body.priorRevision,body.caseRevision,body.assignee,body.documentVersionId,body.filename,body.coverNote,body.state])).revision}));
+ },
+ async correctionCover(b,t,p,n){uuid(n);return scoped(b,t,p,async c=>{const plan=one(await c.query(SQL.correctionQueue,[t,p])).queue.plans.find(x=>x.noticeId===n);if(!plan||plan.state!=='approved'||!plan.current)throw deny();return renderCorrectionCover(correctionCover(plan));});},
  async importRejectionNotice(b,t,p,body){
  exact(body,['id','spanId','documentVersionId','page','start','end','quote','textSha256']);
  [body.id,body.spanId,body.documentVersionId].forEach(uuid);

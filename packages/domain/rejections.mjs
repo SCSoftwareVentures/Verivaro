@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto';
 // Draft recommendations from untrusted exact notice text; no authority or document mutation.
 const rules=[
  ['missing-evidence',/\b(missing|not (?:supplied|provided|attached)|omitted|absent)\b/i,'Locate the required current evidence, or request a replacement from its issuer.'],
@@ -18,4 +19,29 @@ export function assessRejectionNotices(notices,cases){
  const c=byId.get(n.id);
  return {...n,caseId:c?.id??null,requiresAttention:!c||c.requiresAttention,status:!c?'mapping-required':c.requiresAttention?'correction-review-required':'resolution-documented',draft:correctionDraft(n)};
  }).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
+}
+
+/** Explicitly selected reviewed notice only. Every nonblank line is a candidate, not a finding;
+ * unknown lines are retained for clarification. Long lines are explicitly reported as incomplete. */
+export function extractObjectionCandidates(pages){
+ if(!Array.isArray(pages)||pages.length>20)throw Error('invalid pages');
+ const candidates=[],seen=new Set();let total=0,truncated=false;
+ for(const p of pages){
+ if(!Number.isSafeInteger(p.page)||p.page<1||p.page>20||seen.has(p.page)||typeof p.text_value!=='string'||createHash('sha256').update(p.text_value).digest('hex')!==p.text_sha256)throw Error('invalid notice page');
+ seen.add(p.page);total+=Buffer.byteLength(p.text_value);if(total>1048576)throw Error('notice budget');
+ let start=0;
+ for(const line of p.text_value.split('\n')){
+ const quote=line.replace(/\r$/,''),length=[...quote].length;
+ if(quote.trim()){
+ if(length>2000||candidates.length>=200)truncated=true;
+ else candidates.push({page:p.page,start,end:start+length,quote,textSha256:p.text_sha256,categories:correctionDraft({quote}).tasks.map(t=>t.category),state:'needs-review'});
+ }
+ start+=[...line].length+1;
+ }
+ }
+ return {candidates,truncated,label:'Possible objections, including unknown feedback. Review and explicitly import each relevant excerpt; not exhaustive.'};
+}
+export function correctionCover(plan){
+ if(!plan||plan.state!=='approved'||!plan.current)throw Error('current approved plan required');
+ return {title:'Verivaro correction cover sheet — internal approved metadata draft',noticeId:plan.noticeId,planRevision:plan.revision,caseRevision:plan.caseRevision,documentVersionId:plan.documentVersionId,originalSha256:plan.originalSha256,proposedFilename:plan.filename,reviewNote:plan.coverNote,originalUnchanged:true,releaseAuthorised:false};
 }

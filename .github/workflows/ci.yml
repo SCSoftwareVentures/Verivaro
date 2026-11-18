@@ -23,6 +23,7 @@ jobs:
         with:
           node-version: '22.16.0'
       - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: find packages tests scripts -name '*.mjs' -print0 | xargs -0 -n1 node --check
       - run: npm test
       - run: npm run demo
 
@@ -74,6 +75,7 @@ jobs:
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/018_reviewer_capture.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/019_authority_inventory.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/020_rejection_notices.sql
+      - run: psql -X -v ON_ERROR_STOP=1 -f database/migrations/021_correction_plans.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/foundation.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/privilege_matrix.sql
       - run: psql -X -v ON_ERROR_STOP=1 -f tests/database/scoped_ingestion.sql
