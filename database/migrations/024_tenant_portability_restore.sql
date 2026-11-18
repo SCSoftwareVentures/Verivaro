@@ -34,7 +34,7 @@ DECLARE a uuid;BEGIN a:=vv_private.privacy_owner(t,p);RETURN vv_private.project_
 -- One fixed transaction snapshot. No partial result and no cross-project owner bypass.
 CREATE FUNCTION vv_api.export_tenant_records(t uuid,p uuid,i uuid) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,vv_private,vv_app,vv_crypto AS $$
-DECLARE a uuid;pr record;entries jsonb:='[]'::jsonb;part jsonb;payload text;d text;tenant_record jsonb;members jsonb;cnt integer;BEGIN
+DECLARE a uuid;project_row record;entries jsonb:='[]'::jsonb;part jsonb;payload text;d text;tenant_record jsonb;members jsonb;cnt integer;BEGIN
  a:=vv_private.privacy_owner(t,p);
  IF i IS NULL OR current_setting('transaction_isolation')<>'repeatable read' THEN RAISE EXCEPTION 'consistent export ticket required' USING ERRCODE='22023';END IF;
  -- Lock tenant inventory against project insert/delete and authority changes during export.
@@ -44,9 +44,9 @@ DECLARE a uuid;pr record;entries jsonb:='[]'::jsonb;part jsonb;payload text;d te
  IF EXISTS(SELECT 1 FROM vv_app.project pr WHERE pr.tenant_id=t AND NOT EXISTS(SELECT 1 FROM vv_private.project_member pm WHERE pm.tenant_id=t AND pm.project_id=pr.id AND pm.actor_id=a AND pm.active AND pm.role='owner')) THEN RAISE EXCEPTION 'all project owner grants required' USING ERRCODE='42501';END IF;
  SELECT to_jsonb(x) INTO tenant_record FROM vv_private.tenant x WHERE id=t;
  SELECT coalesce(jsonb_agg(jsonb_build_object('actorId',actor_id,'active',active,'role',tenant_role,'version',version) ORDER BY actor_id),'[]'::jsonb) INTO members FROM vv_private.membership WHERE tenant_id=t;
- FOR pr IN SELECT id FROM vv_app.project WHERE tenant_id=t ORDER BY id LOOP
- part:=vv_private.project_records_snapshot(t,pr.id,i,a);
- entries:=entries||jsonb_build_array(jsonb_build_object('projectId',pr.id,'sha256',part->>'sha256','json',part->>'json'));
+ FOR project_row IN SELECT id FROM vv_app.project WHERE tenant_id=t ORDER BY id LOOP
+ part:=vv_private.project_records_snapshot(t,project_row.id,i,a);
+ entries:=entries||jsonb_build_array(jsonb_build_object('projectId',project_row.id,'sha256',part->>'sha256','json',part->>'json'));
  IF octet_length(entries::text)>16777216 THEN RAISE EXCEPTION 'tenant record limit exceeded; operator archive required' USING ERRCODE='54000';END IF;
  END LOOP;
  payload:=jsonb_build_object('schema','verivaro-tenant-records-v1','tenantId',t,'exportId',i,'asOf',statement_timestamp(),'projectCount',cnt,'tenant',tenant_record,'members',members,'projects',entries,'allProjectRecordsIncluded',true,'completeTenantExport',false,'containsOriginalBytes',false,'excluded','Original bytes, identity subjects, credentials, storage keys, private operational and security audit data; no partial project records returned.')::text;
