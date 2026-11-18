@@ -72,6 +72,7 @@ test('isolated PostgreSQL load, quiesced database and original-file backup, fres
  // Concurrent exact retry cannot manufacture duplicate logical documents.
  const duplicate=U('4',250),r=await Promise.all(Array.from({length:4},()=>api.call('POST','/documents',{id:duplicate,title:'Same exact retry'})));
  assert.ok(r.every(x=>x.status===201));assert.equal(Number((await admin.query('SELECT count(*) FROM vv_app.document WHERE id=$1',[duplicate])).rows[0].count),1);
+ const sourceInventory=await api.call('GET','/catalog');assert.equal(sourceInventory.status,200);assert.ok(docs.every(d=>sourceInventory.body.documents.some(row=>row.id===d.d)));assert.ok(sourceInventory.body.documents.some(row=>row.id===duplicate));
  // Quiesce application and workers. No claim of an online consistent snapshot.
  await api.close();api=null;
  const backupStart=performance.now();
@@ -98,7 +99,7 @@ test('isolated PostgreSQL load, quiesced database and original-file backup, fres
  const newKey=randomUUID();await restoreAdmin.query('WITH disabled AS (UPDATE vv_private.context_key SET active=false RETURNING id) INSERT INTO vv_private.context_key(id,secret,active) VALUES($1,vv_crypto.gen_random_bytes(32),true)',[newKey]);
  await restoreAdmin.query('UPDATE vv_private.index_grant SET revoked_at=clock_timestamp(),revoked_by=created_by WHERE revoked_at IS NULL');
  copy=await start(target,restored,newKey);
- const inventory=await copy.call('GET','/catalog');assert.equal(inventory.status,200);assert.equal(inventory.body.documents.length,13);assert.equal((await copy.call('GET','/catalog',undefined,'b')).status,404);
+ const inventory=await copy.call('GET','/catalog');assert.equal(inventory.status,200);assert.deepEqual(inventory.body.documents,sourceInventory.body.documents);assert.equal((await copy.call('GET','/catalog',undefined,'b')).status,404);
  assert.equal((await copy.call('GET','/uploads/'+docs[11].u)).body.state,'quarantined');
  assert.equal((await processOneScan(restoreWorker,restored,scanner)).state,'complete');
  assert.equal((await processOneExtraction(restoreParser,restored)).state,'complete');
