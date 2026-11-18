@@ -1,7 +1,7 @@
 BEGIN;
 CREATE ROLE verivaro_signer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
-SET LOCAL ROLE verivaro_owner;
 CREATE SCHEMA vv_api AUTHORIZATION verivaro_owner;
+SET LOCAL ROLE verivaro_owner;
 REVOKE ALL ON SCHEMA vv_api FROM PUBLIC;
 GRANT USAGE ON SCHEMA vv_api TO verivaro_runtime,verivaro_signer;
 -- Trusted identity gateway only. It must verify the OIDC JWT before passing issuer/subject.
