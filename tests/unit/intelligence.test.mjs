@@ -11,3 +11,30 @@ test('provider exact-span validation rejects fabricated quote and approval field
 test('provider default off and invalid output falls back without action',async()=>{let calls=0;const run=createIntelligence({provider:async()=>{calls++;return [{...candidate,approved:true}];}});assert.equal((await run([p])).providerStatus,'not-requested');assert.equal(calls,0);assert.equal((await run([p],{useProvider:true})).providerStatus,'rejected-or-unavailable');assert.equal(calls,1);});
 test('valid provider output still requires review',async()=>{const run=createIntelligence({provider:async()=>[candidate]});const r=await run([p],{useProvider:true});assert.equal(r.providerStatus,'validated-spans-only');assert.ok(r.candidates.every(c=>c.state==='needs-review'));});
 test('matching excludes original logical document, stale and unreviewed sources',()=>{const s=(id,documentId,text,current=true,reviewed=true)=>({id,documentId,text,current,reviewed,scan:'clean'}),sources=[s('a','contract','must ABC'),s('b','contract','ABC'),s('c','cert','📄 ABC'),s('d','old','ABC',false),s('e','draft','ABC',true,false)];const lineage=sources.map(d=>({id:d.id,textSha256:sha(d.text),pages:[{page:1,start:0,length:[...d.text].length,sha256:sha(d.text),method:'utf8-exact'}]}));const w={graph:{sources,requirements:[{id:'r',criterion:{expected:'ABC'},span:{sourceId:'a'}}]},lineage};const r=evidenceSuggestions(w,'r');assert.equal(r.candidates.length,1);assert.equal(r.candidates[0].documentVersionId,'c');assert.equal(r.candidates[0].start,2);assert.equal(r.candidates[0].state,'needs-review');});
+
+test('non-cooperative timed-out adapters retain both capacity slots until settlement',async()=>{
+ const pending=[];let calls=0;
+ const run=createIntelligence({timeoutMs:15,provider:({signal})=>{calls++;return new Promise((resolve,reject)=>pending.push({resolve,reject,signal}));}});
+ const first=run([p],{useProvider:true}),second=run([p],{useProvider:true});
+ assert.equal((await first).providerStatus,'rejected-or-unavailable');
+ assert.equal((await second).providerStatus,'rejected-or-unavailable');
+ assert.equal(calls,2);assert.ok(pending.every(x=>x.signal.aborted));
+ assert.equal((await run([p],{useProvider:true})).providerStatus,'budget-exceeded');
+ pending[0].resolve([candidate]);await new Promise(resolve=>setImmediate(resolve));
+ const third=run([p],{useProvider:true});await Promise.resolve();
+ assert.equal(calls,3);pending[2].resolve([candidate]);
+ assert.equal((await third).providerStatus,'validated-spans-only');
+ pending[1].reject(Error('late rejection'));await new Promise(resolve=>setImmediate(resolve));
+});
+test('provider cannot change the authoritative page snapshot or returned tag arrays',async()=>{
+ const original={...p};let release;
+ const run=createIntelligence({provider:({pages})=>{pages[0].text_value='tampered';return new Promise(resolve=>{release=resolve;});}});
+ const pending=run([original],{useProvider:true});await Promise.resolve();
+ original.text_value='caller changed';original.text_sha256=sha(original.text_value);
+ const tags=['amendment'];release([{...candidate,start:2,quote:[...text].slice(2,32).join(''),tags}]);
+ const result=await pending;assert.equal(result.providerStatus,'validated-spans-only');
+ const proposed=result.candidates.find(x=>x.origin==='provider-unverified');
+ assert.ok(proposed);tags.push('exception');assert.deepEqual(proposed.tags,['amendment']);
+ assert.equal([...p.text_value].slice(proposed.start,proposed.end).join(''),proposed.quote);
+});
+test('invalid provider timeout rejected at configuration',()=>{for(const timeoutMs of [0,-1,8001,NaN,1.5])assert.throws(()=>createIntelligence({timeoutMs}),/invalid provider timeout/);});
