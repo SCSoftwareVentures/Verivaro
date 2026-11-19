@@ -18,12 +18,14 @@ WITH actors AS (
  SELECT actor_id FROM verivaro.memberships UNION SELECT actor_id FROM verivaro.project_members
  UNION SELECT actor_id FROM verivaro_private.identity_sessions UNION SELECT actor_id FROM verivaro_private.disabled_actors
  UNION SELECT actor_id FROM verivaro_private.recovery_operators
+ UNION SELECT actor_id FROM verivaro_private.provider_bindings
 ), disabled AS (
  INSERT INTO verivaro_private.disabled_actors(actor_id) SELECT actor_id FROM actors
  ON CONFLICT(actor_id) DO UPDATE SET lockdown_id=gen_random_uuid() RETURNING actor_id
 )
 INSERT INTO verivaro_private.identity_events(actor_id,kind) SELECT actor_id,'actor_disabled' FROM disabled;
 UPDATE verivaro_private.recovery_operators SET active=false;
+DELETE FROM verivaro_private.login_challenges;
 WITH revoked AS (
  UPDATE verivaro_private.share_grants SET revoked_at=clock_timestamp() WHERE revoked_at IS NULL RETURNING export_id,share_id,issuer_id
 )
