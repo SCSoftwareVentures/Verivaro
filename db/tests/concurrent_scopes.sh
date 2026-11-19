@@ -6,8 +6,11 @@ run_scope() {
   local tenant="$1" actor="$2" expected="$3"
   PGUSER=verivaro_runtime PGPASSWORD=ci-only-not-a-secret psql -X -qAt -v ON_ERROR_STOP=1 <<SQL
 BEGIN;
-SELECT set_config('verivaro.tenant_id','$tenant',true);
-SELECT set_config('verivaro.actor_id','$actor',true);
+SELECT pg_backend_pid() AS pid, pg_current_xact_id()::text AS xid \\gset
+\\setenv VV_PID :pid
+\\setenv VV_XID :xid
+\\set signed \`PGUSER=postgres PGPASSWORD=ci-only psql -XqAt -v ON_ERROR_STOP=1 -c "SELECT verivaro_private.ci_sign('$tenant','$actor',\$VV_PID,'\$VV_XID')"\`
+SELECT set_config('verivaro.signed_context', :'signed', true);
 SELECT pg_sleep(1);
 DO \$\$
 DECLARE actual text;

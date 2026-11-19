@@ -5,8 +5,10 @@ INSERT INTO verivaro.memberships(tenant_id,actor_id,role)
 VALUES ('11111111-1111-4111-8111-111111111111','cccccccc-cccc-4ccc-8ccc-cccccccccccc','contributor');
 SET ROLE verivaro_runtime;
 BEGIN;
-SELECT set_config('verivaro.tenant_id','11111111-1111-4111-8111-111111111111',true);
-SELECT set_config('verivaro.actor_id','cccccccc-cccc-4ccc-8ccc-cccccccccccc',true);
+RESET ROLE;
+SELECT verivaro_private.ci_sign('11111111-1111-4111-8111-111111111111','cccccccc-cccc-4ccc-8ccc-cccccccccccc',pg_backend_pid(),pg_current_xact_id()::text) AS signed \gset
+SET ROLE verivaro_runtime;
+SELECT set_config('verivaro.signed_context', :'signed', true);
 DO $$
 DECLARE n integer;
 BEGIN
@@ -26,8 +28,10 @@ END $$;
 ROLLBACK;
 -- Viewer can see own project, but cannot submit evidence.
 BEGIN;
-SELECT set_config('verivaro.tenant_id','22222222-2222-4222-8222-222222222222',true);
-SELECT set_config('verivaro.actor_id','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',true);
+RESET ROLE;
+SELECT verivaro_private.ci_sign('22222222-2222-4222-8222-222222222222','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',pg_backend_pid(),pg_current_xact_id()::text) AS signed \gset
+SET ROLE verivaro_runtime;
+SELECT set_config('verivaro.signed_context', :'signed', true);
 DO $$
 DECLARE n integer;
 BEGIN

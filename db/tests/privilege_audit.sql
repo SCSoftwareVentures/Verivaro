@@ -15,3 +15,10 @@ BEGIN
   THEN RAISE EXCEPTION 'runtime has TRUNCATE privilege on %',t; END IF;
  END LOOP;
 END $$;
+
+DO $$ BEGIN
+ IF has_schema_privilege('verivaro_runtime','verivaro_private','USAGE') OR
+    has_table_privilege('verivaro_runtime','verivaro_private.context_key','SELECT') OR
+    has_function_privilege('verivaro_runtime','verivaro_private.ci_sign(uuid,uuid,integer,text,integer)','EXECUTE')
+ THEN RAISE EXCEPTION 'runtime has access to signing boundary'; END IF;
+END $$;

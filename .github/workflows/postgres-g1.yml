@@ -36,9 +36,12 @@ jobs:
           set -euo pipefail
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/0001_tenant_foundation.sql
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/0002_evidence_immutability.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0003_signed_context.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/context_fixture.sql
           psql -X -v ON_ERROR_STOP=1 -f db/tests/tenant_isolation.sql
           psql -X -v ON_ERROR_STOP=1 -f db/tests/adversarial_permissions.sql
           psql -X -v ON_ERROR_STOP=1 -f db/tests/privilege_audit.sql
           bash db/tests/concurrent_scopes.sh
-          # Blocking regression: fails while custom GUC identity can be forged.
+          # Blocking regression: forged identity must never grant access.
           psql -X -v ON_ERROR_STOP=1 -f db/tests/identity_spoof_gate.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/signed_context_gate.sql

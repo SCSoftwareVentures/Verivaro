@@ -1,6 +1,5 @@
 -- G1 SECURITY GATE: a caller must not be able to impersonate another tenant
--- merely by setting custom PostgreSQL GUCs. This test is EXPECTED TO FAIL
--- until trusted identity binding is implemented. Never weaken this assertion.
+-- merely by setting custom PostgreSQL GUCs. Never weaken this assertion.
 -- Prior fixture scripts revoked actor A but left actor B active.
 SET ROLE verivaro_runtime;
 BEGIN;

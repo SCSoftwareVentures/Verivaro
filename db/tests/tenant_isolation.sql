@@ -1,6 +1,7 @@
 -- Disposable PostgreSQL integration checks. Run only against ephemeral CI database.
 CREATE ROLE verivaro_runtime LOGIN NOINHERIT NOBYPASSRLS PASSWORD 'ci-only-not-a-secret';
 GRANT USAGE ON SCHEMA verivaro TO verivaro_runtime;
+GRANT EXECUTE ON FUNCTION verivaro.bound_context() TO verivaro_runtime;
 GRANT SELECT ON verivaro.tenants, verivaro.memberships TO verivaro_runtime;
 GRANT SELECT, INSERT, UPDATE, DELETE ON verivaro.projects, verivaro.evidence TO verivaro_runtime;
 INSERT INTO verivaro.tenants(id,name) VALUES
@@ -20,8 +21,10 @@ BEGIN
   IF n <> 0 THEN RAISE EXCEPTION 'fail-open without context'; END IF;
 END $$;
 BEGIN;
-SELECT set_config('verivaro.tenant_id','11111111-1111-4111-8111-111111111111',true);
-SELECT set_config('verivaro.actor_id','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',true);
+RESET ROLE;
+SELECT verivaro_private.ci_sign('11111111-1111-4111-8111-111111111111','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',pg_backend_pid(),pg_current_xact_id()::text) AS signed \gset
+SET ROLE verivaro_runtime;
+SELECT set_config('verivaro.signed_context', :'signed', true);
 DO $$
 DECLARE n integer;
 BEGIN
@@ -53,8 +56,10 @@ UPDATE verivaro.memberships SET revoked_at=now()
 WHERE actor_id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 SET ROLE verivaro_runtime;
 BEGIN;
-SELECT set_config('verivaro.tenant_id','11111111-1111-4111-8111-111111111111',true);
-SELECT set_config('verivaro.actor_id','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',true);
+RESET ROLE;
+SELECT verivaro_private.ci_sign('11111111-1111-4111-8111-111111111111','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',pg_backend_pid(),pg_current_xact_id()::text) AS signed \gset
+SET ROLE verivaro_runtime;
+SELECT set_config('verivaro.signed_context', :'signed', true);
 DO $$
 DECLARE n integer;
 BEGIN
