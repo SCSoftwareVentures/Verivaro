@@ -138,4 +138,7 @@ jobs:
             test "$source_hash" = "$restored_hash"
           done
           echo "isolated_restore_content_and_security_gate_passed"
+          # Independent complete synthetic source using the real schema and real object bytes.
+          createdb -w --template=template0 verivaro_bundle_ci
+          pg_dump -w --schema-only --format=custom --dbname=verivaro_test | pg_restore -w --single-transaction --exit-on-error --dbname=verivaro_bundle_ci
           VV_CI_BACKUP_PATH="$backup_path" VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-evidence-recovery.test.mjs

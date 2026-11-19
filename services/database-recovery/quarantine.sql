@@ -54,6 +54,24 @@ CREATE TABLE verivaro_private.restoration_evidence_receipt(
  inventory_sha256 text NOT NULL CHECK(inventory_sha256 ~ '^[0-9a-f]{64}$'),
  verified_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
+-- Check receipt inventory against actual restored business rows, not a
+-- caller-selected subset. UUID/hash alphabets make the canonical JSON exact.
+CREATE FUNCTION verivaro_private.check_restoration_receipt() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,verivaro_private AS $receipt$
+DECLARE expected text; n bigint; unique_n bigint;
+BEGIN
+ SELECT encode(verivaro_private.digest(convert_to('['||COALESCE(string_agg(
+ format('{"id":"%s","sha256":"%s"}',id,sha256),',' ORDER BY id,sha256),'')||']','UTF8'),'sha256'),'hex'),
+ count(*),count(DISTINCT id) INTO expected,n,unique_n
+ FROM (SELECT id,sha256 FROM verivaro.evidence UNION SELECT artifact_id,sha256 FROM verivaro_private.released_exports) q;
+ IF n>4096 OR n<>unique_n OR expected<>NEW.inventory_sha256
+ OR NOT EXISTS(SELECT 1 FROM verivaro_private.restore_quarantine WHERE backup_id=NEW.backup_id)
+ THEN RAISE EXCEPTION 'restore receipt inventory mismatch' USING ERRCODE='42501'; END IF;
+ RETURN NEW;
+END $receipt$;
+REVOKE ALL ON FUNCTION verivaro_private.check_restoration_receipt() FROM PUBLIC;
+CREATE TRIGGER restoration_receipt_check BEFORE INSERT ON verivaro_private.restoration_evidence_receipt
+ FOR EACH ROW EXECUTE FUNCTION verivaro_private.check_restoration_receipt();
 CREATE TRIGGER restoration_receipt_immutable BEFORE UPDATE OR DELETE OR TRUNCATE
  ON verivaro_private.restoration_evidence_receipt FOR EACH STATEMENT EXECUTE FUNCTION verivaro_private.identity_event_immutable();
 REVOKE ALL ON verivaro_private.restoration_evidence_receipt FROM PUBLIC;
