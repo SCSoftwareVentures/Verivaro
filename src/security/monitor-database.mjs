@@ -23,7 +23,9 @@ export function createMonitorDatabase(pool,{mode}){
     const i=await c.query('SELECT * FROM verivaro_monitor.list_open()');
     const a=await c.query('SELECT * FROM verivaro_monitor.recent_alerts()');
     if(h.rows.length!==1||i.rows.length>5||a.rows.length>50)throw Error('invalid snapshot');
-    result={health:h.rows[0],incidents:i.rows,alerts:a.rows};
+    const d=await c.query('SELECT * FROM verivaro_monitor.alert_delivery_health()');
+    if(d.rows.length!==1)throw Error('invalid delivery health');
+    result={health:h.rows[0],incidents:i.rows,alerts:a.rows,delivery:d.rows[0]};
    }else throw Error('invalid monitor operation');
    await c.query('COMMIT');tx=false;
    await c.query('DISCARD ALL');clean=true;
