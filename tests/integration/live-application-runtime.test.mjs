@@ -287,6 +287,21 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   assert.equal(JSON.parse(snapshotPackage.body).sha256,packageArgs.sha256);
   assert.equal((await g('submission-review',{...packageArgs,decision:'approved',reason:'Independent exact snapshot review'},reviewer)).status,200);
   assert.equal((await g('submission-authorize',packageArgs)).status,200);
+  const invitedActorId=(await admin.query('SELECT actor_id FROM verivaro_private.provider_bindings WHERE issuer=$1 AND subject_digest=$2',[issuer,digestSubject(actors.invited)])).rows[0].actor_id;
+  const customerGrant={...packageArgs,grantId:randomUUID(),recipientId:invitedActorId,minutes:20};
+  assert.equal((await g('customer-package-grant',customerGrant,reviewer)).status,404);
+  assert.equal((await g('customer-package-grant',customerGrant)).status,200);assert.equal((await g('customer-package-grant',customerGrant)).status,200);
+  const customerPreview=await g('customer-package-preview',{grantId:customerGrant.grantId},invitedCookie);assert.equal(customerPreview.status,200);assert.equal(JSON.parse(customerPreview.body).evidenceCount,1);
+  const sharedArgs={...packageArgs,grantId:customerGrant.grantId};
+  assert.equal((await g('customer-package-preview',{grantId:customerGrant.grantId},reviewer)).status,404);
+  assert.equal((await request(graphBase,{headers:{cookie:invitedCookie}})).status,404);
+  assert.equal((await request(newBase+'/evidence/'+graphEvidence.id+'/download',{headers:{cookie:invitedCookie}})).status,404);
+  assert.equal((await g('customer-package-download',{...sharedArgs,sha256:'0'.repeat(64)},invitedCookie)).status,404);
+  const sharedPackage=await g('customer-package-download',sharedArgs,invitedCookie);assert.equal(sharedPackage.status,200);assert.ok(sharedPackage.raw.includes(Buffer.from('authenticated scoped recipient download only')));
+  const secondShare={...customerGrant,grantId:randomUUID()};assert.equal((await g('customer-package-grant',secondShare)).status,200);
+  assert.equal((await g('customer-package-revoke',{grantId:customerGrant.grantId})).status,200);
+  assert.equal((await g('customer-package-download',sharedArgs,invitedCookie)).status,404);
+  await admin.query('DELETE FROM verivaro_private.api_rate_keys');await admin.query('UPDATE verivaro_private.api_rate_state SET bucket=-1,requests=0');
   assert.equal((await g('submission-download',packageArgs,contributor)).status,404);
   const packageDownload=await g('submission-download',packageArgs);assert.equal(packageDownload.status,200);assert.equal(packageDownload.headers['content-type'],'application/zip');assert.ok(packageDownload.raw.subarray(0,2).equals(Buffer.from('PK')));
   assert.equal(packageDownload.headers['x-package-sha256'],createHash('sha256').update(packageDownload.raw).digest('hex'));
@@ -296,6 +311,8 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   const grantRow=JSON.parse((await request(newBase+'/directory',{headers:{cookie:session}})).body).items.find(x=>x.actorId===contributorId);
   assert.equal((await adminPost(newBase+'/access',{requestId:randomUUID(),targetId:contributorId,role:'revoke',generation:grantRow.generation})).status,200);
   assert.equal((await g('submission-download',packageArgs)).status,409);
+  assert.equal((await g('customer-package-preview',{grantId:secondShare.grantId},invitedCookie)).status,404); // preparer revoked
+  console.log('https_customer_package_scope_gate_passed');
   console.log('https_controlled_submission_package_gate_passed');
   // Independent fixture phases must not consume each other's admission budget.
   // The disposable integration database only; production thresholds unchanged.

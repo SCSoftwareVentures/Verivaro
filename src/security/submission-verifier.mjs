@@ -45,7 +45,7 @@ export function verifySubmissionPackage(archive,{expectedPackageSha256,expectedM
  const extra=extended?(custom?profile.includeWorkbook?4:3:profile==='workbook-v1'?4:3):0;
  if(files.length!==m.evidence.length+2+extra||!(custom?keys(index,['version','configuration','authorization','files']):extended?keys(index,['version','profile','authorization','files'])&&HANDOVER_PROFILES.includes(index.profile):keys(index,['version','authorization','files'])&&index.version===1)||
  !uuid(index.authorization?.submissionId)||index.authorization.sha256!==expectedManifestSha256||
- index.authorization.authorization!=='internal owner-authorized download only'||
+ !(index.authorization.authorization==='internal owner-authorized download only'||index.authorization.authorization==='authenticated scoped recipient download only'&&uuid(index.authorization.grantId)&&typeof index.authorization.expiresAt==='string')||
  !Array.isArray(index.files)||index.files.length!==files.length-1)fail();
  const ids=new Set();let total=0;
  for(let i=0;i<m.evidence.length;i++){

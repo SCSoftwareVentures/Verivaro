@@ -8,7 +8,7 @@ export function createEvidenceReader(pool,{expectedLogin,verifier,contextKey,rea
  validateServiceIdentity(role,expectedLogin);
  if(typeof pool?.connect!=='function'||!verifier||!Buffer.isBuffer(contextKey)||contextKey.length!==32||typeof readKey!=='function')throw Error('invalid evidence reader');
  const key=Buffer.from(contextKey);
- return async function retrieve({token,tenantId,projectId,evidenceId}){
+ return async function retrieve({token,tenantId,projectId,evidenceId,grantId=null}){
   const c=await pool.connect();let tx=false,clean=false,row,clear;
   try{
    await c.query('DISCARD ALL');await assertServiceLogin(c,role,expectedLogin);await c.query('SET ROLE '+role);
@@ -17,7 +17,7 @@ export function createEvidenceReader(pool,{expectedLogin,verifier,contextKey,rea
    const r=await c.query('SELECT pg_backend_pid() AS pid, pg_current_xact_id()::text AS xid');
    const context=signDatabaseContext({token,tenantId,challenge:r.rows[0]},{verifier,key});
    await c.query("SELECT set_config('verivaro.signed_context',$1,true)",[context]);
-   const result=await c.query('SELECT * FROM verivaro_ingestion.fetch_object($1,$2,$3)',[tenantId,projectId,evidenceId]);
+   const result=grantId===null?await c.query('SELECT * FROM verivaro_ingestion.fetch_object($1,$2,$3)',[tenantId,projectId,evidenceId]):await c.query('SELECT * FROM verivaro_ingestion.fetch_customer_package_object($1,$2,$3,$4)',[tenantId,projectId,grantId,evidenceId]);
    if(result.rows.length!==1||result.rows[0].id!==evidenceId)throw new EvidenceAccessDenied();
    row=result.rows[0];
    await c.query('COMMIT');tx=false;await c.query('DISCARD ALL');clean=true;

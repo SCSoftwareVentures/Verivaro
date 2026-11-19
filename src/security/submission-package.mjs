@@ -14,7 +14,8 @@ export function createSubmissionPackage({workflow,retrieve}){
   const files=[];let out;
   try{
    signal.throwIfAborted();
-   const receipt=await workflow.readSubmission(input),manifest=Buffer.from(receipt.manifest,'utf8');
+   const read=input.grantId===undefined?workflow.readSubmission:workflow.readCustomerPackage;if(typeof read!=='function')throw Error('submission unavailable');
+   const receipt=await read(input),manifest=Buffer.from(receipt.manifest,'utf8');
    if(manifest.length>2097152||hash(manifest)!==input.sha256||receipt.sha256!==input.sha256||receipt.submissionId!==input.submissionId)throw new ReleaseConflict('manifest mismatch');
    const m=JSON.parse(receipt.manifest);
    if(m.version!==1||m.tenantId!==input.tenantId||m.projectId!==input.projectId||m.summary?.status!=='criteria_satisfied'||!Array.isArray(m.evidence)||m.evidence.length<1||m.evidence.length>64)throw new ReleaseConflict('invalid manifest');
@@ -39,7 +40,7 @@ export function createSubmissionPackage({workflow,retrieve}){
    signal.throwIfAborted();
    // A second DB transaction checks exact graph, current actor generations
    // and expiry after all plaintext retrieval and assembly.
-   const latest=await workflow.readSubmission(input);
+   const latest=await read(input);
    if(JSON.stringify(latest)!==JSON.stringify(receipt))throw new ReleaseConflict('approval changed');
    signal.throwIfAborted();const result=out;out=null;return result;
   }finally{for(const [,data] of files)data.fill(0);out?.fill(0);active--;}
