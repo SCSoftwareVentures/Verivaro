@@ -1,7 +1,7 @@
 // ZeroSwitch bounded preview only. No external fetch, file paths, formula
 // evaluation, implicit field mapping, or direct database writes.
-const invalid=()=>{throw Error('invalid CSV preview input');};
 export function previewRequirementCsv(bytes,mapping){
+ const invalid=()=>{throw Error('invalid CSV preview input');};
  if(!(bytes instanceof Uint8Array)||bytes.byteLength<1||bytes.byteLength>262144||!mapping||Object.keys(mapping).sort().join(',')!=='applicability,criterion,title'||!Object.values(mapping).every(x=>typeof x==='string'&&x.length>0&&x.length<=128)||new Set(Object.values(mapping)).size!==3)invalid();
  let text;try{text=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}catch{invalid();}
  if(text.includes('\0'))invalid();

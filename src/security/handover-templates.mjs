@@ -1,5 +1,6 @@
 // Deterministic derived files. Original attachments are never rewritten.
-export const HANDOVER_PROFILES=Object.freeze(['handover-v1','register-v1']);
+import {createRegisterXlsx} from './xlsx-register.mjs';
+export const HANDOVER_PROFILES=Object.freeze(['handover-v1','register-v1','workbook-v1']);
 const uuid=x=>typeof x==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(x);
 const sha=x=>typeof x==='string'&&/^[a-f0-9]{64}$/.test(x);
 const ext={'text/plain; charset=utf-8':'txt','application/pdf':'pdf','image/png':'png'};
@@ -21,7 +22,8 @@ function pdf(lines,profile){
  const objects=['<< /Type /Catalog /Pages 2 0 R >>','','<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>','<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>'],kids=[];
  for(const [i,p] of pages.entries()){
   const page=objects.length+1,streamId=page+1;kids.push(page+' 0 R');
-  let stream='0.08 0.18 0.27 rg 0 760 595 82 re f\n1 1 1 rg BT /F1 18 Tf 42 802 Td (VERIVARO | HANDOVER) Tj ET\n1 1 1 rg BT /F1 10 Tf 42 780 Td '+lit(profile+' | INTERNAL OWNER-AUTHORIZED SNAPSHOT')+' Tj ET\n0.12 0.19 0.25 rg\n';
+  let stream='0.08 0.18 0.27 rg 0 760 595 82 re f\n1 1 1 rg BT /F1 18 Tf 42 802 Td (VERIVARO | HANDOVER) Tj ET\n1 1 1 rg BT /F1 10 Tf 42 780 Td '+lit(profile==='draft-v1'?'DRAFT - NOT APPROVED FOR RELEASE':profile+' | INTERNAL OWNER-AUTHORIZED SNAPSHOT')+' Tj ET\n0.12 0.19 0.25 rg\n';
+  if(profile==='draft-v1')stream+='0.90 0.90 0.90 rg BT /F1 35 Tf 90 390 Td (DRAFT - NOT APPROVED) Tj ET\n0.12 0.19 0.25 rg\n';
   p.forEach((s,j)=>{stream+='BT /F2 9 Tf 42 '+(735-j*14)+' Td '+lit(s)+' Tj ET\n';});
   stream+='BT /F1 9 Tf 42 42 Td '+lit('Page '+(i+1)+' / '+pages.length+' | Not proof of delivery or acceptance')+' Tj ET\n';
   objects.push('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents '+streamId+' 0 R >>','<< /Length '+Buffer.byteLength(stream)+' >>\nstream\n'+stream+'endstream');
@@ -53,5 +55,13 @@ export function buildHandoverDerivatives(m,manifestSha256,profile){
  const reqLines=['REQUIREMENT INDEX',...rows.slice(1).flatMap(r=>[r[2]+' | '+r[4],r[0]+' version '+r[1]])];
  const evidenceLines=['EVIDENCE INDEX',...inventory.slice(1).flatMap(r=>[r[1]+' | '+r[2]+' bytes','SHA-256: '+r[3]])];
  const generated=[['handover-cover.pdf',pdf([...intro,...(profile==='handover-v1'?[...reqLines,'',...evidenceLines]:[...evidenceLines,'',...reqLines])],profile)],['requirement-register.csv',csv(rows)],['evidence-register.csv',csv(inventory)]];
+ if(profile==='workbook-v1')generated.push(['evidence-register.xlsx',createRegisterXlsx(rows,inventory)]);
  if(generated.some(([,b])=>b.length>1048576))invalid();return generated;
+}
+
+export function buildDraftHandoverPdf(g){
+ if(!g||g.version!==1||!uuid(g.tenantId)||!uuid(g.projectId)||!g.summary||!['blocked','not_assessed','criteria_satisfied'].includes(g.summary.status)||!Array.isArray(g.requirements)||g.requirements.length>128)invalid();
+ const lines=['DRAFT - NOT APPROVED FOR RELEASE','Project ID: '+g.projectId,'Assessment: '+g.summary.status,'This is an internal planning cover, not a frozen submission.','No original evidence files included. Independent review and authorization required.','Do not represent this draft as ready, delivered or accepted.',''];
+ for(const q of g.requirements){if(!uuid(q.requirementId)||!uuid(q.versionId)||!text(q.title,128)||!text(q.state,64)||!text(q.applicability,64))invalid();lines.push(q.title+' | '+q.applicability+' | '+q.state,q.requirementId+' version '+q.versionId);}
+ return pdf(lines,'draft-v1');
 }

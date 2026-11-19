@@ -20,14 +20,14 @@ export function verifySubmissionPackage(archive,{expectedPackageSha256,expectedM
  !digest(expectedPackageSha256)||!digest(expectedManifestSha256)||hash(archive)!==expectedPackageSha256)fail();
  const files=[],names=new Set();let pos=0;
  while(pos+4<=archive.length&&archive.readUInt32LE(pos)===0x04034b50){
-  if(files.length>=69||pos+30>archive.length)fail();
+  if(files.length>=70||pos+30>archive.length)fail();
   const n=archive.readUInt16LE(pos+26),size=archive.readUInt32LE(pos+22);
   if(n<1||n>64||size<1||size>2097152||archive.readUInt16LE(pos+28)!==0||
    archive.readUInt16LE(pos+6)!==0||archive.readUInt16LE(pos+8)!==0||
    archive.readUInt32LE(pos+18)!==size||pos+30+n+size>archive.length)fail();
   const raw=archive.subarray(pos+30,pos+30+n),name=raw.toString('utf8');
   if(!Buffer.from(name,'ascii').equals(raw)||names.has(name)||
-   !(/^(submission\.json|package-index\.json|handover-cover\.pdf|requirement-register\.csv|evidence-register\.csv|evidence-[a-f0-9-]{36}\.(txt|pdf|png))$/.test(name)))fail();
+   !(/^(submission\.json|package-index\.json|handover-cover\.pdf|requirement-register\.csv|evidence-register\.csv|evidence-register\.xlsx|evidence-[a-f0-9-]{36}\.(txt|pdf|png))$/.test(name)))fail();
   names.add(name);files.push([name,archive.subarray(pos+30+n,pos+30+n+size)]);pos+=30+n+size;
  }
  if(files.length<3||files[0][0]!=='submission.json'||files.at(-1)[0]!=='package-index.json')fail();
@@ -40,7 +40,7 @@ export function verifySubmissionPackage(archive,{expectedPackageSha256,expectedM
  const m=json(manifestBytes),index=json(files.at(-1)[1]);
  if(m?.version!==1||!uuid(m.tenantId)||!uuid(m.projectId)||m.summary?.status!=='criteria_satisfied'||
  !Array.isArray(m.evidence)||m.evidence.length<1||m.evidence.length>64)fail();
- const extended=index?.version===2,extra=extended?3:0;
+ const extended=index?.version===2,extra=extended?(index.profile==='workbook-v1'?4:3):0;
  if(files.length!==m.evidence.length+2+extra||!(extended?keys(index,['version','profile','authorization','files'])&&HANDOVER_PROFILES.includes(index.profile):keys(index,['version','authorization','files'])&&index.version===1)||
  !uuid(index.authorization?.submissionId)||index.authorization.sha256!==expectedManifestSha256||
  index.authorization.authorization!=='internal owner-authorized download only'||
