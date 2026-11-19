@@ -1,7 +1,7 @@
 import {assertServiceLogin,validateServiceIdentity} from './service-login.mjs';
 import {signDatabaseContext} from './sign-database-context.mjs';
 import {createHash,randomUUID} from 'node:crypto';
-import {open,link,unlink,stat} from 'node:fs/promises';
+import {open,link,unlink,lstat} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {join,isAbsolute} from 'node:path';
 import {isArtifactId} from './private-file-store.mjs';
@@ -31,9 +31,45 @@ export function createEvidenceReleaseDatabase(pool,{expectedLogin,verifier,conte
  }
  if(mode==='workflow')return Object.freeze({
   async request({token,tenantId,projectId,evidenceId,requestId,sha256}){return (await run(token,tenantId,'SELECT verivaro_sharing.request_evidence_release($1,$2,$3,$4,$5) AS id',[tenantId,projectId,evidenceId,requestId,sha256])).id;},
+  async issueRecipient({token,tenantId,exportId,shareId,digest,expiry,recipientId}){await run(token,tenantId,'SELECT verivaro_sharing.issue_recipient_share($1,$2,$3,$4,$5) AS ok',[exportId,shareId,digest,expiry,recipientId]);return shareId;},
   async review({token,tenantId,projectId,requestId,sha256,decision,reason}){return (await run(token,tenantId,'SELECT verivaro_sharing.review_evidence_release($1,$2,$3,$4,$5,$6) AS ok',[tenantId,projectId,requestId,sha256,decision,reason])).ok===true;}
  });
  return Object.freeze({
-  async publish({token,tenantId,projectId,requestId,sha256}){return (await run(token,tenantId,'SELECT verivaro_sharing.register_approved_export($1,$2,$3,$4) AS id',[tenantId,projectId,requestId,sha256])).id;}
+  async publish({token,tenantId,projectId,requestId,evidenceId,sha256}){return (await run(token,tenantId,'SELECT verivaro_sharing.register_approved_export($1,$2,$3,$4,$5) AS id',[tenantId,projectId,requestId,evidenceId,sha256])).id;}
  });
+}
+
+// Store only verified bytes, under a private dedicated directory on an
+// encrypted volume. A filesystem failure never registers an export.
+// A failed database commit can leave an inaccessible orphan, never a share.
+export function createEvidencePublisher({root,retrieve,release}){
+ if(typeof root!=='string'||!isAbsolute(root)||typeof retrieve!=='function'||typeof release?.publish!=='function')throw Error('invalid release publisher');
+ async function verifyExisting(path,expected){
+  const handle=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+  try{
+   const s=await handle.stat();
+   if(!s.isFile()||(s.mode&0o077)!==0||s.size!==expected.length||(typeof process.getuid==='function'&&s.uid!==process.getuid()))throw Error('unsafe export file');
+   const b=await handle.readFile();try{if(!b.equals(expected))throw Error('export content mismatch');}finally{b.fill(0);}
+  }finally{await handle.close();}
+ }
+ return async function publish(input,{signal}){
+  if(!isArtifactId(input.evidenceId)||!isArtifactId(input.requestId)||!hash.test(input.sha256))throw Error('invalid release input');
+  signal.throwIfAborted();
+  const s=await lstat(root);if(!s.isDirectory()||(s.mode&0o077)!==0||(typeof process.getuid==='function'&&s.uid!==process.getuid()))throw Error('unsafe export root');
+  const evidence=await retrieve(input);let temporary;
+  try{
+   if(!Buffer.isBuffer(evidence.data)||evidence.data.length<1||evidence.data.length>262144||evidence.sha256!==input.sha256||createHash('sha256').update(evidence.data).digest('hex')!==input.sha256)throw Error('release content mismatch');
+   signal.throwIfAborted();
+   temporary=join(root,'.release-'+randomUUID());
+   const handle=await open(temporary,constants.O_CREAT|constants.O_EXCL|constants.O_WRONLY|constants.O_NOFOLLOW,0o600);
+   try{await handle.writeFile(evidence.data);await handle.sync();}finally{await handle.close();}
+   const destination=join(root,input.evidenceId);
+   try{await link(temporary,destination);}catch(e){if(e.code!=='EEXIST')throw e;await verifyExisting(destination,evidence.data);}
+   await unlink(temporary);temporary=undefined;
+   const directory=await open(root,constants.O_RDONLY|constants.O_DIRECTORY|constants.O_NOFOLLOW);
+   try{await directory.sync();}finally{await directory.close();}
+   signal.throwIfAborted();
+   return await release.publish(input);
+  }finally{evidence?.data?.fill(0);if(temporary)await unlink(temporary).catch(()=>{});}
+ };
 }

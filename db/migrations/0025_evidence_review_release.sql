@@ -95,13 +95,13 @@ BEGIN
  INSERT INTO verivaro_private.evidence_release_reviews(request_id,reviewer_id,session_id,reviewer_generation,decision,reason) VALUES(r,c[2]::uuid,c[3]::uuid,g,d,why);
  RETURN true;
 END $review$;
-CREATE FUNCTION verivaro_sharing.register_approved_export(t uuid,p uuid,r uuid,h text) RETURNS uuid
+CREATE FUNCTION verivaro_sharing.register_approved_export(t uuid,p uuid,r uuid,e uuid,h text) RETURNS uuid
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,verivaro_private AS $publish$
 DECLARE c text[];req verivaro_private.evidence_release_requests%ROWTYPE;review verivaro_private.evidence_release_reviews%ROWTYPE;receipt verivaro_private.evidence_release_receipts%ROWTYPE;
 BEGIN
  c:=verivaro_private.release_actor(t,p,'owner');
  SELECT * INTO req FROM verivaro_private.evidence_release_requests WHERE request_id=r AND tenant_id=t AND project_id=p FOR UPDATE;
- IF NOT FOUND OR req.sha256 IS DISTINCT FROM h OR req.submitter_id=c[2]::uuid THEN RAISE EXCEPTION 'release denied' USING ERRCODE='42501';END IF;
+ IF NOT FOUND OR req.evidence_id IS DISTINCT FROM e OR req.sha256 IS DISTINCT FROM h OR req.submitter_id=c[2]::uuid THEN RAISE EXCEPTION 'release denied' USING ERRCODE='42501';END IF;
  SELECT * INTO review FROM verivaro_private.evidence_release_reviews WHERE request_id=r;
  IF NOT FOUND OR review.decision<>'approved' OR review.reviewer_id=c[2]::uuid OR review.reviewer_id=req.submitter_id
  OR req.submitter_generation IS DISTINCT FROM verivaro_private.release_generation(t,p,req.submitter_id,'submitter')
@@ -119,7 +119,7 @@ BEGIN
  INSERT INTO verivaro_private.evidence_release_receipts(request_id,export_id,released_by,session_id) VALUES(r,r,c[2]::uuid,c[3]::uuid);
  RETURN r;
 END $publish$;
-REVOKE ALL ON FUNCTION verivaro_sharing.request_evidence_release(uuid,uuid,uuid,uuid,text),verivaro_sharing.review_evidence_release(uuid,uuid,uuid,text,text,text),verivaro_sharing.register_approved_export(uuid,uuid,uuid,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION verivaro_sharing.request_evidence_release(uuid,uuid,uuid,uuid,text),verivaro_sharing.review_evidence_release(uuid,uuid,uuid,text,text,text),verivaro_sharing.register_approved_export(uuid,uuid,uuid,uuid,text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION verivaro_sharing.request_evidence_release(uuid,uuid,uuid,uuid,text),verivaro_sharing.review_evidence_release(uuid,uuid,uuid,text,text,text) TO verivaro_runtime;
-GRANT EXECUTE ON FUNCTION verivaro_sharing.register_approved_export(uuid,uuid,uuid,text) TO verivaro_release_service;
+GRANT EXECUTE ON FUNCTION verivaro_sharing.register_approved_export(uuid,uuid,uuid,uuid,text) TO verivaro_release_service;
 COMMIT;
