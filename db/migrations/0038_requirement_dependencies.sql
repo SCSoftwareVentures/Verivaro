@@ -121,8 +121,8 @@ DECLARE q verivaro_private.requirement_versions%ROWTYPE;
 BEGIN
  IF NEW.decision<>'approved' THEN RETURN NEW;END IF;
  SELECT * INTO q FROM verivaro_private.requirement_versions WHERE version_id=NEW.version_id;
- IF EXISTS(SELECT 1 FROM verivaro_private.requirement_versions old JOIN verivaro_private.requirement_dependencies e ON e.dependent_version_id=old.version_id
- WHERE old.tenant_id=q.tenant_id AND old.project_id=q.project_id AND old.requirement_id=q.requirement_id AND old.revision<q.revision
+ IF EXISTS(SELECT 1 FROM verivaro_private.requirement_versions previous_version JOIN verivaro_private.requirement_dependencies e ON e.dependent_version_id=previous_version.version_id
+ WHERE previous_version.tenant_id=q.tenant_id AND previous_version.project_id=q.project_id AND previous_version.requirement_id=q.requirement_id AND previous_version.revision<q.revision
  AND NOT EXISTS(SELECT 1 FROM verivaro_private.requirement_dependencies n WHERE n.dependent_version_id=q.version_id AND n.prerequisite_id=e.prerequisite_id)) THEN RAISE EXCEPTION 'dependency continuity required' USING ERRCODE='23505';END IF;
  RETURN NEW;
 END $continuity$;
