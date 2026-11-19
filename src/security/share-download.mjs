@@ -1,4 +1,8 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
+import {pipeline} from 'node:stream/promises';
+import {Readable} from 'node:stream';
+import {isAbsolute} from 'node:path';
+import {stageEncryptedArtifact, MAX_SPOOL_BYTES} from './encrypted-artifact-spool.mjs';
 import { verifyIdentityToken } from './verify-identity.mjs';
 import { digestShareToken } from './share-token.mjs';
 import { isArtifactId } from './private-file-store.mjs';
@@ -23,13 +27,15 @@ function validArtifact(item){
 // No public object URLs, ranges, inline display, or caller-selected filenames.
 // Verify full buffered content before sending any bytes. Bound process memory by
 // maxBytes * maxConcurrent (plus fixed overhead); large exports need another design.
-export function createShareDownloadHandler({resolveShare,resolveRecipientShare,recipientVerifier,openArtifact,maxBytes=8*1024*1024,maxConcurrent=4,requestsPerMinute=120,perPeerPerMinute=20,maxPeers=2048,timeoutMs=10000}){
+export function createShareDownloadHandler({resolveShare,resolveRecipientShare,recipientVerifier,openArtifact,spoolDirectory,maxBytes=8*1024*1024,maxConcurrent=4,requestsPerMinute=120,perPeerPerMinute=20,maxPeers=2048,timeoutMs=10000}){
  if((resolveRecipientShare!==undefined||recipientVerifier!==undefined)&&
  (typeof resolveRecipientShare!=='function'||!recipientVerifier?.publicKey||!recipientVerifier?.issuer||!recipientVerifier?.audience))throw Error('invalid recipient configuration');
  const verifier=recipientVerifier?Object.freeze({...recipientVerifier}):null;
  if(typeof resolveShare!=='function'||typeof openArtifact!=='function'||
  ![maxBytes,maxConcurrent,requestsPerMinute,perPeerPerMinute,maxPeers,timeoutMs].every(x=>Number.isSafeInteger(x)&&x>0)||
- maxBytes>32*1024*1024||maxConcurrent>16||maxPeers>10000||timeoutMs>30000)throw Error('invalid gateway settings');
+ (spoolDirectory!==undefined&&(typeof spoolDirectory!=='string'||!isAbsolute(spoolDirectory)))||
+ maxBytes>(spoolDirectory?MAX_SPOOL_BYTES:32*1024*1024)||
+ (spoolDirectory&&maxBytes*maxConcurrent>2*1024*1024*1024)||maxConcurrent>16||maxPeers>10000||timeoutMs>30000)throw Error('invalid gateway settings');
  let inFlight=0,bucket=-1,count=0;
  const peers=new Map();
  function admit(peer){
@@ -73,11 +79,16 @@ export function createShareDownloadHandler({resolveShare,resolveRecipientShare,r
   timer.unref?.();
   const disconnect=()=>{if(!res.writableFinished)controller.abort();};
   res.once('close',disconnect);
+  let staged;
   try{
    const first=await authorize();
    controller.signal.throwIfAborted();
    if(!validArtifact(first))throw Error('denied');
    const source=await openArtifact(first.artifact_id,{signal:controller.signal,maxBytes});
+   let body;
+   if(spoolDirectory){
+    staged=await stageEncryptedArtifact(source,{directory:spoolDirectory,maxBytes,sha256:first.sha256,signal:controller.signal});
+   }else{
    // Allocate once rather than retaining arbitrary numbers of chunks.
    const buffer=Buffer.allocUnsafe(maxBytes);
    let length=0;
@@ -88,12 +99,19 @@ export function createShareDownloadHandler({resolveShare,resolveRecipientShare,r
    }
    controller.signal.throwIfAborted();
    if(!length)throw Error('empty artifact');
-   const body=buffer.subarray(0,length);
+   body=buffer.subarray(0,length);
    if(!timingSafeEqual(createHash('sha256').update(body).digest(),Buffer.from(first.sha256,'hex')))throw Error('integrity mismatch');
+   }
    // Recheck AFTER reading and hashing, immediately before sending.
    const final=await authorize();
    controller.signal.throwIfAborted();
    if(!validArtifact(final)||final.artifact_id!==first.artifact_id||final.sha256!==first.sha256)throw Error('denied');
+   if(staged){
+    if(res.destroyed||res.writableEnded)return;
+    res.writeHead(200,{...baseHeaders,'Content-Type':'application/octet-stream','Content-Length':staged.length,'Content-Disposition':'attachment; filename="verivaro-export.bin"'});
+    await pipeline(Readable.from(staged.read()),res,{signal:controller.signal});
+    return;
+   }
    // Keep the concurrency slot until bytes are flushed or the peer disconnects.
    await new Promise((resolve,reject)=>{
     const done=()=>{res.removeListener('finish',done);res.removeListener('close',done);res.removeListener('error',failed);resolve();};
@@ -102,8 +120,9 @@ export function createShareDownloadHandler({resolveShare,resolveRecipientShare,r
     res.once('finish',done);res.once('close',done);res.once('error',failed);
     try{send(res,200,body,{'Content-Disposition':'attachment; filename="verivaro-export.bin"'});}catch(e){done();reject(e);}
    });
-  }catch{deny(res);}
+  }catch{if(res.headersSent){res.destroy();}else{deny(res);}}
   finally{
+   try{if(staged)await staged.close();}catch{res.destroy();}
    clearTimeout(timer);res.removeListener('close',disconnect);inFlight--;
   }
  };
