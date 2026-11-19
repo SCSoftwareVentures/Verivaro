@@ -38,7 +38,7 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   }
   const cfg={origin,release:{root:releaseRoot},ingestion:{keyId:'runtime-fixture',keyFile:await put('evidence-key',randomBytes(32).toString('base64url')),scannerSocket:scanner.socketPath},listenHost:'127.0.0.1',listenPort:18443,tlsKeyFile:join(tls,'server.key'),tlsCertFile:join(tls,'server.crt'),
    database:{host:'localhost',port:Number(process.env.PGPORT),name:'verivaro_test',caFile:join(tls,'ca.pem')},
-   logins:{release:{user:'vv_ci_release',passwordFile:await put('release',process.env.VV_RELEASE_PASSWORD)},evidenceReader:{user:'vv_ci_evidence_reader',passwordFile:await put('reader',process.env.VV_EVIDENCE_READER_PASSWORD)},ingestion:{user:'vv_ci_ingest',passwordFile:await put('ingestion',process.env.VV_INGEST_PASSWORD)},identity:{user:'vv_ci_identity',passwordFile:await put('identity',process.env.VV_IDENTITY_PASSWORD)},runtime:{user:'vv_ci_runtime',passwordFile:await put('runtime',process.env.VV_RUNTIME_PASSWORD)},admission:{user:'vv_ci_api_a',passwordFile:await put('admission',process.env.VV_API_A_PASSWORD)}},
+   logins:{recipient:{user:'vv_ci_recipient',passwordFile:await put('recipient',process.env.VV_RECIPIENT_PASSWORD)},release:{user:'vv_ci_release',passwordFile:await put('release',process.env.VV_RELEASE_PASSWORD)},evidenceReader:{user:'vv_ci_evidence_reader',passwordFile:await put('reader',process.env.VV_EVIDENCE_READER_PASSWORD)},ingestion:{user:'vv_ci_ingest',passwordFile:await put('ingestion',process.env.VV_INGEST_PASSWORD)},identity:{user:'vv_ci_identity',passwordFile:await put('identity',process.env.VV_IDENTITY_PASSWORD)},runtime:{user:'vv_ci_runtime',passwordFile:await put('runtime',process.env.VV_RUNTIME_PASSWORD)},admission:{user:'vv_ci_api_a',passwordFile:await put('admission',process.env.VV_API_A_PASSWORD)}},
    provider:{issuer,audience,authorizationEndpoint:issuer+'/authorize',tokenEndpoint:issuer+'/token',requiredAcr:'fixture:mfa',requiredAmr:['mfa'],authorityFile:await put('authority',authority.publicKey.export({type:'spki',format:'pem'})),checkpointFile:await put('checkpoint',JSON.stringify({sequence:1,digest:createHash('sha256').update(catalogue).digest('hex')})),catalogueFile:await put('catalogue',catalogue),signatureFile:await put('sig',sign(null,catalogue,authority.privateKey)),clientSecretFile:await put('client-secret',secret)},
    local:{issuer:'urn:verivaro:runtime-fixture',audience:'api',signingKeyFile:await put('signing',local.privateKey.export({type:'pkcs8',format:'pem'}))},
    secrets:{admissionKeyFile:await put('admission-key',randomBytes(32).toString('base64url')),contextKeyFile:await put('context-key',context.toString('base64url')),browserKeyFile:await put('browser-key',randomBytes(32).toString('base64url'))}};
@@ -133,6 +133,45 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   assert.equal((await readFile(join(releaseRoot,obj.id))).toString(),evidenceBody);
   const finished=JSON.parse((await request(releases,{headers:{cookie:session}})).body);assert.ok(finished.requests.some(x=>x.id===submission.requestId&&x.state==='released'));
   console.log('browser_evidence_approval_workspace_gate_passed');
+  const memberRows=JSON.parse((await request(route+'/'+project+'/directory',{headers:{cookie:session}})).body).items;
+  const reviewerId=(await admin.query('SELECT actor_id FROM verivaro_private.provider_bindings WHERE issuer=$1 AND subject_digest=$2',[issuer,digestSubject(actors.reviewer)])).rows[0].actor_id;
+  const contributorId=(await admin.query('SELECT actor_id FROM verivaro_private.provider_bindings WHERE issuer=$1 AND subject_digest=$2',[issuer,digestSubject(actors.contributor)])).rows[0].actor_id;
+  assert.ok(memberRows.some(x=>x.actorId===reviewerId));
+  assert.equal((await request(route+'/'+project+'/directory',{headers:{cookie:viewer}})).status,404);
+  const adminPost=(path,data,cookie=session)=>request(path,{method:'POST',headers:{cookie,origin,'content-type':'application/json'},body:JSON.stringify(data)});
+  const shareId=randomUUID(),shareCode=randomBytes(32).toString('base64url'),shareInput={exportId:submission.requestId,shareId,recipientId:reviewerId,code:shareCode};
+  const sharePath=route+'/'+project+'/share-issue';
+  assert.equal((await adminPost(sharePath,shareInput,contributor)).status,404);
+  const issued=await adminPost(sharePath,shareInput);assert.equal(issued.status,200);
+  assert.equal((await adminPost(sharePath,shareInput)).body,issued.body);
+  assert.equal((await adminPost(sharePath,{...shareInput,code:randomBytes(32).toString('base64url')})).status,409);
+  const listedShares=JSON.parse((await request(route+'/'+project+'/shares',{headers:{cookie:session}})).body).items;
+  assert.ok(listedShares.some(x=>x.id===shareId&&x.state==='active'));assert.ok(!JSON.stringify(listedShares).includes(shareCode));
+  const redeem=cookie=>request('/api/v1/recipient-download',{method:'POST',headers:{cookie,origin,'x-verivaro-share':shareCode}});
+  assert.equal((await redeem(contributor)).status,404);
+  const received=await redeem(reviewer);assert.equal(received.status,200);assert.equal(received.body,evidenceBody);
+  assert.equal((await adminPost(route+'/'+project+'/share-revoke',{shareId})).status,200);assert.equal((await redeem(reviewer)).status,404);
+  const create={requestId:randomUUID(),name:'New managed project'};
+  assert.equal((await adminPost(route+'/create',create,viewer)).status,404);
+  const created=await adminPost(route+'/create',create);assert.equal(created.status,200);const newId=JSON.parse(created.body).id;
+  assert.equal((await adminPost(route+'/create',create)).body,created.body);
+  assert.equal((await adminPost(route+'/create',{...create,name:'Changed request'})).status,409);
+  const newBase=route+'/'+newId;
+  assert.equal((await request(newBase,{headers:{cookie:contributor}})).status,404);
+  const assign={requestId:randomUUID(),targetId:contributorId,role:'contributor',generation:null};
+  assert.equal((await adminPost(newBase+'/access',{...assign,role:'reviewer'})).status,404);
+  assert.equal((await adminPost(newBase+'/access',assign,contributor)).status,404);
+  const assigned=await adminPost(newBase+'/access',assign);assert.equal(assigned.status,200);
+  const generation=JSON.parse(assigned.body).generation;
+  assert.equal((await adminPost(newBase+'/access',assign)).body,assigned.body);
+  assert.equal((await request(newBase,{headers:{cookie:contributor}})).status,200);
+  assert.equal((await adminPost(newBase+'/access',{...assign,requestId:randomUUID(),role:'viewer'})).status,409);
+  const revoke={...assign,requestId:randomUUID(),role:'revoke',generation};
+  assert.equal((await adminPost(newBase+'/access',revoke)).status,200);
+  assert.equal((await request(newBase,{headers:{cookie:contributor}})).status,404);
+  assert.equal((await admin.query('SELECT count(*)::int AS n FROM verivaro_private.project_admin_events WHERE project_id=$1',[newId])).rows[0].n,3);
+  await assert.rejects(admin.query('DELETE FROM verivaro_private.project_admin_events WHERE project_id=$1',[newId]),e=>e.code==='42501');
+  console.log('browser_project_permission_and_recipient_gate_passed');
   assert.equal((await request('/auth/logout-all',{method:'POST',headers:{origin,cookie:session}})).status,204);
   assert.equal((await request(route,{headers:{cookie:session}})).status,401);
   await app.stop();assert.equal(app.server.listening,false);

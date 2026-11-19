@@ -127,6 +127,7 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
    try{
     if(req.url==='/api/v1/recipient-download'){
      if(!recipientDownload)return reply(res,404,'Not found');
+     res.setHeader('Connection','close');
      if(req.method!=='POST'||req.headers.origin!==origin.origin||['same-site','cross-site'].includes(req.headers['sec-fetch-site'])||req.headers.range!==undefined||req.headers['x-verivaro-recipient']!==undefined)return reply(res,403,'Request denied');
      if(!await admission.peer(req.socket.remoteAddress))return reply(res,429,'Temporarily unavailable');
      const token=await browser.resolveSession(req);if(!token)return reply(res,401,'Sign in required');

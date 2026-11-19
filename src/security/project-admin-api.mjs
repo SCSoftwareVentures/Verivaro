@@ -25,7 +25,7 @@ async function read(req,op){
  }finally{clearTimeout(timer);for(const c of chunks)c.fill(0);}
 }
 export function createProjectAdminApi({origin,verifier,admission,resolveSession,workflow,sharingEnabled=false}){
- const u=new URL(origin);let active=0;
+ const u=new URL(origin);if(u.protocol!=='https:'||u.href!==u.origin+'/'||typeof resolveSession!=='function'||typeof admission?.peer!=='function'||typeof admission?.actor!=='function'||!['createProject','directory','changeAccess','shares','createShare','revokeRecipient'].every(k=>typeof workflow?.[k]==='function'))throw Error('invalid project administration configuration');let active=0;
  return async function admin(req,res){
   const m=match(req);if(!m)return bad(res,404);
   const [,tenantId,projectId,action]=m,op=action??'create',mutation=!['directory','shares'].includes(op),h=req.headers,seen=new Set();
