@@ -57,7 +57,7 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   function request(path,{method='GET',headers={},trusted=true,body}={}){
    return new Promise((resolve,reject)=>{
     const req=httpsRequest({host:'127.0.0.1',port:18443,servername:'localhost',path,method,ca:trusted?ca:undefined,headers:{host:'localhost:18443',...(body===undefined?{}:{'content-length':Buffer.byteLength(body)}),...headers},agent:false},res=>{
-     const chunks=[];const protocol=res.socket.getProtocol();res.on('data',b=>chunks.push(b));res.on('error',reject);res.on('end',()=>resolve({status:res.statusCode,headers:res.headers,body:Buffer.concat(chunks).toString('utf8'),protocol}));
+     const chunks=[];const protocol=res.socket.getProtocol();res.on('data',b=>chunks.push(b));res.on('error',reject);res.on('end',()=>resolve({status:res.statusCode,headers:res.headers,body:Buffer.concat(chunks).toString('utf8'),raw:Buffer.concat(chunks),protocol}));
     });req.on('error',reject);req.setTimeout(10000,()=>req.destroy(Error('fixture timeout')));req.end(body);
    });
   }
@@ -181,6 +181,16 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   assert.equal((await request(reportPath,{headers:{cookie:contributor}})).status,404);
   assert.equal((await request(reportPath,{headers:{cookie:viewer}})).status,404);
   assert.equal((await request(reportPath+'-download',{headers:{cookie:session}})).status,200);
+  for(const [suffix,type,magic] of [['-pdf','application/pdf','%PDF-1.4'],['-package','application/zip','PK']]){
+   const exported=await request(reportPath+suffix,{headers:{cookie:session}});
+   assert.equal(exported.status,200);assert.equal(exported.headers['content-type'],type);assert.match(exported.headers['content-disposition'],/^attachment;/);assert.equal(exported.raw.subarray(0,magic.length).toString(),magic);
+   assert.equal(exported.headers['x-report-sha256'],createHash('sha256').update(exported.raw).digest('hex'));
+   assert.equal((await request(reportPath+suffix,{headers:{cookie:reviewer}})).status,200);
+   assert.equal((await request(reportPath+suffix,{headers:{cookie:viewer}})).status,404);
+   assert.equal((await request(reportPath+suffix,{headers:{cookie:contributor}})).status,404);
+   assert.equal((await request(reportPath+suffix,{headers:{cookie:session,range:'bytes=0-5'}})).status,400);
+  }
+  console.log('commercial_verification_exports_gate_passed');
   const activeCode=randomBytes(32).toString('base64url'),activeShare=randomUUID();
   assert.equal((await adminPost(sharePath,{...shareInput,shareId:activeShare,code:activeCode})).status,200);
   const archivedInput={requestId:randomUUID(),revision:report.project.revision};
