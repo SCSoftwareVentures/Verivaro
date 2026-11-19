@@ -92,3 +92,11 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f db/tests/admission_logins.sql
           VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-distributed-admission.test.mjs
           psql -X -v ON_ERROR_STOP=1 -f db/tests/security_monitor_gate.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0013_monitor_dashboard.sql
+          VV_MONITOR_WORKER_PASSWORD="$(openssl rand -hex 32)"
+          VV_MONITOR_READER_PASSWORD="$(openssl rand -hex 32)"
+          echo "::add-mask::$VV_MONITOR_WORKER_PASSWORD"
+          echo "::add-mask::$VV_MONITOR_READER_PASSWORD"
+          export VV_MONITOR_WORKER_PASSWORD VV_MONITOR_READER_PASSWORD
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/monitor_logins.sql
+          VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-monitor.test.mjs
