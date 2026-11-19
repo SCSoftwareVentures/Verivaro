@@ -35,6 +35,10 @@ WITH revoked AS (
  UPDATE verivaro_private.share_grants SET revoked_at=clock_timestamp() WHERE revoked_at IS NULL RETURNING export_id,share_id,issuer_id
 )
 INSERT INTO verivaro_private.share_events(export_id,share_id,action,actor_id) SELECT export_id,share_id,'revoked',issuer_id FROM revoked;
+WITH revoked_exports AS (
+ UPDATE verivaro_private.released_exports SET revoked_at=clock_timestamp() WHERE revoked_at IS NULL RETURNING export_id
+)
+INSERT INTO verivaro_private.share_events(export_id,action) SELECT export_id,'export_revoked' FROM revoked_exports;
 UPDATE verivaro_private.context_key SET key_bytes=verivaro_private.gen_random_bytes(32);
 -- Preserve durable resource leases for human reconciliation. Never resend old alerts.
 UPDATE verivaro_private.alert_outbox SET state='dead',claim_id=NULL,claimed_by=NULL,claim_until=NULL
