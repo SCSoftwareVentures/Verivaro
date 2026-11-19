@@ -1,3 +1,4 @@
+import {assertServiceLogin,validateServiceIdentity} from './service-login.mjs';
 import {createHmac,randomUUID} from 'node:crypto';
 import {isIP} from 'node:net';
 import {encryptedReservation} from './spool-budget.mjs';
@@ -15,15 +16,15 @@ function canonicalPeer(value){
 }
 // Dedicated low-privilege pool; all replicas share the admission database and
 // peer HMAC key. No bearer token or raw remote IP is stored in the database.
-export function createDistributedAdmission(pool,{peerKey}){
+export function createDistributedAdmission(pool,{peerKey,expectedLogin}){
  if(!pool||typeof pool.connect!=='function'||!Buffer.isBuffer(peerKey)||peerKey.length!==32)throw Error('invalid admission configuration');
+ validateServiceIdentity('verivaro_admission_service',expectedLogin);
  const key=Buffer.from(peerKey);
  async function run(sql,values){
   const client=await pool.connect();let tx=false,clean=false;
   try{
    await client.query('DISCARD ALL');
-   const login=await client.query("SELECT rolsuper OR rolbypassrls OR rolcreaterole OR rolcreatedb OR rolreplication AS privileged FROM pg_catalog.pg_roles WHERE rolname=session_user");
-   if(login.rows.length!==1||login.rows[0].privileged!==false)throw Error('unsafe admission login');
+   await assertServiceLogin(client,'verivaro_admission_service',expectedLogin);
    await client.query('SET ROLE verivaro_admission_service');
    await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');tx=true;
    await client.query("SET LOCAL statement_timeout='3s'");

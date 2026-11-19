@@ -1,8 +1,10 @@
+import {assertServiceLogin,validateServiceIdentity} from './service-login.mjs';
 // Dedicated private gateway pool. Never share this pool with runtime or release workers.
 const QUERY='SELECT artifact_id, sha256 FROM verivaro_sharing.resolve_share($1::bytea)';
-export function createShareResolver(pool, {recipientBound=false}={}) {
+export function createShareResolver(pool, {recipientBound=false,expectedLogin}={}) {
  if(!pool || typeof pool.connect!=='function')throw new TypeError('invalid share pool');
  const role=recipientBound?'verivaro_recipient_gateway':'verivaro_share_gateway';
+ validateServiceIdentity(role,expectedLogin);
  const query=recipientBound?'SELECT artifact_id, sha256 FROM verivaro_sharing.resolve_recipient_share($1::bytea,$2::uuid,$3::uuid,$4::bigint)':QUERY;
  return async function resolveShare(digest,principal) {
   if(!Buffer.isBuffer(digest)||digest.length!==32)return null;
@@ -12,8 +14,7 @@ export function createShareResolver(pool, {recipientBound=false}={}) {
   let transaction=false,clean=false;
   try{
    await client.query('DISCARD ALL');
-   const login=await client.query("SELECT rolsuper OR rolbypassrls OR rolcreaterole OR rolcreatedb OR rolreplication AS privileged FROM pg_catalog.pg_roles WHERE rolname=session_user");
-   if(login.rows.length!==1||login.rows[0].privileged!==false)throw Error('unsafe gateway login');
+   await assertServiceLogin(client,role,expectedLogin);
    await client.query('SET ROLE '+role);
    await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
    transaction=true;

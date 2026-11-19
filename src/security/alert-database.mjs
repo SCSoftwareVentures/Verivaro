@@ -1,12 +1,13 @@
+import {assertServiceLogin,validateServiceIdentity} from './service-login.mjs';
 // Dedicated alert sender pool; never takes caller-controlled SQL.
-export function createAlertDatabase(pool){
+export function createAlertDatabase(pool,{expectedLogin}={}){
  if(!pool||typeof pool.connect!=='function')throw Error('invalid alert pool');
+ validateServiceIdentity('verivaro_alert_sender',expectedLogin);
  async function run(sql,values){
   const c=await pool.connect();let tx=false,clean=false;
   try{
    await c.query('DISCARD ALL');
-   const login=await c.query("SELECT rolsuper OR rolbypassrls OR rolcreaterole OR rolcreatedb OR rolreplication AS privileged FROM pg_catalog.pg_roles WHERE rolname=session_user");
-   if(login.rows.length!==1||login.rows[0].privileged!==false)throw Error('unsafe login');
+   await assertServiceLogin(c,'verivaro_alert_sender',expectedLogin);
    await c.query('SET ROLE verivaro_alert_sender');
    await c.query('BEGIN ISOLATION LEVEL READ COMMITTED');tx=true;
    await c.query("SET LOCAL statement_timeout='3s'");

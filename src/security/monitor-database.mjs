@@ -1,13 +1,14 @@
+import {assertServiceLogin,validateServiceIdentity} from './service-login.mjs';
 // Fixed role and operation surface; dedicated pool per process.
-export function createMonitorDatabase(pool,{mode}){
+export function createMonitorDatabase(pool,{mode,expectedLogin}){
  if(!pool||typeof pool.connect!=='function'||!['worker','reader'].includes(mode))throw Error('invalid monitor database');
  const role=mode==='worker'?'verivaro_monitor_worker':'verivaro_monitor_reader';
+ validateServiceIdentity(role,expectedLogin);
  async function run(operation){
   const c=await pool.connect();let tx=false,clean=false;
   try{
    await c.query('DISCARD ALL');
-   const login=await c.query("SELECT rolsuper OR rolbypassrls OR rolcreaterole OR rolcreatedb OR rolreplication AS privileged FROM pg_catalog.pg_roles WHERE rolname=session_user");
-   if(login.rows.length!==1||login.rows[0].privileged!==false)throw Error('unsafe login');
+   await assertServiceLogin(c,role,expectedLogin);
    await c.query('SET ROLE '+role);
    await c.query(mode==='reader'?'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY':'BEGIN ISOLATION LEVEL READ COMMITTED');tx=true;
    await c.query("SET LOCAL statement_timeout='3s'");
