@@ -175,6 +175,7 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/0032_custody_invitations.sql
           VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-custody-invitations.test.mjs
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/0033_requirement_graph.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0034_graph_workspace.sql
           VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-requirement-graph.test.mjs
           psql -X -v ON_ERROR_STOP=1 -f db/tests/full_security_gate.sql
           # Real encrypted logical backup and isolated recovery; no artifacts uploaded.

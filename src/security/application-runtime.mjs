@@ -9,6 +9,7 @@ import {verifyIdentityToken} from './verify-identity.mjs';
 import {lstat} from 'node:fs/promises';
 import {isAbsolute} from 'node:path';
 import {workspacePage,workspaceScript,workspaceCss} from './workspace-assets.mjs';
+import {createGraphWorkspaceApi,isGraphWorkspaceRequest,isGraphWorkspaceMutation} from './graph-workspace-api.mjs';
 import {createReleaseWorkspaceApi,isReleaseWorkspaceRequest,isReleaseWorkspaceMutation} from './release-workspace-api.mjs';
 import {createEvidenceReleaseDatabase,createEvidencePublisher} from './evidence-release.mjs';
 import {createServer} from 'node:https';
@@ -39,7 +40,7 @@ function invalidHeaders(req,host){
  const seen=new Set(),critical=new Set(['host','cookie','origin','authorization','content-length','transfer-encoding','content-encoding','expect','sec-fetch-site','content-type','idempotency-key','x-evidence-sha256','x-verivaro-share']);
  for(let i=0;i<req.rawHeaders.length;i+=2){const h=req.rawHeaders[i].toLowerCase();if(critical.has(h)&&seen.has(h))return true;seen.add(h);}
  return req.headers.host!==host||req.headers.authorization!==undefined||req.headers['transfer-encoding']!==undefined||req.headers['content-encoding']!==undefined||
- (!isRenameRequest(req)&&!isEvidenceUpload(req)&&!isReleaseWorkspaceMutation(req)&&!isProjectAdminMutation(req)&&!isTenantAdminMutation(req)&&req.headers['content-length']!==undefined&&req.headers['content-length']!=='0')||req.headers.expect!==undefined;
+ (!isRenameRequest(req)&&!isEvidenceUpload(req)&&!isReleaseWorkspaceMutation(req)&&!isProjectAdminMutation(req)&&!isTenantAdminMutation(req)&&!isGraphWorkspaceMutation(req)&&req.headers['content-length']!==undefined&&req.headers['content-length']!=='0')||req.headers.expect!==undefined;
 }
 // Only file paths and bounded deployment settings; no environment fallbacks.
 export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,report=()=>{}}){
@@ -108,6 +109,7 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
    upload=createEvidenceUploadHandler({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,ingest});
    download=createEvidenceDownloadHandler({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,retrieve});
   }
+  const graph=createGraphWorkspaceApi({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,workflow});
   const workspace=createReleaseWorkspaceApi({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,workflow,publish,uploadsEnabled:enabled});
   const tenantService=createTenantAdministration(pools.runtime,{expectedLogin:cfg.logins.runtime.user,mode:'workspace',verifier,contextKey,trustedIssuer:p.issuer});
   const tenantAdmin=createTenantAdminApi({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,administration:tenantService});
@@ -143,6 +145,7 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
     }
     if(isTenantAdminRequest(req))return await tenantAdmin(req,res);
     if(isProjectAdminRequest(req))return await administration(req,res);
+    if(isGraphWorkspaceRequest(req))return await graph(req,res);
     if(isReleaseWorkspaceRequest(req))return await workspace(req,res);
     if(isEvidenceDownload(req))return download?await download(req,res):reply(res,404,'Not found');
     if(isEvidenceUpload(req))return upload?await upload(req,res):reply(res,404,'Not found',{'Connection':'close'});

@@ -22,7 +22,7 @@ test('real browser renders signed-out, invited, owner and archived states; role 
   browser=await driver[engine].launch({headless:true});
   for(const width of [320,390,1280]){
    const context=await browser.newContext({viewport:{width,height:900},isMobile:width<500,hasTouch:width<500});
-   const page=await context.newPage(),errors=[],calls=[];let role='guest',archived=false,renameCount=0;
+   const page=await context.newPage(),errors=[],calls=[];let role='guest',archived=false,renameCount=0,graphWrites=[];
    page.on('pageerror',e=>errors.push(e.message));page.on('dialog',d=>d.accept());
    await page.route('**/api/**',async route=>{
     const req=route.request(),path=new URL(req.url()).pathname,method=req.method();calls.push({path,method});let payload,status=200;
@@ -36,6 +36,8 @@ test('real browser renders signed-out, invited, owner and archived states; role 
     else if(path===projectBase&&method==='GET')payload={project:{id:project,name,revision:0,archivedAt:archived?'2026-11-19T00:00:00Z':null}};
     else if(path===projectBase&&method==='PATCH'){assert.equal(role,'owner');assert.ok(req.headers()['idempotency-key']);renameCount++;payload={revision:1};}
     else if(path===projectBase+'/directory'||path===projectBase+'/shares')payload={items:[]};
+    else if(path===projectBase+'/verification'&&method==='GET')payload={canWrite:role==='owner'&&!archived,archived,summary:{requirements:graphWrites.length,required:graphWrites.length,verifiedRequired:0,blockers:graphWrites.length,status:graphWrites.length?'blocked':'not_assessed'},requirements:graphWrites.map(x=>({...x,revision:1,ruleDecision:'pending',ruleReason:null,state:'awaiting_rule_review',links:[],canRevise:!archived,canReview:false,canLink:false}))};
+    else if(path===projectBase+'/verification/requirement'&&method==='POST'){assert.equal(role,'owner');const x=req.postDataJSON();assert.equal(x.expectedRevision,0);graphWrites.push(x);payload={requirementId:x.requirementId,versionId:x.versionId,revision:1};}
     else if(path===projectBase+'/report')payload={summary:{evidence:1,encrypted:1,bytes:5,requests:0,states:{}}};
     else{status=404;payload={error:'not_found'};}
     await route.fulfill({status,contentType:'application/json',body:JSON.stringify(payload)});
@@ -50,8 +52,12 @@ test('real browser renders signed-out, invited, owner and archived states; role 
    assert.equal(await page.locator('#inviteCode').inputValue(),'');assert.equal(await page.locator('#tenant').inputValue(),tenant);assert.equal(await page.locator('#tenantOwnerControls').isVisible(),false);assert.equal(await page.locator('#projectContent').isVisible(),false);await fits();
    role='owner';await page.reload();await notice('Workspace ready.');assert.equal(await page.locator('#projectContent').isVisible(),true);assert.equal(await page.locator('#tenantOwnerControls').isVisible(),true);assert.equal(await page.locator('#archive').isVisible(),true);
    assert.equal(await page.locator('#name').inputValue(),name);assert.equal(await page.locator('#selectedTenantName').textContent(),name);assert.equal(await page.locator('#selectedProjectName').textContent(),name);assert.ok((await page.locator('#tenant option').textContent()).length<22);assert.equal(await page.locator('img').count(),0);assert.equal(await page.locator('#reportPdf').getAttribute('href'),projectBase+'/report-pdf');await fits();
+   assert.equal(await page.locator('#graphStatus').textContent(),'Not assessed — no mandatory criteria');
+   await page.locator('#ruleTitle').fill('Serial number');await page.locator('#ruleCriterion').fill('Match approved register.');await page.locator('#ruleApplicability').selectOption('required');
+   await page.getByRole('button',{name:'Create requirement',exact:true}).click();await notice('Requirement drafted.');assert.equal(graphWrites.length,1);
+   assert.match(await page.locator('#graphStatus').textContent(),/Blocked/);assert.match(await page.locator('#graphItems').textContent(),/Serial number/);await fits();
    await page.locator('#name').fill('Updated project');await page.getByRole('button',{name:'Save name',exact:true}).click();await notice('Project name saved.');assert.equal(renameCount,1);
-   archived=true;await page.getByRole('button',{name:'Refresh',exact:true}).click();await notice('Workspace ready.');assert.equal(await page.locator('#archive').isVisible(),false);assert.equal(await page.locator('#rename').isVisible(),false);assert.equal(await page.locator('#upload').isVisible(),false);assert.equal(await page.getByRole('button',{name:'Submit for review',exact:true}).count(),0);assert.equal(await page.locator('#reportPanel').isVisible(),true);await fits();
+   archived=true;await page.getByRole('button',{name:'Refresh',exact:true}).click();await notice('Workspace ready.');assert.equal(await page.locator('#archive').isVisible(),false);assert.equal(await page.locator('#rename').isVisible(),false);assert.equal(await page.locator('#upload').isVisible(),false);assert.equal(await page.getByRole('button',{name:'Submit for review',exact:true}).count(),0);assert.equal(await page.locator('#reportPanel').isVisible(),true);assert.equal(await page.locator('#requirementForm').isVisible(),false);assert.equal(await page.getByRole('button',{name:'Save new revision'}).count(),0);await fits();
    role='viewer';await page.getByRole('button',{name:'Refresh',exact:true}).click();await notice('No accessible projects.');assert.equal(await page.locator('#tenantOwnerControls').isVisible(),false);assert.equal(await page.locator('#projectContent').isVisible(),false);assert.equal(await page.locator('#creation').isVisible(),false);
    role='guest';await page.getByRole('button',{name:'Refresh',exact:true}).click();await notice('Sign in again.');assert.equal(await page.locator('#workspace').isVisible(),false);assert.equal(await page.locator('#invitationPanel').isVisible(),false);
    assert.deepEqual(errors,[]);await context.close();console.log('workspace_browser_gate_passed engine='+engine+' viewport='+width);
