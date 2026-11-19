@@ -37,4 +37,5 @@ printf '%s\n' "$next" > "$tls_root/new-password"
 export VV_TLS_OLD_PASSWORD="$old" VV_TLS_NEW_PASSWORD="$next"
 psql -X -v ON_ERROR_STOP=1 -f db/tests/service_tls_logins.sql
 VV_TLS_FIXTURE="$tls_root" VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-service-tls.test.mjs
+VV_TLS_FIXTURE="$tls_root" VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-application-runtime.test.mjs
 cleanup_tls

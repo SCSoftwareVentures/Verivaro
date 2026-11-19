@@ -5,7 +5,7 @@ import {isIP} from 'node:net';
 import {X509Certificate} from 'node:crypto';
 import {validateServiceIdentity} from './service-login.mjs';
 const name=/^[a-z][a-z0-9_]{0,62}$/;
-async function readPrivate(path,max){
+export async function readPrivate(path,max){
  if(typeof path!=='string'||!isAbsolute(path))throw Error('absolute credential path required');
  const f=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
  try{
