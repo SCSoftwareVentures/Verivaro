@@ -297,6 +297,9 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   assert.equal((await adminPost(newBase+'/access',{requestId:randomUUID(),targetId:contributorId,role:'revoke',generation:grantRow.generation})).status,200);
   assert.equal((await g('submission-download',packageArgs)).status,409);
   console.log('https_controlled_submission_package_gate_passed');
+  // Independent fixture phases must not consume each other's admission budget.
+  // The disposable integration database only; production thresholds unchanged.
+  await admin.query('DELETE FROM verivaro_private.api_rate_keys');await admin.query('UPDATE verivaro_private.api_rate_state SET bucket=-1,requests=0');
   const graphRevision={...rule,versionId:randomUUID(),expectedRevision:1,criterion:'Updated register'};
   assert.equal((await g('requirement',graphRevision)).status,200);assert.equal((await getGraph()).summary.status,'blocked');
   assert.equal((await g('link',{...edge,linkId:randomUUID()})).status,409);
@@ -346,6 +349,7 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   assert.equal((await getGraph()).requirements.find(x=>x.requirementId===child.requirementId).dependencyPins[0].decision,'approved');
   assert.equal((await g('submission-impact',{submissionId:packageId})).status,200);
   console.log('https_dependency_management_gate_passed');
+  await admin.query('DELETE FROM verivaro_private.api_rate_keys');await admin.query('UPDATE verivaro_private.api_rate_state SET bucket=-1,requests=0');
   // Exact-revision removal is independently reviewed; no scope or identity
   // may be supplied by the browser, and a historical pin is never deleted.
   const childRev={...child,versionId:randomUUID(),expectedRevision:1,criterion:'Separate independently verified criterion'};
