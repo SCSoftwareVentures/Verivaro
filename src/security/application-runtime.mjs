@@ -51,7 +51,7 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
     const r=await client.query('SELECT ssl FROM pg_catalog.pg_stat_ssl WHERE pid=pg_backend_pid()');if(r.rows[0]?.ssl!==true)throw Error('database TLS required');
    }finally{client.release(true);}
   }
-  for(const file of Object.values(cfg.secrets))rawKeys.push(await readKey(file));
+  for(const name of ['browserKeyFile','contextKeyFile','admissionKeyFile'])rawKeys.push(await readKey(cfg.secrets[name]));
   if(rawKeys.some((k,i)=>rawKeys.slice(0,i).some(p=>p.equals(k))))throw Error('duplicate application key');
   const [browserKey,contextKey,admissionKey]=rawKeys;
   const privateKey=createPrivateKey(await readText(cfg.local.signingKeyFile)),publicKey=createPublicKey(privateKey);
@@ -64,7 +64,7 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
   const api=createApplicationApi({resolveSession:browser.resolveSession,scoped,admission,verifier,origin:origin.origin});
   const tlsKey=await readPrivate(cfg.tlsKeyFile,65536),cert=await readPrivate(cfg.tlsCertFile,65536);rawKeys.push(tlsKey);
   const leaf=new X509Certificate(cert);
-  if(!leaf.checkHost(origin.hostname)||Date.parse(leaf.validFrom)>Date.now()||Date.parse(leaf.validTo)<=Date.now()||!leaf.checkPrivateKey(createPrivateKey(tlsKey)))throw Error('invalid listener certificate');
+  if(!leaf.checkHost(origin.hostname,{subject:'never'})||Date.parse(leaf.validFrom)>Date.now()||Date.parse(leaf.validTo)<=Date.now()||!leaf.checkPrivateKey(createPrivateKey(tlsKey)))throw Error('invalid listener certificate');
   let draining=false,active=0;
   const work=new Set(),peers=new Map();
   async function dispatch(req,res){
