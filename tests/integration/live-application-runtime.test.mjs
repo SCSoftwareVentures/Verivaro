@@ -422,6 +422,17 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   assert.equal((await g('link-review',{linkId:captureRequest,decision:'pass',reason:'Self review'})).status,404);
   assert.equal((await g('link-review',{linkId:captureRequest,decision:'pass',reason:'Independent capture verification'},reviewer)).status,200);
   console.log('https_atomic_prooflock_capture_gate_passed');
+  await admin.query('DELETE FROM verivaro_private.api_rate_keys');await admin.query('UPDATE verivaro_private.api_rate_state SET bucket=-1,requests=0');
+  const insights=await getProof();assert.equal(insights.insights.policy.revision,0);assert.equal(insights.insights.receiptTimeline[0].receipts[0].linkId,captureRequest);assert.equal(insights.insights.receiptTimeline[0].receipts[0].timing,'unknown_deadline');
+  const policy={policyId:randomUUID(),expectedRevision:0,timezone:'Australia/Melbourne',quietStart:1320,quietEnd:420,criticalOverride:false};
+  assert.equal((await g('alert-policy-write',policy,reviewer)).status,404);
+  assert.equal((await g('alert-policy-write',{...policy,quietEnd:null})).status,400);
+  const applied=await g('alert-policy-write',policy);assert.equal(applied.status,200);assert.equal((await g('alert-policy-write',policy)).body,applied.body);
+  assert.equal((await g('alert-policy-write',{...policy,policyId:randomUUID()})).status,409);
+  assert.equal((await getProof(reviewer)).insights.policy.revision,1);
+  assert.equal((await getProof()).insights.policy.criticalOverride,false);
+  await assert.rejects(admin.query('DELETE FROM verivaro_private.prooflock_alert_policies WHERE false'),e=>e.code==='42501');
+  console.log('https_prooflock_insights_policy_gate_passed');
   assert.equal((await request('/auth/logout-all',{method:'POST',headers:{origin,cookie:session}})).status,204);
   assert.equal((await request(route,{headers:{cookie:session}})).status,401);
   await app.stop();assert.equal(app.server.listening,false);

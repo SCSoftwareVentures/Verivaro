@@ -6,6 +6,7 @@ import {constants} from 'node:fs';
 import {join,isAbsolute} from 'node:path';
 import {isArtifactId} from './private-file-store.mjs';
 import {buildProofLockPlan,resolveLocalMilestone} from './prooflock-planner.mjs';
+import {buildProofLockInsights,validateAlertPolicy} from './prooflock-insights.mjs';
 const hash=/^[a-f0-9]{64}$/;
 export class ReleaseDenied extends Error{}
 export class ReleaseConflict extends Error{}
@@ -53,9 +54,13 @@ export function createEvidenceReleaseDatabase(pool,{expectedLogin,verifier,conte
   },
   async proposeEvidenceWindow({token,tenantId,projectId,versionId,windowId,milestoneId,leadMinutes,irreversibility,reason}){return (await run(token,tenantId,'SELECT verivaro_verification.propose_evidence_window($1,$2,$3,$4,$5,$6,$7,$8) AS id',[tenantId,projectId,versionId,windowId,milestoneId,leadMinutes,irreversibility,reason])).id;},
   async reviewEvidenceWindow({token,tenantId,projectId,windowId,decision,reason}){return (await run(token,tenantId,'SELECT verivaro_verification.review_evidence_window($1,$2,$3,$4,$5) AS ok',[tenantId,projectId,windowId,decision,reason])).ok===true;},
+  async writeProofLockAlertPolicy({token,tenantId,projectId,policyId,expectedRevision,timezone,quietStart,quietEnd,criticalOverride}){
+   validateAlertPolicy({revision:expectedRevision,timezone,quietStart,quietEnd,criticalOverride});
+   return (await run(token,tenantId,'SELECT verivaro_verification.write_prooflock_alert_policy($1,$2,$3,$4,$5,$6,$7,$8) AS data',[tenantId,projectId,policyId,expectedRevision,timezone,quietStart,quietEnd,criticalOverride])).data;
+  },
   async proofLock({token,tenantId,projectId}){
-   const data=(await run(token,tenantId,'SELECT verivaro_verification.prooflock_records($1,$2) AS data',[tenantId,projectId])).data;
-   return {...data,plan:buildProofLockPlan(data)};
+   const data=(await run(token,tenantId,'SELECT verivaro_verification.prooflock_insights_records($1,$2) AS data',[tenantId,projectId])).data;
+   return {...data,plan:buildProofLockPlan(data),insights:buildProofLockInsights(data)};
   },
   async assessment({token,tenantId,projectId}){return (await run(token,tenantId,'SELECT verivaro_verification.assessment($1,$2) AS data',[tenantId,projectId])).data;},
   async archiveProject({token,tenantId,projectId,requestId,revision}){return (await run(token,tenantId,'SELECT verivaro_mutation.archive_project($1,$2,$3,$4) AS data',[tenantId,projectId,requestId,revision])).data;},
