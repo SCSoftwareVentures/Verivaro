@@ -30,6 +30,12 @@ export function createEvidenceReleaseDatabase(pool,{expectedLogin,verifier,conte
   }finally{c.release(clean?undefined:new Error('discard release connection'));}
  }
  if(mode==='workflow')return Object.freeze({
+  async prepareSubmission({token,tenantId,projectId,submissionId}){return (await run(token,tenantId,'SELECT verivaro_verification.prepare_submission($1,$2,$3) AS data',[tenantId,projectId,submissionId])).data;},
+  async reviewSubmission({token,tenantId,projectId,submissionId,sha256,decision,reason}){return (await run(token,tenantId,'SELECT verivaro_verification.review_submission($1,$2,$3,$4,$5,$6) AS ok',[tenantId,projectId,submissionId,sha256,decision,reason])).ok===true;},
+  async authorizeSubmission({token,tenantId,projectId,submissionId,sha256}){return (await run(token,tenantId,'SELECT verivaro_verification.authorize_submission($1,$2,$3,$4) AS ok',[tenantId,projectId,submissionId,sha256])).ok===true;},
+  async readSubmission({token,tenantId,projectId,submissionId,sha256}){return (await run(token,tenantId,'SELECT verivaro_verification.read_submission($1,$2,$3,$4) AS data',[tenantId,projectId,submissionId,sha256])).data;},
+  async listSubmissions({token,tenantId,projectId}){return (await run(token,tenantId,'SELECT verivaro_verification.submission_list($1,$2) AS data',[tenantId,projectId])).data;},
+  async inspectSubmission({token,tenantId,projectId,submissionId}){return (await run(token,tenantId,'SELECT verivaro_verification.inspect_submission($1,$2,$3) AS data',[tenantId,projectId,submissionId])).data;},
   async importSourceLine({token,tenantId,projectId,requirementId,versionId,evidenceId,sha256,line,page,quote,quoteSha256,applicability}){return (await run(token,tenantId,'SELECT verivaro_verification.import_source_line($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) AS data',[tenantId,projectId,requirementId,versionId,evidenceId,sha256,line,page,quote,quoteSha256,applicability])).data;},
   async writeRequirement({token,tenantId,projectId,requirementId,versionId,expectedRevision,title,criterion,applicability}){return (await run(token,tenantId,'SELECT verivaro_verification.write_requirement($1,$2,$3,$4,$5,$6,$7,$8) AS data',[tenantId,projectId,requirementId,versionId,expectedRevision,title,criterion,applicability])).data;},
   async reviewRequirement({token,tenantId,projectId,versionId,decision,reason}){return (await run(token,tenantId,'SELECT verivaro_verification.review_requirement($1,$2,$3,$4,$5) AS ok',[tenantId,projectId,versionId,decision,reason])).ok===true;},

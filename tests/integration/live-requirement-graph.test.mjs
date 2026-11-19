@@ -63,8 +63,25 @@ test('persistent graph independently reviews exact versions and links; contradic
    try{await admin.query('UPDATE verivaro_private.evidence_objects SET envelope=$2 WHERE evidence_id=$1',[good.id,originalEnvelope]);}finally{await admin.query('ALTER TABLE verivaro_private.evidence_objects ENABLE TRIGGER evidence_object_immutable');}
   }
   assert.equal((await status()).status,'criteria_satisfied');
+  const submissionId=randomUUID(),prepared=await graph.prepareSubmission(as('author',{submissionId}));
+  assert.deepEqual(await graph.prepareSubmission(as('author',{submissionId})),prepared);
+  const submission={submissionId,sha256:prepared.sha256};
+  const inspect=await graph.inspectSubmission(as('reviewer',submission));assert.equal(inspect.sha256,prepared.sha256);
+  assert.equal(JSON.parse(inspect.manifest).evidence[0].id,good.id);
+  await assert.rejects(graph.inspectSubmission(as('outsider',submission)),ReleaseDenied);
+  await assert.rejects(graph.authorizeSubmission(as('owner',submission)),ReleaseDenied);
+  await assert.rejects(graph.reviewSubmission(as('author',{...submission,decision:'approved',reason:'No self review'})),ReleaseDenied);
+  const decision={...submission,decision:'approved',reason:'Reviewed the exact manifest and evidence'};
+  assert.equal(await graph.reviewSubmission(as('reviewer',decision)),true);
+  assert.equal(await graph.reviewSubmission(as('reviewer',decision)),true);
+  assert.equal(await graph.authorizeSubmission(as('owner',submission)),true);
+  assert.equal(await graph.authorizeSubmission(as('owner',submission)),true);
+  const approvedPackage=await graph.readSubmission(as('owner',submission));assert.equal(approvedPackage.manifest,inspect.manifest);
+  await assert.rejects(graph.readSubmission(as('author',submission)),ReleaseDenied);
+  assert.equal((await graph.listSubmissions(as('owner')))[0].canDownload,true);
   const second=link(bad);await graph.linkEvidence(as('author',second));
   assert.equal((await status()).status,'blocked');
+  await assert.rejects(graph.readSubmission(as('owner',submission)),ReleaseConflict);
   await graph.reviewLink(as('reviewer2',{linkId:second.linkId,decision:'fail',reason:'Conflicting identifier'}));
   const conflicting=await graph.assessment(as('owner'));assert.equal(conflicting.requirements[0].state,'conflict');assert.equal(conflicting.summary.blockers,1);assert.equal(buildRejectionPreflight(conflicting).issues[0].code,'CONFLICTING_EVIDENCE');
   const selfLink=link(self);await graph.linkEvidence(as('author',selfLink));
@@ -83,6 +100,6 @@ test('persistent graph independently reviews exact versions and links; contradic
   await graph.archiveProject(as('owner',{requestId:randomUUID(),revision:0}));
   await assert.rejects(graph.writeRequirement(as('author',{...rule,requirementId:randomUUID(),versionId:randomUUID()})),ReleaseDenied);
   assert.equal((await status()).status,'blocked');
-  console.log('persistent_requirement_graph_and_readiness_gate_passed');console.log('rejection_preflight_storage_integrity_gate_passed');
+  console.log('persistent_requirement_graph_and_readiness_gate_passed');console.log('rejection_preflight_storage_integrity_gate_passed');console.log('immutable_submission_approval_and_staleness_gate_passed');
  }finally{await Promise.all([admin.end(),runtime.end(),ingestPool.end()]);}
 });

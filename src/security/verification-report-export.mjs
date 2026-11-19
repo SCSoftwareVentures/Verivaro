@@ -88,7 +88,7 @@ export function createVerificationPdf(report,jsonDigest){
 // ZIP STORE only, fixed filenames, no paths, no compression or executable data.
 const table=Array.from({length:256},(_,n)=>{let c=n;for(let i=0;i<8;i++)c=c&1?0xedb88320^(c>>>1):c>>>1;return c>>>0;});
 function crc(b){let c=0xffffffff;for(const v of b)c=table[(c^v)&255]^(c>>>8);return (c^0xffffffff)>>>0;}
-function zip(files){
+export function zip(files){
  const local=[],central=[];let offset=0,centralSize=0;
  for(const [name,data] of files){
   const n=Buffer.from(name,'ascii'),sum=crc(data),h=Buffer.alloc(30),c=Buffer.alloc(46);
