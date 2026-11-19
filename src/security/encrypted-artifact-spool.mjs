@@ -90,5 +90,5 @@ export async function stageEncryptedArtifact(source,{directory,maxBytes,sha256,s
     yield plain;
    }
   }});
- }catch(e){await close();throw e;}
+ }catch(e){try{await close();}catch{const failure=Error('staging cleanup uncertain');failure.cleanupUncertain=true;throw failure;}throw e;}
 }

@@ -82,3 +82,11 @@ jobs:
           export VV_RECIPIENT_PASSWORD
           psql -X -v ON_ERROR_STOP=1 -f db/tests/recipient_gateway_login.sql
           VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-recipient-download.test.mjs
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0011_distributed_admission.sql
+          VV_ADMISSION_PASSWORD="$(openssl rand -hex 32)"
+          VV_ADMISSION_B_PASSWORD="$(openssl rand -hex 32)"
+          echo "::add-mask::$VV_ADMISSION_PASSWORD"
+          echo "::add-mask::$VV_ADMISSION_B_PASSWORD"
+          export VV_ADMISSION_PASSWORD VV_ADMISSION_B_PASSWORD
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/admission_logins.sql
+          VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-distributed-admission.test.mjs

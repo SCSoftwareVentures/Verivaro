@@ -28,7 +28,7 @@ function validArtifact(item){
 // No public object URLs, ranges, inline display, or caller-selected filenames.
 // Verify full buffered content before sending any bytes. Bound process memory by
 // maxBytes * maxConcurrent (plus fixed overhead); large exports need another design.
-export function createShareDownloadHandler({resolveShare,resolveRecipientShare,recipientVerifier,openArtifact,spoolDirectory,spoolBudget,maxBytes=8*1024*1024,maxConcurrent=4,requestsPerMinute=120,perPeerPerMinute=20,maxPeers=2048,timeoutMs=10000}){
+export function createShareDownloadHandler({resolveShare,resolveRecipientShare,recipientVerifier,openArtifact,spoolDirectory,spoolBudget,distributedAdmission,maxBytes=8*1024*1024,maxConcurrent=4,requestsPerMinute=120,perPeerPerMinute=20,maxPeers=2048,timeoutMs=10000}){
  if((resolveRecipientShare!==undefined||recipientVerifier!==undefined)&&
  (typeof resolveRecipientShare!=='function'||!recipientVerifier?.publicKey||!recipientVerifier?.issuer||!recipientVerifier?.audience))throw Error('invalid recipient configuration');
  const verifier=recipientVerifier?Object.freeze({...recipientVerifier}):null;
@@ -38,6 +38,7 @@ export function createShareDownloadHandler({resolveShare,resolveRecipientShare,r
  maxBytes>(spoolDirectory?MAX_SPOOL_BYTES:32*1024*1024)||
  (spoolDirectory&&maxBytes*maxConcurrent>2*1024*1024*1024)||maxConcurrent>16||maxPeers>10000||timeoutMs>30000)throw Error('invalid gateway settings');
  if(spoolBudget!==undefined&&(!spoolDirectory||spoolBudget.directory!==spoolDirectory||typeof spoolBudget.reserve!=='function'))throw Error('invalid shared spool budget');
+ if(distributedAdmission!==undefined&&typeof distributedAdmission?.acquire!=='function')throw Error('invalid distributed admission');
  const budget=spoolDirectory?(spoolBudget??createSpoolBudget({directory:spoolDirectory})):null;
  let inFlight=0,bucket=-1,count=0;
  const peers=new Map();
@@ -82,8 +83,12 @@ export function createShareDownloadHandler({resolveShare,resolveRecipientShare,r
   timer.unref?.();
   const disconnect=()=>{if(!res.writableFinished)controller.abort();};
   res.once('close',disconnect);
-  let staged,source,reservation;
+  let staged,source,reservation,distributedLease,cleanupUncertain=false;
   try{
+   if(distributedAdmission){
+    distributedLease=await distributedAdmission.acquire(peer,maxBytes,controller.signal);
+    if(!distributedLease){send(res,429,Buffer.from('Not available\n'),{'Content-Type':'text/plain; charset=utf-8','Retry-After':'60','Connection':'close'});return;}
+   }
    const first=await authorize();
    controller.signal.throwIfAborted();
    if(!validArtifact(first))throw Error('denied');
@@ -127,13 +132,14 @@ export function createShareDownloadHandler({resolveShare,resolveRecipientShare,r
     res.once('finish',done);res.once('close',done);res.once('error',failed);
     try{send(res,200,body,{'Content-Disposition':'attachment; filename="verivaro-export.bin"'});}catch(e){done();reject(e);}
    });
-  }catch{if(res.headersSent){res.destroy();}else{deny(res);}}
+  }catch(e){cleanupUncertain=e?.cleanupUncertain===true;if(res.headersSent){res.destroy();}else{deny(res);}}
   finally{
    try{source?.destroy?.();}catch{res.destroy();}
-   let cleaned=true;
+   let cleaned=!cleanupUncertain;
    try{if(staged)await staged.close();}catch{cleaned=false;res.destroy();}
    // Fail closed if descriptor cleanup is uncertain: retain reservation until restart.
-   if(cleaned)reservation?.release();
+   if(cleaned){reservation?.release();try{await distributedLease?.release();}catch{res.destroy();}}
+   // Failed release or ambiguous commit retains the durable lease for incident reconciliation.
    clearTimeout(timer);res.removeListener('close',disconnect);inFlight--;
   }
  };
