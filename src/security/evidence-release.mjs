@@ -7,6 +7,7 @@ import {join,isAbsolute} from 'node:path';
 import {isArtifactId} from './private-file-store.mjs';
 import {buildProofLockPlan,resolveLocalMilestone} from './prooflock-planner.mjs';
 import {buildFinancialSummary} from './financial-intelligence.mjs';
+import {buildProjectIntelligence} from './project-intelligence.mjs';
 import {buildProofLockInsights,validateAlertPolicy} from './prooflock-insights.mjs';
 const hash=/^[a-f0-9]{64}$/;
 export class ReleaseDenied extends Error{}
@@ -59,6 +60,9 @@ export function createEvidenceReleaseDatabase(pool,{expectedLogin,verifier,conte
    validateAlertPolicy({revision:expectedRevision,timezone,quietStart,quietEnd,criticalOverride});
    return (await run(token,tenantId,'SELECT verivaro_verification.write_prooflock_alert_policy($1,$2,$3,$4,$5,$6,$7,$8) AS data',[tenantId,projectId,policyId,expectedRevision,timezone,quietStart,quietEnd,criticalOverride])).data;
   },
+  async recordChronology({token,tenantId,projectId,eventId,submissionId,submissionSha256,type,description,assertedAt,sourceEvidenceId,sourceSha256}){return (await run(token,tenantId,'SELECT verivaro_verification.record_chronology($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) AS id',[tenantId,projectId,eventId,submissionId,submissionSha256,type,description,assertedAt,sourceEvidenceId,sourceSha256])).id;},
+  async reviewChronology({token,tenantId,projectId,eventId,decision,reason}){return (await run(token,tenantId,'SELECT verivaro_verification.review_chronology($1,$2,$3,$4,$5) AS ok',[tenantId,projectId,eventId,decision,reason])).ok===true;},
+  async projectIntelligence({token,tenantId,projectId}){const d=(await run(token,tenantId,'SELECT verivaro_verification.project_archive_records($1,$2) AS data',[tenantId,projectId])).data;return buildProjectIntelligence(d);},
   async writeFinancialRecord({token,tenantId,projectId,recordId,versionId,expectedRevision,reference,kind,title,currency,taxBasis,amount,dueAt,sourceEvidenceId,sourceSha256,conditionVersions}){return (await run(token,tenantId,'SELECT verivaro_verification.write_financial_record($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::uuid[]) AS data',[tenantId,projectId,recordId,versionId,expectedRevision,reference,kind,title,currency,taxBasis,amount,dueAt,sourceEvidenceId,sourceSha256,conditionVersions])).data;},
   async reviewFinancialRecord({token,tenantId,projectId,versionId,decision,reason}){return (await run(token,tenantId,'SELECT verivaro_verification.review_financial_record($1,$2,$3,$4,$5) AS ok',[tenantId,projectId,versionId,decision,reason])).ok===true;},
   async financialSummary({token,tenantId,projectId}){const d=(await run(token,tenantId,'SELECT verivaro_verification.financial_records($1,$2) AS data',[tenantId,projectId])).data;return {...d,summary:buildFinancialSummary(d)};},
