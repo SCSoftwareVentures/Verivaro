@@ -1,3 +1,8 @@
+import {lstat} from 'node:fs/promises';
+import {isAbsolute} from 'node:path';
+import {workspacePage,workspaceScript,workspaceCss} from './workspace-assets.mjs';
+import {createReleaseWorkspaceApi,isReleaseWorkspaceRequest,isReleaseWorkspaceMutation} from './release-workspace-api.mjs';
+import {createEvidenceReleaseDatabase,createEvidencePublisher} from './evidence-release.mjs';
 import {createServer} from 'node:https';
 import {createPrivateKey,createPublicKey,X509Certificate} from 'node:crypto';
 import {readPrivate,loadServicePoolConfig} from './service-pool-config.mjs';
@@ -26,15 +31,18 @@ function invalidHeaders(req,host){
  const seen=new Set(),critical=new Set(['host','cookie','origin','authorization','content-length','transfer-encoding','content-encoding','expect','sec-fetch-site','content-type','idempotency-key','x-evidence-sha256']);
  for(let i=0;i<req.rawHeaders.length;i+=2){const h=req.rawHeaders[i].toLowerCase();if(critical.has(h)&&seen.has(h))return true;seen.add(h);}
  return req.headers.host!==host||req.headers.authorization!==undefined||req.headers['transfer-encoding']!==undefined||req.headers['content-encoding']!==undefined||
- (!isRenameRequest(req)&&!isEvidenceUpload(req)&&req.headers['content-length']!==undefined&&req.headers['content-length']!=='0')||req.headers.expect!==undefined;
+ (!isRenameRequest(req)&&!isEvidenceUpload(req)&&!isReleaseWorkspaceMutation(req)&&req.headers['content-length']!==undefined&&req.headers['content-length']!=='0')||req.headers.expect!==undefined;
 }
 const page='<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Verivaro</title><main><h1>Verivaro</h1><p>Secure verification workspace.</p><form action="/auth/login" method="post"><button>Sign in</button></form><form action="/auth/logout" method="post"><button>Sign out</button></form><form action="/auth/logout-all" method="post"><button>Sign out on all devices</button></form></main></html>';
 // Only file paths and bounded deployment settings; no environment fallbacks.
 export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,report=()=>{}}){
  if(typeof Pool!=='function')throw Error('missing database driver');
  const cfg=JSON.parse(await readText(configPath,16384));
- const enabled=Object.hasOwn(cfg,'ingestion'),serviceRoles=enabled?{...roles,ingestion:'verivaro_evidence_ingestor',evidenceReader:'verivaro_evidence_reader'}:roles;
- exact(cfg,['origin','listenHost','listenPort','tlsKeyFile','tlsCertFile','database','logins','provider','local','secrets',...(enabled?['ingestion']:[])]);
+ const enabled=Object.hasOwn(cfg,'ingestion'),releaseEnabled=Object.hasOwn(cfg,'release');
+ if(releaseEnabled&&!enabled)throw Error('release requires ingestion');
+ const serviceRoles={...roles,...(enabled?{ingestion:'verivaro_evidence_ingestor',evidenceReader:'verivaro_evidence_reader'}:{}),...(releaseEnabled?{release:'verivaro_release_service'}:{})};
+ exact(cfg,['origin','listenHost','listenPort','tlsKeyFile','tlsCertFile','database','logins','provider','local','secrets',...(enabled?['ingestion']:[]),...(releaseEnabled?['release']:[])]);
+ if(releaseEnabled){exact(cfg.release,['root']);if(typeof cfg.release.root!=='string'||!isAbsolute(cfg.release.root))throw Error('invalid release root');const s=await lstat(cfg.release.root);if(!s.isDirectory()||(s.mode&0o077)!==0||(typeof process.getuid==='function'&&s.uid!==process.getuid()))throw Error('unsafe release root');}
  if(enabled)exact(cfg.ingestion,['keyId','keyFile','scannerSocket',...(Object.hasOwn(cfg.ingestion,'retiredKeys')?['retiredKeys']:[])]);
  const origin=new URL(cfg.origin);
  if(origin.protocol!=='https:'||origin.href!==origin.origin+'/'||!['127.0.0.1','::1','0.0.0.0'].includes(cfg.listenHost)||!Number.isInteger(cfg.listenPort)||cfg.listenPort<1024||cfg.listenPort>65535)throw Error('invalid listener configuration');
@@ -68,7 +76,8 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
   const browser=createBrowserAuthentication({db,gateway,provider,localVerifier:verifier,origin:origin.origin,authorizationEndpoint:p.authorizationEndpoint,tokenEndpoint:p.tokenEndpoint,clientSecret:(await readText(p.clientSecretFile,1024)).trim(),key:browserKey,requiredAcr:p.requiredAcr,fetcher});
   const scoped=createScopedDatabase(pools.runtime,{verifier,key:contextKey,expectedLogin:cfg.logins.runtime.user});
   const api=createApplicationApi({resolveSession:browser.resolveSession,scoped,admission,verifier,origin:origin.origin});
-  let upload,download;
+  const workflow=createEvidenceReleaseDatabase(pools.runtime,{expectedLogin:cfg.logins.runtime.user,verifier,contextKey,mode:'workflow'});
+  let upload,download,publish;
   if(enabled){
    const evidenceKey=await readKey(cfg.ingestion.keyFile);rawKeys.push(evidenceKey);
    if(rawKeys.slice(0,-1).some(k=>k.equals(evidenceKey)))throw Error('duplicate evidence key');
@@ -85,9 +94,14 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
     readKeys.set(entry.keyId,Buffer.from(old));
    }
    const retrieve=createEvidenceReader(pools.evidenceReader,{verifier,contextKey,expectedLogin:cfg.logins.evidenceReader.user,readKey:async id=>{if(!readKeys.has(id))throw Error('evidence key unavailable');return readKeys.get(id);}});
+   if(releaseEnabled){
+    const release=createEvidenceReleaseDatabase(pools.release,{expectedLogin:cfg.logins.release.user,verifier,contextKey,mode:'publish'});
+    publish=createEvidencePublisher({root:cfg.release.root,retrieve,release});
+   }
    upload=createEvidenceUploadHandler({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,ingest});
    download=createEvidenceDownloadHandler({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,retrieve});
   }
+  const workspace=createReleaseWorkspaceApi({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,workflow,publish,uploadsEnabled:enabled});
   const tlsKey=await readPrivate(cfg.tlsKeyFile,65536),cert=await readPrivate(cfg.tlsCertFile,65536);rawKeys.push(tlsKey);
   const leaf=new X509Certificate(cert);
   if(!leaf.checkHost(origin.hostname,{subject:'never'})||Date.parse(leaf.validFrom)>Date.now()||Date.parse(leaf.validTo)<=Date.now()||!leaf.checkPrivateKey(createPrivateKey(tlsKey)))throw Error('invalid listener certificate');
@@ -98,10 +112,13 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
    if(draining)return reply(res,503,'Temporarily unavailable',{'Connection':'close'});
    if(invalidHeaders(req,origin.host)||typeof req.url!=='string'||!req.url.startsWith('/')||req.url.length>8192)return reply(res,400,'Request denied',{'Connection':'close'});
    if(req.headers['sec-fetch-site']==='cross-site'&&req.url.split('?')[0]!=='/auth/callback')return reply(res,403,'Request denied');
-   if(req.url==='/'&&req.method==='GET')return reply(res,200,page,{'Content-Type':'text/html; charset=utf-8'});
+   if(req.url==='/'&&req.method==='GET')return reply(res,200,workspacePage,{'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"});
+   if(req.url==='/assets/workspace.js'&&req.method==='GET')return reply(res,200,workspaceScript,{'Content-Type':'text/javascript; charset=utf-8'});
+   if(req.url==='/assets/workspace.css'&&req.method==='GET')return reply(res,200,workspaceCss,{'Content-Type':'text/css; charset=utf-8'});
    if(active>=24)return reply(res,429,'Temporarily unavailable',{'Retry-After':'5'});
    active++;
    try{
+    if(isReleaseWorkspaceRequest(req))return await workspace(req,res);
     if(isEvidenceDownload(req))return download?await download(req,res):reply(res,404,'Not found');
     if(isEvidenceUpload(req))return upload?await upload(req,res):reply(res,404,'Not found',{'Connection':'close'});
     if(req.url.startsWith('/api/'))return await api(req,res);

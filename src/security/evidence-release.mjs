@@ -30,11 +30,14 @@ export function createEvidenceReleaseDatabase(pool,{expectedLogin,verifier,conte
   }finally{c.release(clean?undefined:new Error('discard release connection'));}
  }
  if(mode==='workflow')return Object.freeze({
+  async tenants({token}){return (await run(token,'00000000-0000-0000-0000-000000000000','SELECT verivaro_sharing.workspace_tenants() AS data',[])).data;},
+  async workspace({token,tenantId,projectId}){return (await run(token,tenantId,'SELECT verivaro_sharing.release_workspace($1,$2) AS data',[tenantId,projectId])).data;},
   async request({token,tenantId,projectId,evidenceId,requestId,sha256}){return (await run(token,tenantId,'SELECT verivaro_sharing.request_evidence_release($1,$2,$3,$4,$5) AS id',[tenantId,projectId,evidenceId,requestId,sha256])).id;},
   async issueRecipient({token,tenantId,exportId,shareId,digest,expiry,recipientId}){await run(token,tenantId,'SELECT verivaro_sharing.issue_recipient_share($1,$2,$3,$4,$5) AS ok',[exportId,shareId,digest,expiry,recipientId]);return shareId;},
   async review({token,tenantId,projectId,requestId,sha256,decision,reason}){return (await run(token,tenantId,'SELECT verivaro_sharing.review_evidence_release($1,$2,$3,$4,$5,$6) AS ok',[tenantId,projectId,requestId,sha256,decision,reason])).ok===true;}
  });
  return Object.freeze({
+  async preflight({token,tenantId,projectId,requestId,evidenceId,sha256}){return (await run(token,tenantId,'SELECT verivaro_sharing.preflight_approved_export($1,$2,$3,$4,$5) AS ok',[tenantId,projectId,requestId,evidenceId,sha256])).ok===true;},
   async publish({token,tenantId,projectId,requestId,evidenceId,sha256}){return (await run(token,tenantId,'SELECT verivaro_sharing.register_approved_export($1,$2,$3,$4,$5) AS id',[tenantId,projectId,requestId,evidenceId,sha256])).id;}
  });
 }
@@ -43,7 +46,7 @@ export function createEvidenceReleaseDatabase(pool,{expectedLogin,verifier,conte
 // encrypted volume. A filesystem failure never registers an export.
 // A failed database commit can leave an inaccessible orphan, never a share.
 export function createEvidencePublisher({root,retrieve,release}){
- if(typeof root!=='string'||!isAbsolute(root)||typeof retrieve!=='function'||typeof release?.publish!=='function')throw Error('invalid release publisher');
+ if(typeof root!=='string'||!isAbsolute(root)||typeof retrieve!=='function'||typeof release?.publish!=='function'||typeof release?.preflight!=='function')throw Error('invalid release publisher');
  async function verifyExisting(path,expected){
   const handle=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
   try{
@@ -56,6 +59,8 @@ export function createEvidencePublisher({root,retrieve,release}){
   if(!isArtifactId(input.evidenceId)||!isArtifactId(input.requestId)||!hash.test(input.sha256))throw Error('invalid release input');
   signal.throwIfAborted();
   const s=await lstat(root);if(!s.isDirectory()||(s.mode&0o077)!==0||(typeof process.getuid==='function'&&s.uid!==process.getuid()))throw Error('unsafe export root');
+  if(!await release.preflight(input))throw new ReleaseDenied('release denied');
+  signal.throwIfAborted();
   const evidence=await retrieve(input);let temporary;
   try{
    if(!Buffer.isBuffer(evidence.data)||evidence.data.length<1||evidence.data.length>262144||evidence.sha256!==input.sha256||createHash('sha256').update(evidence.data).digest('hex')!==input.sha256)throw Error('release content mismatch');

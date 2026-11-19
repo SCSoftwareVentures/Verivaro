@@ -41,14 +41,14 @@ BEGIN
     (r.rolname='verivaro_evidence_reader' AND p.nspname='verivaro_ingestion' AND p.proname='fetch_object') OR
     (r.rolname='verivaro_evidence_ingestor' AND p.nspname='verivaro_ingestion' AND p.proname IN ('authorize_upload','commit_upload_v2')) OR
     (r.rolname='verivaro_runtime' AND p.nspname='verivaro_mutation' AND p.proname='rename_project') OR
-    (r.rolname='verivaro_runtime' AND p.nspname='verivaro_sharing' AND p.proname IN ('issue_share','issue_recipient_share','revoke_share','request_evidence_release','review_evidence_release')) OR
+    (r.rolname='verivaro_runtime' AND p.nspname='verivaro_sharing' AND p.proname IN ('issue_share','issue_recipient_share','revoke_share','request_evidence_release','review_evidence_release','workspace_tenants','release_workspace')) OR
     (r.rolname='verivaro_identity_service' AND p.nspname='verivaro_identity' AND p.proname IN ('begin_login','redeem_login','revoke_session','store_browser_flow','take_browser_flow','store_browser_session','read_browser_session','logout_browser','logout_all_browser','record_auth')) OR
     (r.rolname='verivaro_api_admission' AND p.nspname='verivaro_admission' AND p.proname IN ('api_peer','api_actor')) OR
     (r.rolname='verivaro_identity_events' AND p.nspname='verivaro_identity' AND p.proname='apply_provider_event') OR
     (r.rolname='verivaro_identity_provisioner' AND p.nspname='verivaro_identity' AND p.proname IN ('provision_binding','disable_binding')) OR
     (r.rolname='verivaro_recovery_service' AND p.nspname='verivaro_identity' AND p.proname IN ('disable_actor','request_recovery','recover_actor')) OR
     (r.rolname='verivaro_recovery_approver' AND p.nspname='verivaro_identity' AND p.proname='approve_recovery') OR
-    (r.rolname='verivaro_release_service' AND p.nspname='verivaro_sharing' AND p.proname IN ('register_approved_export','revoke_export')) OR
+    (r.rolname='verivaro_release_service' AND p.nspname='verivaro_sharing' AND p.proname IN ('register_approved_export','preflight_approved_export','revoke_export')) OR
     (r.rolname='verivaro_share_gateway' AND p.nspname='verivaro_sharing' AND p.proname='resolve_share') OR
     (r.rolname='verivaro_recipient_gateway' AND p.nspname='verivaro_sharing' AND p.proname='resolve_recipient_share') OR
     (r.rolname='verivaro_admission_service' AND p.nspname='verivaro_admission' AND p.proname IN ('acquire','release','finish')) OR

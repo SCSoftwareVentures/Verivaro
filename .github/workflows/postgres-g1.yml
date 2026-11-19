@@ -161,6 +161,7 @@ jobs:
           export VV_RELEASE_PASSWORD
           psql -X -v ON_ERROR_STOP=1 -f db/tests/release_login.sql
           VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-evidence-release.test.mjs
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0026_release_workspace.sql
           psql -X -v ON_ERROR_STOP=1 -f db/tests/full_security_gate.sql
           # Real encrypted logical backup and isolated recovery; no artifacts uploaded.
           backup_root="$(mktemp -d)"
