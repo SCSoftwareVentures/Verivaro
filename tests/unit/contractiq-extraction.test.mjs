@@ -16,9 +16,9 @@ test('bounded candidate output explicitly reports truncation and skipped lines',
  assert.equal(r.candidates.length,64);assert.equal(r.matched,71);assert.equal(r.skipped,1);assert.equal(r.truncated,true);
 });
 test('import derives quote from source rather than caller, checks hash and zeroes buffer',async()=>{
- const bytes=Buffer.from('Work must comply.'),sha256=hash(bytes),seen=[];
- const run=createContractIQ({retrieve:async()=>({data:Buffer.from(bytes),mediaType:type,sha256}),workflow:{assessment:async()=>({canWrite:true}),importSourceLine:async v=>{seen.push(v);return 'ok';}}});
+ const bytes=Buffer.from('Work must comply.'),sha256=hash(bytes),seen=[],retrieved=[];
+ const run=createContractIQ({retrieve:async()=>{const data=Buffer.from(bytes);retrieved.push(data);return {data,mediaType:type,sha256};},workflow:{assessment:async()=>({canWrite:true}),importSourceLine:async v=>{seen.push(v);return 'ok';}}});
  const signal=new AbortController().signal;
  await assert.rejects(run({sha256,line:1,quoteSha256:'0'.repeat(64)},{importLine:true,signal}));
- assert.equal(await run({sha256,line:1,quoteSha256:hash(bytes),quote:'fake'},{importLine:true,signal}),'ok');assert.equal(seen[0].quote,bytes.toString());
+ assert.equal(await run({sha256,line:1,quoteSha256:hash(bytes),quote:'fake'},{importLine:true,signal}),'ok');assert.equal(seen[0].quote,bytes.toString());assert.ok(retrieved.every(b=>b.every(x=>x===0)));
 });

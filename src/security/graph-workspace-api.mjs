@@ -20,15 +20,15 @@ async function read(req,action){
   const v=decodeStrictJson(Buffer.concat(chunks).toString('base64url'));
   const shapes={extract:['evidenceId','sha256'],'import-source':['evidenceId','sha256','line','quoteSha256','requirementId','versionId','applicability'],requirement:['requirementId','versionId','expectedRevision','title','criterion','applicability'],'rule-review':['versionId','decision','reason'],link:['versionId','linkId','evidenceId','sha256'],'link-review':['linkId','decision','reason']},keys=shapes[action];
   if(!v||typeof v!=='object'||Array.isArray(v)||Object.keys(v).length!==keys.length||keys.some(k=>!Object.hasOwn(v,k)))throw Error('invalid fields');
-  const isId=k=>typeof v[k]==='string'&&id.test(v[k]),isV4=k=>typeof v[k]==='string'&&v4.test(v[k]);
+  const isId=k=>typeof v[k]==='string'&&v[k].length===36&&id.test(v[k]),isV4=k=>typeof v[k]==='string'&&v[k].length===36&&v4.test(v[k]);
   const text=(x,n)=>typeof x==='string'&&[...x].length>=1&&[...x].length<=n&&Buffer.byteLength(x)<=4*n&&x===x.trim()&&!/[\x00-\x1f\x7f-\x9f\ud800-\udfff]/u.test(x);
   if(action==='extract'||action==='import-source'){
-   if(!isId('evidenceId')||typeof v.sha256!=='string'||!hash.test(v.sha256))throw Error('invalid source');
-   if(action==='import-source'&&(!isV4('requirementId')||!isV4('versionId')||!Number.isInteger(v.line)||v.line<1||v.line>262144||typeof v.quoteSha256!=='string'||!hash.test(v.quoteSha256)||!['required','optional','not_applicable','unknown'].includes(v.applicability)))throw Error('invalid source line');
+   if(!isId('evidenceId')||typeof v.sha256!=='string'||v.sha256.length!==64||!hash.test(v.sha256))throw Error('invalid source');
+   if(action==='import-source'&&(!isV4('requirementId')||!isV4('versionId')||!Number.isInteger(v.line)||v.line<1||v.line>262144||typeof v.quoteSha256!=='string'||v.quoteSha256.length!==64||!hash.test(v.quoteSha256)||!['required','optional','not_applicable','unknown'].includes(v.applicability)))throw Error('invalid source line');
   }else if(action==='requirement'){
    if(!isV4('requirementId')||!isV4('versionId')||!Number.isInteger(v.expectedRevision)||v.expectedRevision<0||v.expectedRevision>15||!text(v.title,128)||!text(v.criterion,1024)||!['required','optional','not_applicable','unknown'].includes(v.applicability))throw Error('invalid requirement');
   }else if(action==='link'){
-   if(!isId('versionId')||!isV4('linkId')||!isId('evidenceId')||typeof v.sha256!=='string'||!hash.test(v.sha256))throw Error('invalid link');
+   if(!isId('versionId')||!isV4('linkId')||!isId('evidenceId')||typeof v.sha256!=='string'||v.sha256.length!==64||!hash.test(v.sha256))throw Error('invalid link');
   }else if(!(action==='rule-review'?isId('versionId')&&['approved','rejected'].includes(v.decision):isId('linkId')&&['pass','fail','unknown'].includes(v.decision))||!text(v.reason,512))throw Error('invalid review');
   return v;
  }finally{clearTimeout(timer);for(const b of chunks)b.fill(0);}
