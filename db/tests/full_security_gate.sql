@@ -2,10 +2,10 @@
 DO $audit$
 DECLARE r record; t record; p record; s record; role_count integer:=0;
 BEGIN
- FOR r IN SELECT oid,rolname,rolsuper,rolbypassrls,rolcreaterole,rolcreatedb,rolreplication,rolinherit
+ FOR r IN SELECT oid,rolname,rolsuper,rolbypassrls,rolcreaterole,rolcreatedb,rolreplication,rolinherit,rolcanlogin
  FROM pg_roles WHERE rolname LIKE 'verivaro_%' LOOP
   role_count:=role_count+1;
-  IF r.rolsuper OR r.rolbypassrls OR r.rolcreaterole OR r.rolcreatedb OR r.rolreplication OR r.rolinherit THEN
+  IF r.rolsuper OR r.rolbypassrls OR r.rolcreaterole OR r.rolcreatedb OR r.rolreplication OR r.rolinherit OR r.rolcanlogin THEN
    RAISE EXCEPTION 'elevated service role: %',r.rolname;
   END IF;
   IF EXISTS(SELECT 1 FROM pg_roles g WHERE g.oid<>r.oid
