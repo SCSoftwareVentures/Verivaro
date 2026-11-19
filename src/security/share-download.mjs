@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import {pipeline} from 'node:stream/promises';
 import {Readable} from 'node:stream';
 import {isAbsolute} from 'node:path';
+import {createSpoolBudget} from './spool-budget.mjs';
 import {stageEncryptedArtifact, MAX_SPOOL_BYTES} from './encrypted-artifact-spool.mjs';
 import { verifyIdentityToken } from './verify-identity.mjs';
 import { digestShareToken } from './share-token.mjs';
@@ -27,7 +28,7 @@ function validArtifact(item){
 // No public object URLs, ranges, inline display, or caller-selected filenames.
 // Verify full buffered content before sending any bytes. Bound process memory by
 // maxBytes * maxConcurrent (plus fixed overhead); large exports need another design.
-export function createShareDownloadHandler({resolveShare,resolveRecipientShare,recipientVerifier,openArtifact,spoolDirectory,maxBytes=8*1024*1024,maxConcurrent=4,requestsPerMinute=120,perPeerPerMinute=20,maxPeers=2048,timeoutMs=10000}){
+export function createShareDownloadHandler({resolveShare,resolveRecipientShare,recipientVerifier,openArtifact,spoolDirectory,spoolBudget,maxBytes=8*1024*1024,maxConcurrent=4,requestsPerMinute=120,perPeerPerMinute=20,maxPeers=2048,timeoutMs=10000}){
  if((resolveRecipientShare!==undefined||recipientVerifier!==undefined)&&
  (typeof resolveRecipientShare!=='function'||!recipientVerifier?.publicKey||!recipientVerifier?.issuer||!recipientVerifier?.audience))throw Error('invalid recipient configuration');
  const verifier=recipientVerifier?Object.freeze({...recipientVerifier}):null;
@@ -36,6 +37,8 @@ export function createShareDownloadHandler({resolveShare,resolveRecipientShare,r
  (spoolDirectory!==undefined&&(typeof spoolDirectory!=='string'||!isAbsolute(spoolDirectory)))||
  maxBytes>(spoolDirectory?MAX_SPOOL_BYTES:32*1024*1024)||
  (spoolDirectory&&maxBytes*maxConcurrent>2*1024*1024*1024)||maxConcurrent>16||maxPeers>10000||timeoutMs>30000)throw Error('invalid gateway settings');
+ if(spoolBudget!==undefined&&(!spoolDirectory||spoolBudget.directory!==spoolDirectory||typeof spoolBudget.reserve!=='function'))throw Error('invalid shared spool budget');
+ const budget=spoolDirectory?(spoolBudget??createSpoolBudget({directory:spoolDirectory})):null;
  let inFlight=0,bucket=-1,count=0;
  const peers=new Map();
  function admit(peer){
@@ -79,11 +82,15 @@ export function createShareDownloadHandler({resolveShare,resolveRecipientShare,r
   timer.unref?.();
   const disconnect=()=>{if(!res.writableFinished)controller.abort();};
   res.once('close',disconnect);
-  let staged,source;
+  let staged,source,reservation;
   try{
    const first=await authorize();
    controller.signal.throwIfAborted();
    if(!validArtifact(first))throw Error('denied');
+   if(budget){
+    reservation=await budget.reserve(maxBytes,controller.signal);
+    if(!reservation){send(res,429,Buffer.from('Not available\n'),{'Content-Type':'text/plain; charset=utf-8','Retry-After':'60','Connection':'close'});return;}
+   }
    source=await openArtifact(first.artifact_id,{signal:controller.signal,maxBytes});
    let body;
    if(spoolDirectory){
@@ -123,7 +130,10 @@ export function createShareDownloadHandler({resolveShare,resolveRecipientShare,r
   }catch{if(res.headersSent){res.destroy();}else{deny(res);}}
   finally{
    try{source?.destroy?.();}catch{res.destroy();}
-   try{if(staged)await staged.close();}catch{res.destroy();}
+   let cleaned=true;
+   try{if(staged)await staged.close();}catch{cleaned=false;res.destroy();}
+   // Fail closed if descriptor cleanup is uncertain: retain reservation until restart.
+   if(cleaned)reservation?.release();
    clearTimeout(timer);res.removeListener('close',disconnect);inFlight--;
   }
  };
