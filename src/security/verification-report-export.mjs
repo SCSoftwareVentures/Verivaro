@@ -45,7 +45,7 @@ export function createVerificationPdf(report,jsonDigest){
  function start(){if(commands)pages.push(commands);if(pages.length>=MAX_PAGES)throw Error('report page limit');commands='';y=730;}
  function need(height){if(y-height<63)start();}
  function heading(x){need(36);commands+='0.90 0.94 0.96 rg 42 '+(y-6)+' 511 24 re f\n'+text(50,y+1,13,x,'F2');y-=38;}
- function line(x,{bold=false,mono=false}={}){for(const w of wrap(display(String(x)),mono?92:85)){need(13);commands+=text(48,y,mono?8:10,w,mono?'F3':bold?'F2':'F1');y-=13;}}
+ function line(x,{bold=false,mono=false}={}){for(const w of wrap(display(String(x)),mono?92:50)){need(13);commands+=text(48,y,mono?8:10,w,mono?'F3':bold?'F2':'F1');y-=13;}}
  function gap(){y-=9;}
  heading('Project overview');
  line('Project: '+report.project.name,{bold:true});line('Project ID: '+report.project.id,{mono:true});line('Tenant ID: '+report.tenantId,{mono:true});
@@ -60,7 +60,7 @@ export function createVerificationPdf(report,jsonDigest){
  start();heading('Evidence register');
  if(!report.evidence.length)line('No registered evidence.');
  for(const [i,e] of report.evidence.entries()){
-  need(85);line(String(i+1)+'. '+e.id,{bold:true});line('SHA-256: '+e.sha256,{mono:true});
+  need(111);line(String(i+1)+'. '+e.id,{bold:true});line('SHA-256: '+e.sha256,{mono:true});
   line('Registered (UTC): '+date(e.registeredAt));line('Storage: '+e.storage+(e.bytes===null?' | Size unavailable':' | '+e.bytes+' bytes'));
   line('Media: '+(e.mediaType??'unavailable')+' | Scan policy: '+(e.scanPolicy??'unavailable'));gap();
  }
@@ -80,11 +80,10 @@ export function createVerificationPdf(report,jsonDigest){
   objects.push('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> /Contents '+contentId+' 0 R >>','<< /Length '+Buffer.byteLength(stream)+' >>\nstream\n'+stream+'endstream');
  }
  objects[1]='<< /Type /Pages /Count '+pages.length+' /Kids ['+ids.join(' ')+'] >>';
- let pdf='%PDF-1.4\n',offsets=[0];
- for(const [i,obj] of objects.entries()){offsets.push(Buffer.byteLength(pdf));pdf+=(i+1)+' 0 obj\n'+obj+'\nendobj\n';}
- const offset=Buffer.byteLength(pdf);
- pdf+='xref\n0 '+offsets.length+'\n0000000000 65535 f \n'+offsets.slice(1).map(n=>String(n).padStart(10,'0')+' 00000 n \n').join('')+'trailer\n<< /Size '+offsets.length+' /Root 1 0 R >>\nstartxref\n'+offset+'\n%%EOF\n';
- const out=Buffer.from(pdf,'ascii');if(out.length>MAX_PDF)throw Error('PDF capacity exceeded');return out;
+ const parts=['%PDF-1.4\n'],offsets=[0];let offset=Buffer.byteLength(parts[0]);
+ for(const [i,obj] of objects.entries()){offsets.push(offset);const part=(i+1)+' 0 obj\n'+obj+'\nendobj\n';parts.push(part);offset+=Buffer.byteLength(part);if(offset>MAX_PDF)throw Error('PDF capacity exceeded');}
+ parts.push('xref\n0 '+offsets.length+'\n0000000000 65535 f \n'+offsets.slice(1).map(n=>String(n).padStart(10,'0')+' 00000 n \n').join('')+'trailer\n<< /Size '+offsets.length+' /Root 1 0 R >>\nstartxref\n'+offset+'\n%%EOF\n');
+ const out=Buffer.from(parts.join(''),'ascii');if(out.length>MAX_PDF)throw Error('PDF capacity exceeded');return out;
 }
 // ZIP STORE only, fixed filenames, no paths, no compression or executable data.
 const table=Array.from({length:256},(_,n)=>{let c=n;for(let i=0;i<8;i++)c=c&1?0xedb88320^(c>>>1):c>>>1;return c>>>0;});
