@@ -3,9 +3,13 @@ import {open,mkdtemp,rename,rm,stat} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {join,isAbsolute} from 'node:path';
 import {createEncryptedBackup,verifyAndStageBackup} from './encrypted-database-backup.mjs';
+import {requireRecoverySpace} from './recovery-space.mjs';
 import {backupKeyConfigValid} from './backup-keyring.mjs';
 import {createPrivateFileStore,isArtifactId} from './private-file-store.mjs';
-const LIMIT=4096,MAX_TOTAL=8*1024*1024*1024,MAX_MANIFEST=2*1024*1024;
+const LIMIT=4096,MAX_MANIFEST=2*1024*1024;
+export const MAX_EVIDENCE_BACKUP_BYTES=8*1024*1024*1024;
+const MAX_TOTAL=MAX_EVIDENCE_BACKUP_BYTES;
+const ZERO=Buffer.alloc(256*1024);
 const hash=x=>typeof x==='string'&&/^[a-f0-9]{64}$/.test(x);
 const digest=x=>createHash('sha256').update(x).digest('hex');
 const validDate=x=>typeof x==='string'&&new Date(x).toISOString()===x;
@@ -62,8 +66,9 @@ export async function createEvidenceBackup({root,sourceRoot,inventory,databaseBa
   return Object.freeze({path,checkpoint:Object.freeze({sequence,catalogSha256:digest(bytes)}),objects:objects.length,bytes:total});
  }finally{if(!published)await rm(stage,{recursive:true,force:true});}
 }
-export async function restoreEvidenceBackup({path,destinationRoot,spoolDirectory,inventory,databaseBackup,checkpoint,verificationKey,maxAgeMs=24*60*60*1000,now=Date.now(),...cfg}){
+export async function restoreEvidenceBackup({path,destinationRoot,spoolDirectory,inventory,databaseBackup,checkpoint,verificationKey,sparseZeroBlocks=false,maxAgeMs=24*60*60*1000,now=Date.now(),...cfg}){
  scope(cfg);checkAnchor(checkpoint);checkDb(databaseBackup);
+ if(typeof sparseZeroBlocks!=='boolean')throw Error('invalid sparse restoration mode');
  if(!Number.isSafeInteger(maxAgeMs)||maxAgeMs<1||maxAgeMs>30*86400000||!Number.isFinite(now))throw Error('invalid freshness policy');
  await privateDir(path);await privateDir(destinationRoot);await privateDir(spoolDirectory);
  const pub=verificationKey?.type==='public'?verificationKey:createPublicKey(verificationKey);if(pub.asymmetricKeyType!=='ed25519')throw Error('invalid verification key');
@@ -81,6 +86,7 @@ export async function restoreEvidenceBackup({path,destinationRoot,spoolDirectory
   const r=m.objects[i],e=expected[i];if(r.id!==e.id||r.sha256!==e.sha256||!isArtifactId(r.backupId)||ids.has(r.backupId)||!Number.isSafeInteger(r.bytes)||r.bytes<1||r.bytes>512*1024*1024)throw Error('inventory mismatch');
   ids.add(r.backupId);total+=r.bytes;if(total>MAX_TOTAL)throw Error('restore capacity exceeded');
  }
+ if(!sparseZeroBlocks)await requireRecoverySpace(destinationRoot,total+65536);
  const stage=await mkdtemp(join(destinationRoot,'.restore-'));let published=false;
  try{
   for(const item of m.objects){
@@ -90,9 +96,18 @@ export async function restoreEvidenceBackup({path,destinationRoot,spoolDirectory
     if(s.backupId!==item.backupId||s.sha256!==item.sha256||s.length!==item.bytes)throw Error('object substitution');
     const output=await open(join(stage,item.id),constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,0o600);
     try{
-     // Explicit positionless writes; sync before publishing the private directory.
-     for await(const block of s.read()){let offset=0;while(offset<block.length){cfg.signal.throwIfAborted();const r=await output.write(block,offset,block.length-offset,null);if(!r.bytesWritten)throw Error('short restore write');offset+=r.bytesWritten;}}
-     await output.sync();
+     // Optional sparse output preserves zero-filled blocks without allocating disk
+     // extents. Every decrypted byte is still authenticated and counted.
+     let position=0;
+     for await(const block of s.read()){
+      cfg.signal.throwIfAborted();
+      if(!sparseZeroBlocks||block.length>ZERO.length||!block.equals(ZERO.subarray(0,block.length))){
+       let offset=0;while(offset<block.length){cfg.signal.throwIfAborted();const r=await output.write(block,offset,block.length-offset,position+offset);if(!r.bytesWritten)throw Error('short restore write');offset+=r.bytesWritten;}
+      }
+      position+=block.length;
+     }
+     if(position!==item.bytes)throw Error('restore length mismatch');
+     await output.truncate(position);await output.sync();
     }finally{await output.close();}
    }finally{await s.close();}
   }

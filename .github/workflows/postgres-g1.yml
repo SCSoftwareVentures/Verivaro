@@ -111,6 +111,7 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f db/tests/alert_logins.sql
           VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-alert-outbox.test.mjs
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/0015_restore_review.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/full_security_gate.sql
           # Real encrypted logical backup and isolated recovery; no artifacts uploaded.
           backup_root="$(mktemp -d)"
           trap 'rm -rf "$backup_root"' EXIT
@@ -132,6 +133,7 @@ jobs:
           test -d "$backup_path"
           VV_RESTORE_APPROVED=1 VV_RESTORE_SPOOL="$backup_root/spool" node services/database-recovery/main.mjs restore "$backup_path" verivaro_restore_ci
           psql -X -v ON_ERROR_STOP=1 -d verivaro_restore_ci -f db/tests/restored_database_gate.sql
+          psql -X -v ON_ERROR_STOP=1 -d verivaro_restore_ci -f db/tests/full_security_gate.sql
           for table in verivaro.tenants verivaro.projects verivaro.evidence verivaro_private.security_incidents verivaro_private.download_leases; do
             source_hash="$(psql -X -At -c "SELECT md5(COALESCE(string_agg(row_to_json(t)::text, ',' ORDER BY row_to_json(t)::text),'')) FROM $table t")"
             restored_hash="$(psql -X -At -d verivaro_restore_ci -c "SELECT md5(COALESCE(string_agg(row_to_json(t)::text, ',' ORDER BY row_to_json(t)::text),'')) FROM $table t")"

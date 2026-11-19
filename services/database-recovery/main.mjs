@@ -68,12 +68,14 @@ try{
   try{
    // Never reuse or overwrite a database. The newly-created target remains
    // restricted even if restore/quarantine fails.
-   await execute('createdb',['-w','--maintenance-db=postgres','--template=template0',target]);
+   await query('postgres','CREATE DATABASE '+target+' WITH TEMPLATE template0 ALLOW_CONNECTIONS false');
    await query('postgres','REVOKE CONNECT ON DATABASE '+target+' FROM PUBLIC');
+   await query('postgres','ALTER DATABASE '+target+' ALLOW_CONNECTIONS true');
    if(await query(target,"SELECT count(*) FROM pg_catalog.pg_roles WHERE rolcanlogin AND NOT rolsuper AND rolname<>current_user AND has_database_privilege(oid,current_database(),'CONNECT')")!=='0')throw Error('restore target connection boundary failed');
    if(await query(target,"SELECT count(*) FROM pg_catalog.pg_namespace WHERE nspname NOT IN ('public','information_schema') AND nspname NOT LIKE 'pg_%'")!=='0')throw Error('restore target not empty');
    const {p,done}=child('pg_restore',['--no-password','--single-transaction','--exit-on-error','--dbname='+target],{input:true});
    try{await Promise.all([pipeline(Readable.from(staged.read()),p.stdin,{signal}),done]);}catch(e){p.kill();throw e;}
+   if(await query(target,"SELECT count(*) FROM pg_catalog.pg_roles WHERE rolcanlogin AND NOT rolsuper AND rolname<>current_user AND has_database_privilege(oid,current_database(),'CONNECT')")!=='0')throw Error('post-restore connection boundary failed');
    await execute('psql',['-X','-w','-q','-v','ON_ERROR_STOP=1','-v','backup_id='+staged.backupId,'--dbname='+target,'-f',fileURLToPath(new URL('./quarantine.sql',import.meta.url))]);
    process.stdout.write(JSON.stringify({backupId:staged.backupId,target,status:'restored_quarantined'})+'\n');
   }finally{await staged.close();}

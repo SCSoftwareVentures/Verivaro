@@ -4,6 +4,7 @@ import {constants} from 'node:fs';
 import {join,isAbsolute} from 'node:path';
 import {Readable} from 'node:stream';
 import {stageEncryptedArtifact,MAX_SPOOL_BYTES,MAX_RECOVERY_SPOOL_BYTES} from './encrypted-artifact-spool.mjs';
+import {requireRecoverySpace} from './recovery-space.mjs';
 import {validBackupKeyId,backupKeyConfigValid} from './backup-keyring.mjs';
 export const MAX_BACKUP_BYTES=MAX_RECOVERY_SPOOL_BYTES;
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -43,6 +44,7 @@ async function readManifest(path){
 }
 export async function createEncryptedBackup(source,{root,key,keyring,installationId,database,signal,maxBytes=MAX_SPOOL_BYTES,assertComplete=async()=>{}}){
  config({key,keyring,installationId,database,maxBytes});await privateDirectory(root);signal.throwIfAborted();
+ await requireRecoverySpace(root,maxBytes+65536);
  const m={version:1,backupId:randomUUID(),installationId,database,createdAt:new Date().toISOString(),salt:randomBytes(32).toString('hex'),nonce:randomBytes(12).toString('hex')};
  const selected=keyring?keyring.writeKey():{key:Buffer.from(key)};
  if(keyring){m.version=2;m.keyId=selected.id;}
@@ -85,6 +87,7 @@ export async function verifyAndStageBackup({path,spoolDirectory,key,keyring,inst
  const [enc,auth]=keys(selected,Buffer.from(m.salt,'hex'));selected.fill(0);let file;
  try{
   if(!timingSafeEqual(mac(m,auth),Buffer.from(m.mac,'hex')))throw Error('backup manifest authentication failed');
+  await requireRecoverySpace(spoolDirectory,m.bytes+Math.ceil(m.bytes/262144)*16+65536);
   file=await open(join(path,'archive.enc'),constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
   const stats=await file.stat();if(!stats.isFile()||stats.size!==m.bytes)throw Error('backup length mismatch');
   const decipher=createDecipheriv('aes-256-gcm',enc,Buffer.from(m.nonce,'hex'));decipher.setAAD(Buffer.from(header(m)));decipher.setAuthTag(Buffer.from(m.tag,'hex'));
