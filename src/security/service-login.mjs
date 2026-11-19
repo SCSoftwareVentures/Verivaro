@@ -1,6 +1,6 @@
 // Shared PostgreSQL connection-boundary validation. This is a deployment
 // misconfiguration guard, not a substitute for PostgreSQL ACL enforcement.
-const roles=new Set(['verivaro_runtime','verivaro_share_gateway','verivaro_recipient_gateway','verivaro_admission_service','verivaro_monitor_worker','verivaro_monitor_reader','verivaro_alert_sender','verivaro_identity_service','verivaro_identity_events','verivaro_api_admission','verivaro_evidence_ingestor','verivaro_evidence_reader','verivaro_evidence_auditor','verivaro_release_service']);
+const roles=new Set(['verivaro_runtime','verivaro_share_gateway','verivaro_recipient_gateway','verivaro_admission_service','verivaro_monitor_worker','verivaro_monitor_reader','verivaro_alert_sender','verivaro_identity_service','verivaro_identity_events','verivaro_api_admission','verivaro_evidence_ingestor','verivaro_evidence_reader','verivaro_evidence_auditor','verivaro_release_service','verivaro_tenant_operator']);
 const name=/^[a-z][a-z0-9_]{0,62}$/;
 export function validateServiceIdentity(role,expectedLogin){
  if(!roles.has(role)||(typeof expectedLogin!=='string'||!name.test(expectedLogin)||expectedLogin===role||expectedLogin.startsWith('pg_')||expectedLogin.startsWith('verivaro_')))throw Error('invalid service identity configuration');
