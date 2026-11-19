@@ -39,14 +39,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/vv-live-driver"
           cp tests/integration/driver/package.json "$RUNNER_TEMP/vv-live-driver/"
-          if test -f tests/integration/driver/package-lock.json; then
-            cp tests/integration/driver/package-lock.json "$RUNNER_TEMP/vv-live-driver/"
-          else
-            npm install --prefix "$RUNNER_TEMP/vv-live-driver" --package-lock-only --ignore-scripts --no-audit --no-fund
-            echo 'VV_DRIVER_LOCK_BEGIN'
-            cat "$RUNNER_TEMP/vv-live-driver/package-lock.json"
-            echo 'VV_DRIVER_LOCK_END'
-          fi
+          cp tests/integration/driver/package-lock.json "$RUNNER_TEMP/vv-live-driver/"
           npm ci --prefix "$RUNNER_TEMP/vv-live-driver" --ignore-scripts --no-audit --no-fund
       - name: Apply schema and adversarial checks
         run: |
