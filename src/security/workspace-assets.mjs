@@ -113,6 +113,20 @@ async function loadProofLock(){
   row.append(a,node('p',(stage?.title??'Unknown milestone')+' | '+t.status.replaceAll('_',' ')+' | '+t.urgency+' priority','state'),node('p','Risk: '+t.risk+' · '+(t.mandatory?'Mandatory':'Non-mandatory'),'meta'),node('p','Capture deadline (UTC): '+(t.deadline??'Not established')),node('p','Planned stage (UTC): '+(t.stage??'Not established')),node('p',t.action));
   if(stage?.confirmed)row.append(node('p','Local planned stage: '+stage.localTime+' '+stage.timezone+' (UTC offset '+stage.offsetMinutes+' min)','meta'));
   if(t.history.length){const history=node('details');history.append(node('summary','Calculated deadline history'));for(const h of t.history)history.append(node('p','Revision '+h.revision+' · '+(h.deadline??'Unknown deadline')+(h.superseded?' · Superseded':' · Current')+(h.deadlineElapsedBeforeSupersessionOrAsOf?' · Deadline elapsed':'')+(h.ruleApprovedDuringOrBeforeRevisionEnd===false?' · Rule was not yet approved':''),'meta'));row.append(history);}
+  const win=p.windows.find(w=>w.windowId===t.windowId);
+  if(writable&&data.uploadsEnabled&&q?.canLink&&q.versionId===t.versionId&&win?.ruleDecision==='approved'&&stage?.revisionId){
+   const box=node('details'),file=node('input');file.type='file';file.accept='.txt,.png,.pdf';
+   box.append(node('summary','Capture evidence'),node('p','Upload a supported file directly to this exact capture rule. The server records receipt time, not the original capture time. Independent evidence review is still required.','meta'),graphField('Capture evidence file',file),button('Submit captured evidence',async()=>{
+    const f=file.files[0];if(!f||f.size<1||f.size>262144)throw Error('Choose a supported file of 1–262144 bytes.');
+    const media=f.type==='image/png'?'image/png':f.type==='application/pdf'?'application/pdf':f.type==='text/plain'||f.name.toLowerCase().endsWith('.txt')?'text/plain; charset=utf-8':null;
+    if(!media)throw Error('Unsupported evidence format. Use a supported PNG, text or canonical PDF file.');
+    if(!confirm('Upload and link this file for independent review?'))return;
+    const bytes=await f.arrayBuffer();try{
+     const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join(''),endpoint=base+'/evidence/capture/'+t.windowId+'/'+t.versionId+'/'+stage.revisionId,key=endpoint+':'+media+':'+digest;
+     await api(endpoint,{method:'POST',headers:{'Content-Type':media,'Idempotency-Key':retryId(key),'X-Evidence-SHA256':digest},body:bytes});attempts.delete(key);file.value='';await loadProject();say('Captured evidence submitted for independent review.');
+    }finally{new Uint8Array(bytes).fill(0);}
+   }));row.append(box);
+  }
   tasks.append(row);
  }
  if(writable&&latest.size<128)milestoneEditor(schedule);

@@ -3,7 +3,7 @@ import {verifyIdentityToken} from './verify-identity.mjs';
 import {TYPES} from './evidence-formats.mjs';
 import {MAX_EVIDENCE_UPLOAD} from './evidence-objects.mjs';
 import {IngestionDenied,IngestionConflict,IngestionRejected,IngestionQuota} from './evidence-ingestion.mjs';
-const id='([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})',route=new RegExp('^/api/v1/tenants/'+id+'/projects/'+id+'/evidence$');
+const id='([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})',route=new RegExp('^/api/v1/tenants/'+id+'/projects/'+id+'/evidence(?:/capture/'+id+'/'+id+'/'+id+')?$');
 const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 export function isEvidenceUpload(req){return req.method==='POST'&&typeof req.url==='string'&&route.test(req.url);}
 function reply(res,status,payload,extra={}){
@@ -45,9 +45,9 @@ export function createEvidenceUploadHandler({origin,verifier,admission,resolveSe
    if(n!==expected)return failure(res,400);
    data=Buffer.concat(chunks);
    if(createHash('sha256').update(data).digest('hex')!==req.headers['x-evidence-sha256'])return failure(res,422);
-   const [,tenantId,projectId]=route.exec(req.url);
-   const result=await ingest({token,tenantId,projectId,requestId:req.headers['idempotency-key'],data,mediaType:req.headers['content-type'],signal:controller.signal});
-   return reply(res,200,{evidence:{id:result.id,sha256:result.sha256,bytes:result.bytes}});
+   const [,tenantId,projectId,windowId,versionId,milestoneRevisionId]=route.exec(req.url),capture=windowId?{windowId,versionId,milestoneRevisionId}:undefined;
+   const result=await ingest({token,tenantId,projectId,requestId:req.headers['idempotency-key'],data,mediaType:req.headers['content-type'],signal:controller.signal,...(capture?{capture}:{})});
+   return reply(res,200,{evidence:{id:result.id,sha256:result.sha256,bytes:result.bytes},...(capture?{linkId:result.link_id}:{})});
   }catch(e){return failure(res,e instanceof IngestionDenied?404:e instanceof IngestionConflict?409:e instanceof IngestionRejected?422:e instanceof IngestionQuota?507:503);}
   finally{clearTimeout(timer);res.removeListener('close',abort);data?.fill(0);for(const chunk of chunks)chunk.fill(0);active--;}
  };

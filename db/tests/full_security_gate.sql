@@ -39,7 +39,7 @@ BEGIN
    IF has_function_privilege(r.oid,p.oid,'EXECUTE') AND NOT (
     (r.rolname='verivaro_evidence_auditor' AND p.nspname='verivaro_ingestion' AND p.proname='attestation_inventory') OR
     (r.rolname='verivaro_evidence_reader' AND p.nspname='verivaro_ingestion' AND p.proname='fetch_object') OR
-    (r.rolname='verivaro_evidence_ingestor' AND p.nspname='verivaro_ingestion' AND p.proname IN ('authorize_upload','commit_upload_v2')) OR
+    (r.rolname='verivaro_evidence_ingestor' AND p.nspname='verivaro_ingestion' AND p.proname IN ('authorize_upload','commit_upload_v2','authorize_capture','commit_capture')) OR
     (r.rolname='verivaro_runtime' AND p.nspname='verivaro_ingestion' AND p.proname='list_evidence_metadata') OR
     (r.rolname='verivaro_tenant_operator' AND p.nspname='verivaro_tenant_admin' AND p.proname IN ('bootstrap','approve_enrollment','complete_transfer','issue_invitation')) OR
     (r.rolname='verivaro_runtime' AND p.nspname='verivaro_tenant_admin' AND p.proname IN ('request_enrollment','directory','change_access','request_transfer','accept_transfer','pending_transfers','enrollment_requests','cancel_invitation','redeem_invitation')) OR
