@@ -8,6 +8,9 @@ import {createAuthenticationGateway} from './authentication-gateway.mjs';
 import {createBrowserAuthentication} from './browser-authentication.mjs';
 import {createScopedDatabase} from './scoped-database.mjs';
 import {createApiAdmission,apiPeer} from './api-admission.mjs';
+import {createEvidenceUploadHandler,isEvidenceUpload} from './evidence-upload-api.mjs';
+import {createIngestionDatabase,createEvidenceIngestion} from './evidence-ingestion.mjs';
+import {createClamdScanner} from './clamd-scanner.mjs';
 import {createApplicationApi,isRenameRequest} from './application-api.mjs';
 const roles={identity:'verivaro_identity_service',runtime:'verivaro_runtime',admission:'verivaro_api_admission'};
 const baseHeaders={'Cache-Control':'no-store, private','Content-Type':'text/plain; charset=utf-8','Strict-Transport-Security':'max-age=31536000','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY','Content-Security-Policy':"default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",'Cross-Origin-Resource-Policy':'same-origin','Permissions-Policy':'camera=(), microphone=(), geolocation=()'};
@@ -19,27 +22,29 @@ function reply(res,status,body='',extra={}){
  res.writeHead(status,{...baseHeaders,'Content-Length':Buffer.byteLength(body),...extra});res.end(body);
 }
 function invalidHeaders(req,host){
- const seen=new Set(),critical=new Set(['host','cookie','origin','authorization','content-length','transfer-encoding','content-encoding','expect','sec-fetch-site','content-type','idempotency-key']);
+ const seen=new Set(),critical=new Set(['host','cookie','origin','authorization','content-length','transfer-encoding','content-encoding','expect','sec-fetch-site','content-type','idempotency-key','x-evidence-sha256']);
  for(let i=0;i<req.rawHeaders.length;i+=2){const h=req.rawHeaders[i].toLowerCase();if(critical.has(h)&&seen.has(h))return true;seen.add(h);}
  return req.headers.host!==host||req.headers.authorization!==undefined||req.headers['transfer-encoding']!==undefined||req.headers['content-encoding']!==undefined||
- (!isRenameRequest(req)&&req.headers['content-length']!==undefined&&req.headers['content-length']!=='0')||req.headers.expect!==undefined;
+ (!isRenameRequest(req)&&!isEvidenceUpload(req)&&req.headers['content-length']!==undefined&&req.headers['content-length']!=='0')||req.headers.expect!==undefined;
 }
 const page='<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Verivaro</title><main><h1>Verivaro</h1><p>Secure verification workspace.</p><form action="/auth/login" method="post"><button>Sign in</button></form><form action="/auth/logout" method="post"><button>Sign out</button></form><form action="/auth/logout-all" method="post"><button>Sign out on all devices</button></form></main></html>';
 // Only file paths and bounded deployment settings; no environment fallbacks.
 export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,report=()=>{}}){
  if(typeof Pool!=='function')throw Error('missing database driver');
  const cfg=JSON.parse(await readText(configPath,16384));
- exact(cfg,['origin','listenHost','listenPort','tlsKeyFile','tlsCertFile','database','logins','provider','local','secrets']);
+ const enabled=Object.hasOwn(cfg,'ingestion'),serviceRoles=enabled?{...roles,ingestion:'verivaro_evidence_ingestor'}:roles;
+ exact(cfg,['origin','listenHost','listenPort','tlsKeyFile','tlsCertFile','database','logins','provider','local','secrets',...(enabled?['ingestion']:[])]);
+ if(enabled)exact(cfg.ingestion,['keyId','keyFile','scannerSocket']);
  const origin=new URL(cfg.origin);
  if(origin.protocol!=='https:'||origin.href!==origin.origin+'/'||!['127.0.0.1','::1','0.0.0.0'].includes(cfg.listenHost)||!Number.isInteger(cfg.listenPort)||cfg.listenPort<1024||cfg.listenPort>65535)throw Error('invalid listener configuration');
- exact(cfg.database,['host','port','name','caFile']);exact(cfg.logins,Object.keys(roles));
+ exact(cfg.database,['host','port','name','caFile']);exact(cfg.logins,Object.keys(serviceRoles));
  exact(cfg.provider,['issuer','audience','authorizationEndpoint','tokenEndpoint','requiredAcr','requiredAmr','authorityFile','checkpointFile','catalogueFile','signatureFile','clientSecretFile']);
  exact(cfg.local,['issuer','audience','signingKeyFile']);
  exact(cfg.secrets,['browserKeyFile','contextKeyFile','admissionKeyFile']);
  const pools={},credentials=[],rawKeys=[];
  let server;
  try{
-  for(const [name,role] of Object.entries(roles)){
+  for(const [name,role] of Object.entries(serviceRoles)){
    const login=cfg.logins[name];exact(login,['user','passwordFile']);
    const settings=await loadServicePoolConfig({role,max:4,env:{PGHOST:cfg.database.host,PGPORT:String(cfg.database.port),PGDATABASE:cfg.database.name,PGUSER:login.user,VV_DB_CA_FILE:cfg.database.caFile,VV_DB_PASSWORD_FILE:login.passwordFile}});
    credentials.push(settings.password);
@@ -62,6 +67,14 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
   const browser=createBrowserAuthentication({db,gateway,provider,localVerifier:verifier,origin:origin.origin,authorizationEndpoint:p.authorizationEndpoint,tokenEndpoint:p.tokenEndpoint,clientSecret:(await readText(p.clientSecretFile,1024)).trim(),key:browserKey,requiredAcr:p.requiredAcr,fetcher});
   const scoped=createScopedDatabase(pools.runtime,{verifier,key:contextKey,expectedLogin:cfg.logins.runtime.user});
   const api=createApplicationApi({resolveSession:browser.resolveSession,scoped,admission,verifier,origin:origin.origin});
+  let upload;
+  if(enabled){
+   const evidenceKey=await readKey(cfg.ingestion.keyFile);rawKeys.push(evidenceKey);
+   if(rawKeys.slice(0,-1).some(k=>k.equals(evidenceKey)))throw Error('duplicate evidence key');
+   const ingestDb=createIngestionDatabase(pools.ingestion,{verifier,contextKey,expectedLogin:cfg.logins.ingestion.user});
+   const ingest=createEvidenceIngestion({db:ingestDb,scan:createClamdScanner({socketPath:cfg.ingestion.scannerSocket}),key:evidenceKey,keyId:cfg.ingestion.keyId});
+   upload=createEvidenceUploadHandler({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,ingest});
+  }
   const tlsKey=await readPrivate(cfg.tlsKeyFile,65536),cert=await readPrivate(cfg.tlsCertFile,65536);rawKeys.push(tlsKey);
   const leaf=new X509Certificate(cert);
   if(!leaf.checkHost(origin.hostname,{subject:'never'})||Date.parse(leaf.validFrom)>Date.now()||Date.parse(leaf.validTo)<=Date.now()||!leaf.checkPrivateKey(createPrivateKey(tlsKey)))throw Error('invalid listener certificate');
@@ -76,6 +89,7 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
    if(active>=24)return reply(res,429,'Temporarily unavailable',{'Retry-After':'5'});
    active++;
    try{
+    if(isEvidenceUpload(req))return upload?await upload(req,res):reply(res,404,'Not found',{'Connection':'close'});
     if(req.url.startsWith('/api/'))return await api(req,res);
     if(req.url.startsWith('/auth/')){
      if(!await admission.peer(req.socket.remoteAddress))return reply(res,429,'Temporarily unavailable',{'Retry-After':'60'});
