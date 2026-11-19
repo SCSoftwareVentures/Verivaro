@@ -42,7 +42,21 @@ jobs:
         timeout-minutes: ${{ matrix.engine == 'webkit' && 32 || 18 }}
         run: |
           set -euo pipefail
-          node "$RUNNER_TEMP/vv-browser/node_modules/playwright/cli.js" install-deps ${{ matrix.engine }}
+          # A signed index can change while a mirror is synchronizing. Retry
+          # provisioning only, never browser assertions or signature checks.
+          for attempt in 1 2 3; do
+            if test -f /etc/apt/apt-mirrors.txt; then
+              mirror=https://archive.ubuntu.com/ubuntu/
+              if test "$attempt" = 2; then mirror=https://us.archive.ubuntu.com/ubuntu/; fi
+              printf '%s\n' "$mirror" | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
+            fi
+            if node "$RUNNER_TEMP/vv-browser/node_modules/playwright/cli.js" install-deps ${{ matrix.engine }}; then exit 0; fi
+            if test "$attempt" = 3; then exit 1; fi
+            sudo rm -rf /var/lib/apt/lists/partial
+            sudo mkdir -p /var/lib/apt/lists/partial
+            sleep $((attempt * 15))
+          done
+          exit 1
       - name: Install pinned browser binary
         timeout-minutes: 6
         env:
