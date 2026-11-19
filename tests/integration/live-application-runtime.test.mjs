@@ -344,6 +344,38 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   assert.equal((await getGraph()).requirements.find(x=>x.requirementId===child.requirementId).dependencyPins[0].decision,'approved');
   assert.equal((await g('submission-impact',{submissionId:packageId})).status,200);
   console.log('https_dependency_management_gate_passed');
+  // Exact-revision removal is independently reviewed; no scope or identity
+  // may be supplied by the browser, and a historical pin is never deleted.
+  const childRev={...child,versionId:randomUUID(),expectedRevision:1,criterion:'Separate independently verified criterion'};
+  assert.equal((await g('requirement',childRev)).status,200);
+  const candidateGraph=await getGraph();
+  assert.equal(candidateGraph.dependencyRemovalEnabled,true);
+  assert.ok(candidateGraph.removalCandidates.some(x=>x.versionId===childRev.versionId&&x.prerequisiteId===rule.requirementId));
+  assert.deepEqual((await getGraph(reviewer)).removalCandidates,[]);
+  const removal={versionId:childRev.versionId,removalId:randomUUID(),prerequisiteId:rule.requirementId,reason:'Criterion now uses separate proof'};
+  assert.equal((await g('dependency-removal-propose',{...removal,actorId:actor})).status,400);
+  assert.equal((await g('dependency-removal-propose',{...removal,reason:' '})).status,400);
+  assert.equal((await g('dependency-removal-propose',removal,contributor)).status,404);
+  assert.equal((await g('dependency-removal-propose',{...removal,prerequisiteId:randomUUID()})).status,404);
+  assert.equal((await request(graphBase+'/dependency-removal-propose',{method:'POST',headers:{cookie:session,origin:'https://evil.invalid','content-type':'application/json'},body:JSON.stringify(removal)})).status,403);
+  const removalMade=await g('dependency-removal-propose',removal);
+  assert.equal(removalMade.status,200);assert.deepEqual(JSON.parse(removalMade.body),{removalId:removal.removalId});
+  assert.equal((await g('dependency-removal-propose',removal)).body,removalMade.body);
+  let currentRemoval=(await getGraph()).requirements.find(x=>x.requirementId===child.requirementId);
+  assert.equal(currentRemoval.state,'dependency_blocked');assert.equal(currentRemoval.dependencyRemovals[0].decision,'pending');
+  assert.equal(currentRemoval.dependencyRemovals[0].historicalEdgeId,dependency.edgeId);
+  assert.equal((await g('rule-review',{versionId:childRev.versionId,decision:'approved',reason:'Premature approval'},reviewer)).status,409);
+  const removalReview={removalId:removal.removalId,decision:'approved',reason:'Historical prerequisite no longer applies to revised criterion'};
+  assert.equal((await g('dependency-removal-review',removalReview)).status,404);
+  assert.equal((await g('dependency-removal-review',{...removalReview,decision:'pass'},reviewer)).status,400);
+  assert.equal((await g('dependency-removal-review',removalReview,reviewer)).status,200);
+  assert.equal((await g('dependency-removal-review',removalReview,reviewer)).status,200);
+  assert.equal((await g('dependency-removal-review',{...removalReview,decision:'rejected'},reviewer)).status,409);
+  assert.equal((await g('rule-review',{versionId:childRev.versionId,decision:'approved',reason:'Criterion confirmed'},reviewer)).status,200);
+  currentRemoval=(await getGraph()).requirements.find(x=>x.requirementId===child.requirementId);
+  assert.equal(currentRemoval.dependencyRemovals[0].decision,'approved');assert.equal(currentRemoval.state,'missing_evidence');
+  assert.equal((await g('submission-download',packageArgs)).status,409);
+  console.log('https_dependency_removal_gate_passed');
   assert.equal((await request('/auth/logout-all',{method:'POST',headers:{origin,cookie:session}})).status,204);
   assert.equal((await request(route,{headers:{cookie:session}})).status,401);
   await app.stop();assert.equal(app.server.listening,false);
