@@ -29,6 +29,8 @@ DELETE FROM verivaro_private.login_challenges;
 DELETE FROM verivaro_private.browser_flows;
 DELETE FROM verivaro_private.browser_sessions;
 DELETE FROM verivaro_private.auth_telemetry;
+DELETE FROM verivaro_private.api_rate_keys;
+UPDATE verivaro_private.api_rate_state SET bucket=-1,requests=0;
 WITH revoked AS (
  UPDATE verivaro_private.share_grants SET revoked_at=clock_timestamp() WHERE revoked_at IS NULL RETURNING export_id,share_id,issuer_id
 )

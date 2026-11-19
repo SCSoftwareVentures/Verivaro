@@ -5,10 +5,12 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const validId = value => typeof value==='string' && uuid.test(value);
 const requireId = value => { if(!validId(value)) throw new TypeError('invalid identifier'); return value.toLowerCase(); };
 
+export class ScopedAccessDenied extends Error {constructor(){super('scoped database operation failed');this.name='ScopedAccessDenied';}}
+
 // Only fixed repository-owned statements are exposed; no generic SQL or transaction callback.
 const operations = Object.freeze({
- listProjects: { sql: 'SELECT id, name FROM verivaro.projects WHERE tenant_id=$1 ORDER BY id LIMIT 200', values: () => [] },
- getProject: { sql: 'SELECT id, name FROM verivaro.projects WHERE tenant_id=$1 AND id=$2', values: args => [requireId(args.projectId)] },
+ listProjects: { sql: 'SELECT id, left(name,256) AS name FROM verivaro.projects WHERE tenant_id=$1 ORDER BY id LIMIT 200', values: () => [] },
+ getProject: { sql: 'SELECT id, left(name,256) AS name FROM verivaro.projects WHERE tenant_id=$1 AND id=$2', values: args => [requireId(args.projectId)] },
  listEvidence: { sql: 'SELECT id, project_id, sha256, created_by, created_at FROM verivaro.evidence WHERE tenant_id=$1 AND project_id=$2 ORDER BY id LIMIT 200', values: args => [requireId(args.projectId)] }
 });
 
@@ -48,7 +50,7 @@ export function createScopedDatabase(pool, { verifier, key, expectedLogin }) {
     // never interpolate or log token/context/key
     await client.query("SELECT set_config('verivaro.signed_context', $1, true)",[context]);
     const authorized=await client.query('SELECT verivaro.authorized($1::uuid) AS allowed',[tenant]);
-    if(authorized.rows.length!==1 || authorized.rows[0].allowed!==true) throw new Error('access denied');
+    if(authorized.rows.length!==1 || authorized.rows[0].allowed!==true) throw new ScopedAccessDenied();
     const result=await client.query(spec.sql,values);
     const rows=result.rows;
     await client.query('COMMIT');
@@ -56,11 +58,12 @@ export function createScopedDatabase(pool, { verifier, key, expectedLogin }) {
     await client.query('DISCARD ALL');
     clean=true;
     return rows;
-   } catch {
+   } catch (error) {
     if(transaction) {
      try { await client.query('ROLLBACK'); } catch { /* discard the connection below */ }
     }
     // Never return an uncertain or errored connection to the pool.
+    if(error instanceof ScopedAccessDenied)throw error;
     throw new Error('scoped database operation failed');
    } finally {
     client.release(clean ? undefined : new Error('discard unsafe database lease'));
