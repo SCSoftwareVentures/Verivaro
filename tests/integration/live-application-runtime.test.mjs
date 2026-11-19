@@ -10,6 +10,7 @@ import {issuer,audience,publicKey,local,token} from '../fixtures/provider-fixtur
 import {canonicalTextPdf} from '../../src/security/evidence-formats.mjs';
 import {scannerFixture} from '../fixtures/clamd-fixture.mjs';
 import {digestSubject} from '../../src/security/provider-identity.mjs';
+import {createTenantAdministration} from '../../src/security/tenant-administration.mjs';
 import {createApplicationRuntime} from '../../src/security/application-runtime.mjs';
 if(process.env.VV_LIVE_TEST!=='1'||process.env.PGDATABASE!=='verivaro_test'||!process.env.VV_TLS_FIXTURE||!process.env.VV_TEST_DRIVER_DIR)throw Error('disposable CI only');
 const {Pool}=createRequire(resolve(process.env.VV_TEST_DRIVER_DIR,'package.json'))('pg');
@@ -235,6 +236,24 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   assert.equal((await adminPost(tenantBase+'/transfer-accept',{requestId:transfer.requestId},reviewer)).status,200);
   assert.ok(JSON.parse((await request(tenantBase+'/transfers',{headers:{cookie:session}})).body).items.some(x=>x.id===transfer.requestId&&x.acceptedAt));
   console.log('browser_tenant_administration_gate_passed');
+  const invitedSubject='runtime-invite-'+randomUUID(),invitation={requestId:randomUUID(),subjectDigest:digestSubject(invitedSubject).toString('hex'),role:'viewer'};
+  assert.equal((await adminPost(tenantBase+'/enroll',invitation)).status,200);
+  const operatorPool=new Pool({host:'localhost',port:Number(process.env.PGPORT),database:'verivaro_test',user:'vv_ci_tenant_operator',password:process.env.VV_TENANT_OPERATOR_PASSWORD,ssl:{ca,rejectUnauthorized:true},max:1,connectionTimeoutMillis:3000,query_timeout:7000});
+  const invitationCode=randomBytes(32).toString('base64url');
+  try{
+   const operator=createTenantAdministration(operatorPool,{mode:'operator',expectedLogin:'vv_ci_tenant_operator',trustedIssuer:issuer});
+   await operator.issueInvitation({tenantId:tenant,requestId:invitation.requestId,verifiedSubject:invitedSubject,code:invitationCode,caseId:randomUUID()});
+  }finally{await operatorPool.end();}
+  actors.invited=invitedSubject;const invitedCookie=await loginAs('invited');
+  const before=await request('/api/v1/workspaces',{headers:{cookie:invitedCookie}});assert.equal(before.status,200);assert.deepEqual(JSON.parse(before.body).items,[]);
+  const inviteBody={requestId:invitation.requestId,code:invitationCode};
+  assert.equal((await adminPost(tenantBase+'/invite-redeem',inviteBody,viewer)).status,404);
+  assert.equal((await request(tenantBase+'/invite-redeem',{method:'POST',headers:{origin:'https://evil.invalid',cookie:invitedCookie,'content-type':'application/json'},body:JSON.stringify(inviteBody)})).status,403);
+  const acceptedInvite=await adminPost(tenantBase+'/invite-redeem',inviteBody,invitedCookie);assert.equal(acceptedInvite.status,200);
+  assert.equal((await adminPost(tenantBase+'/invite-redeem',inviteBody,invitedCookie)).body,acceptedInvite.body);
+  const after=JSON.parse((await request('/api/v1/workspaces',{headers:{cookie:invitedCookie}})).body);assert.equal(after.items.length,1);assert.equal(after.items[0].id,tenant);assert.equal(after.items[0].role,'viewer');
+  assert.deepEqual(JSON.parse((await request(route,{headers:{cookie:invitedCookie}})).body).items,[]);
+  console.log('https_first_time_invitation_gate_passed');
   assert.equal((await request('/auth/logout-all',{method:'POST',headers:{origin,cookie:session}})).status,204);
   assert.equal((await request(route,{headers:{cookie:session}})).status,401);
   await app.stop();assert.equal(app.server.listening,false);
