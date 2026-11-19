@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
-import {generateKeyPairSync,sign} from 'node:crypto';
+import {generateKeyPairSync,sign,randomUUID} from 'node:crypto';
 import {resolve} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
 import {createScopedDatabase} from '../../src/security/scoped-database.mjs';
@@ -16,13 +16,14 @@ const b={tenant:'22222222-2222-4222-8222-222222222222',actor:'ffffffff-ffff-4fff
 const hidden='88888888-8888-4888-8888-888888888888';
 const {privateKey,publicKey}=generateKeyPairSync('rsa',{modulusLength:2048});
 const config={host:process.env.PGHOST,port:Number(process.env.PGPORT),database:process.env.PGDATABASE,connectionTimeoutMillis:3000,idleTimeoutMillis:5000,max:1};
-const token=actor=>{
+a.sid=randomUUID(); b.sid=randomUUID();
+const token=(actor,sid)=>{
  const now=Math.floor(Date.now()/1000);
  const enc=x=>Buffer.from(JSON.stringify(x)).toString('base64url');
- const payload=enc({alg:'RS256',typ:'JWT'})+'.'+enc({iss:'ci',aud:'api',sub:actor,iat:now-1,nbf:now-1,exp:now+120});
+ const payload=enc({alg:'RS256',typ:'JWT'})+'.'+enc({iss:'ci',aud:'api',sub:actor,sid,iat:now-1,nbf:now-1,exp:now+120});
  return payload+'.'+sign('RSA-SHA256',Buffer.from(payload),privateKey).toString('base64url');
 };
-const input=(f,operation='listProjects',args={})=>({token:token(f.actor),tenantId:f.tenant,operation,args});
+const input=(f,operation='listProjects',args={})=>({token:token(f.actor,f.sid),tenantId:f.tenant,operation,args});
 
 test('real PostgreSQL pool: reused lease, tenant isolation, revocation, cancellation', {timeout:45000},async t=>{
  const admin=new Pool({...config,user:process.env.PGUSER,password:process.env.PGPASSWORD,max:2});
@@ -45,6 +46,7 @@ test('real PostgreSQL pool: reused lease, tenant isolation, revocation, cancella
  try {
   const key=(await admin.query('SELECT key_bytes FROM verivaro_private.context_key WHERE singleton')).rows[0].key_bytes;
   for(const f of [a,b]){
+   await admin.query("INSERT INTO verivaro_private.identity_sessions(session_id,actor_id,expires_at) VALUES($1,$2,clock_timestamp()+interval '1 hour')",[f.sid,f.actor]);
    await admin.query("INSERT INTO verivaro.memberships(tenant_id,actor_id,role) VALUES($1,$2,'viewer')",[f.tenant,f.actor]);
    await admin.query("INSERT INTO verivaro.project_members(tenant_id,project_id,actor_id,role) VALUES($1,$2,$3,'viewer')",[f.tenant,f.project,f.actor]);
   }
@@ -108,6 +110,23 @@ test('real PostgreSQL pool: reused lease, tenant isolation, revocation, cancella
    const previous=pids.at(-1);
    assert.deepEqual((await db.execute(input(b))).map(r=>r.id),[b.project]);
    assert.notEqual(pids.at(-1),previous);
+  });
+  await t.test('session isolation, unregistered session denial and recovery with new identifier',async()=>{
+   const alternate={...a,sid:randomUUID()};
+   await admin.query("INSERT INTO verivaro_private.identity_sessions(session_id,actor_id,expires_at) VALUES($1,$2,clock_timestamp()+interval '1 hour')",[alternate.sid,a.actor]);
+   assert.deepEqual((await db.execute(input(alternate))).map(r=>r.id),[a.project]);
+   await assert.rejects(db.execute(input({...a,sid:randomUUID()})),/failed/);
+   await assert.rejects(db.execute(input({...a,sid:b.sid})),/failed/);
+   // Revoke just the first session between authorization and the next statement.
+   await admin.query('UPDATE verivaro_private.identity_sessions SET revoked_at=clock_timestamp() WHERE session_id=$1',[a.sid]);
+   await assert.rejects(db.execute(input(a)),/failed/);
+   assert.deepEqual((await db.execute(input(alternate))).map(r=>r.id),[a.project]);
+   await assert.rejects(admin.query('UPDATE verivaro_private.identity_sessions SET revoked_at=NULL WHERE session_id=$1',[a.sid]),e=>e.code==='42501');
+   await assert.rejects(admin.query('DELETE FROM verivaro_private.identity_sessions WHERE session_id=$1',[a.sid]),e=>e.code==='42501');
+   const expired={...a,sid:randomUUID()};
+   await admin.query("INSERT INTO verivaro_private.identity_sessions(session_id,actor_id,created_at,expires_at) VALUES($1,$2,clock_timestamp()-interval '2 hours',clock_timestamp()-interval '1 hour')",[expired.sid,a.actor]);
+   await assert.rejects(db.execute(input(expired)),/failed/);
+   a.sid=alternate.sid;
   });
   await t.test('revoked project and globally disabled identity are immediately denied on next request',async()=>{
    await admin.query('UPDATE verivaro.project_members SET revoked_at=clock_timestamp() WHERE tenant_id=$1 AND actor_id=$2',[a.tenant,a.actor]);

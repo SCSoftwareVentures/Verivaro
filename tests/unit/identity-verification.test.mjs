@@ -6,7 +6,7 @@ import { verifyIdentityToken } from '../../src/security/verify-identity.mjs';
 const { privateKey, publicKey } = generateKeyPairSync('rsa',{modulusLength:2048});
 const now=1900000000;
 const actor='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-const base={iss:'https://identity.example.test',aud:'verivaro',sub:actor,iat:now-10,nbf:now-10,exp:now+300};
+const base={iss:'https://identity.example.test',aud:'verivaro',sub:actor,sid:'12345678-1234-4234-8234-123456789abc',iat:now-10,nbf:now-10,exp:now+300};
 function token(claims=base,header={alg:'RS256',typ:'JWT'},key=privateKey) {
  const h=Buffer.from(JSON.stringify(header)).toString('base64url');
  const p=Buffer.from(JSON.stringify(claims)).toString('base64url');
@@ -51,4 +51,12 @@ test('rejects unrecognized signed header and identity claim fields',()=>{
 test('rejects correctly signed JWT using a weak 1024-bit RSA key',()=>{
  const weak=generateKeyPairSync('rsa',{modulusLength:1024});
  assert.throws(()=>verifyIdentityToken(token(base,undefined,weak.privateKey),{...options,publicKey:weak.publicKey}),/invalid token signature/);
+});
+
+test('session claim is mandatory and signature-bound',()=>{
+ assert.equal(verifyIdentityToken(token(),options).sessionId,'12345678-1234-4234-8234-123456789abc');
+ for(const sid of [undefined,null,'invalid',42])assert.throws(()=>verifyIdentityToken(token({...base,sid}),options),/session/);
+ const parts=token().split('.');
+ parts[1]=Buffer.from(JSON.stringify({...base,sid:'87654321-4321-4321-8321-cba987654321'})).toString('base64url');
+ assert.throws(()=>verifyIdentityToken(parts.join('.'),options),/signature/);
 });

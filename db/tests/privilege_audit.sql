@@ -35,3 +35,12 @@ DO $$ DECLARE t text; BEGIN
  has_schema_privilege('verivaro_runtime','verivaro','CREATE')
  THEN RAISE EXCEPTION 'runtime can access privileged controls'; END IF;
 END $$;
+
+DO $$ BEGIN
+ IF has_table_privilege('verivaro_runtime','verivaro_private.identity_sessions','SELECT')
+ OR has_table_privilege('verivaro_runtime','verivaro_private.identity_sessions','INSERT')
+ OR has_table_privilege('verivaro_runtime','verivaro_private.identity_sessions','UPDATE')
+ OR has_table_privilege('verivaro_runtime','verivaro_private.identity_sessions','DELETE')
+ OR has_table_privilege('verivaro_runtime','verivaro_private.identity_sessions','TRUNCATE')
+ THEN RAISE EXCEPTION 'runtime can administer identity sessions'; END IF;
+END $$;

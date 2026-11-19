@@ -16,6 +16,6 @@ export function signDatabaseContext({ token, tenantId, challenge }, { verifier, 
       typeof challenge.xid !== 'string' || !/^[1-9][0-9]{0,19}$/.test(challenge.xid) ||
       BigInt(challenge.xid) > 18446744073709551615n) throw new Error('invalid transaction challenge');
   const expiry = Math.min(now + 45, principal.expiresAt);
-  const payload = ['v1', tenantId.toLowerCase(), principal.actorId.toLowerCase(), challenge.pid, challenge.xid, expiry].join('|');
+  const payload = ['v2', tenantId.toLowerCase(), principal.actorId.toLowerCase(), challenge.pid, challenge.xid, expiry, principal.sessionId].join('|');
   return payload + '|' + createHmac('sha256', key).update(payload, 'utf8').digest('hex');
 }

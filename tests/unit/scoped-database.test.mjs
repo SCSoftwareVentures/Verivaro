@@ -10,7 +10,7 @@ const options={key,verifier:{publicKey,issuer:'fixture',audience:'db-api'}};
 const token=()=>{
  const now=Math.floor(Date.now()/1000);
  const b64=obj=>Buffer.from(JSON.stringify(obj)).toString('base64url');
- const body=b64({alg:'RS256',typ:'JWT'})+'.'+b64({iss:'fixture',aud:'db-api',sub:actor,iat:now-1,nbf:now-1,exp:now+120});
+ const body=b64({alg:'RS256',typ:'JWT'})+'.'+b64({iss:'fixture',aud:'db-api',sub:actor,sid:'12345678-1234-4234-8234-123456789abc',iat:now-1,nbf:now-1,exp:now+120});
  return body+'.'+sign('RSA-SHA256',Buffer.from(body),privateKey).toString('base64url');
 };
 function fixture({failAt, deny=false, privileged=false, rollbackFails=false}={}) {
