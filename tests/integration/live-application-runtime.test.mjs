@@ -544,6 +544,13 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   assert.equal((await g('resolution-advance',closedTask,reviewer)).status,200);assert.equal((await g('resolution-advance',closedTask,reviewer)).status,200);
   assert.equal(JSON.parse((await request(graphBase+'/resolution-list',{headers:{cookie:session}})).body).items[0].state,'closed');
   console.log('https_acknowledgement_resolution_gate_passed');
+  await admin.query('DELETE FROM verivaro_private.api_rate_keys');await admin.query('UPDATE verivaro_private.api_rate_state SET bucket=-1,requests=0');
+  const page0=await g('trustproof-page',{afterSequence:0,pageSize:256});assert.equal(page0.status,200);
+  const proofAudit=JSON.parse(page0.body);assert.equal(proofAudit.sourceCount,proofAudit.ledgerCount);assert.equal(proofAudit.verification.complete,true);assert.ok(proofAudit.entries.some(x=>x.sourceType==='customer_package_grants'));assert.ok(proofAudit.entries.some(x=>x.sourceType==='resolution_task_events'));assert.ok(proofAudit.entries.every(x=>x.sourceIntact));
+  assert.equal((await g('trustproof-page',{afterSequence:0,pageSize:2},reviewer)).status,200);assert.equal((await g('trustproof-page',{afterSequence:0,pageSize:2},viewer)).status,404);assert.equal((await g('trustproof-page',{afterSequence:0,pageSize:2},invitedCookie)).status,404);
+  assert.equal((await g('trustproof-page',{afterSequence:0,pageSize:257})).status,400);
+  await assert.rejects(admin.query('DELETE FROM verivaro_private.trustproof_entries WHERE false'),e=>e.code==='42501');
+  console.log('https_trustproof_scope_chain_gate_passed');
   const draft=await request(graphBase+'/draft-handover',{headers:{cookie:session}});assert.equal(draft.status,200);assert.equal(draft.headers['content-type'],'application/pdf');assert.ok(draft.raw.includes(Buffer.from('DRAFT - NOT APPROVED')));assert.equal((await request(graphBase+'/draft-handover',{headers:{cookie:viewer}})).status,404);
   assert.equal((await request('/auth/logout-all',{method:'POST',headers:{origin,cookie:session}})).status,204);
   assert.equal((await request(route,{headers:{cookie:session}})).status,401);

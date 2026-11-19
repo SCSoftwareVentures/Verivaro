@@ -8,6 +8,7 @@ import {isArtifactId} from './private-file-store.mjs';
 import {buildProofLockPlan,resolveLocalMilestone} from './prooflock-planner.mjs';
 import {buildFinancialSummary} from './financial-intelligence.mjs';
 import {buildProjectIntelligence} from './project-intelligence.mjs';
+import {verifyTrustProofPage} from './trustproof.mjs';
 import {buildProofLockInsights,validateAlertPolicy} from './prooflock-insights.mjs';
 const hash=/^[a-f0-9]{64}$/;
 export class ReleaseDenied extends Error{}
@@ -37,6 +38,7 @@ export function createEvidenceReleaseDatabase(pool,{expectedLogin,verifier,conte
   async prepareSubmission({token,tenantId,projectId,submissionId}){return (await run(token,tenantId,'SELECT verivaro_verification.prepare_submission($1,$2,$3) AS data',[tenantId,projectId,submissionId])).data;},
   async reviewSubmission({token,tenantId,projectId,submissionId,sha256,decision,reason}){return (await run(token,tenantId,'SELECT verivaro_verification.review_submission($1,$2,$3,$4,$5,$6) AS ok',[tenantId,projectId,submissionId,sha256,decision,reason])).ok===true;},
   async authorizeSubmission({token,tenantId,projectId,submissionId,sha256}){return (await run(token,tenantId,'SELECT verivaro_verification.authorize_submission($1,$2,$3,$4) AS ok',[tenantId,projectId,submissionId,sha256])).ok===true;},
+  async trustproofPage({token,tenantId,projectId,afterSequence,pageSize}){const page=(await run(token,tenantId,'SELECT verivaro_verification.trustproof_page($1,$2,$3,$4) AS data',[tenantId,projectId,afterSequence,pageSize])).data;let verified;try{verified=verifyTrustProofPage(page,page);}catch{throw new ReleaseConflict('audit integrity conflict');}return {...page,verification:verified};},
   async grantCustomerPackage({token,tenantId,projectId,grantId,submissionId,sha256,recipientId,minutes}){return (await run(token,tenantId,'SELECT verivaro_verification.grant_customer_package($1,$2,$3,$4,$5,$6,$7) AS id',[tenantId,projectId,grantId,submissionId,sha256,recipientId,minutes])).id;},
   async revokeCustomerPackage({token,tenantId,projectId,grantId}){return (await run(token,tenantId,'SELECT verivaro_verification.revoke_customer_package($1,$2,$3) AS ok',[tenantId,projectId,grantId])).ok;},
   async previewCustomerPackage({token,tenantId,projectId,grantId}){return (await run(token,tenantId,'SELECT verivaro_verification.preview_customer_package($1,$2,$3) AS data',[tenantId,projectId,grantId])).data;},

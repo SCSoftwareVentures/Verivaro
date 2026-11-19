@@ -33,13 +33,13 @@ END $generation$;
 -- This conservative fingerprint detects subsequent changes in all source
 -- graph records, without giving the recipient project-wide assessment access.
 CREATE FUNCTION verivaro_private.customer_graph_stamp(t uuid,p uuid) RETURNS text
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,verivaro_private AS $stamp$
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,verivaro_private SET TimeZone='UTC' AS $stamp$
  SELECT encode(verivaro_private.digest(convert_to(jsonb_build_array(
  (SELECT jsonb_build_array(q.revision,q.name,q.archived_at) FROM verivaro.projects q WHERE q.tenant_id=t AND q.id=p),
  (SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.version_id),'[]'::jsonb) FROM verivaro_private.requirement_versions x WHERE x.tenant_id=t AND x.project_id=p),
  (SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.version_id),'[]'::jsonb) FROM verivaro_private.requirement_reviews x JOIN verivaro_private.requirement_versions q USING(version_id) WHERE q.tenant_id=t AND q.project_id=p),
- (SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.link_id),'[]'::jsonb) FROM verivaro_private.requirement_evidence_links x WHERE x.tenant_id=t AND x.project_id=p),
- (SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.link_id),'[]'::jsonb) FROM verivaro_private.requirement_link_reviews x JOIN verivaro_private.requirement_evidence_links q USING(link_id) WHERE q.tenant_id=t AND q.project_id=p),
+ (SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.link_id),'[]'::jsonb) FROM verivaro_private.requirement_evidence_links x JOIN verivaro_private.requirement_versions v USING(version_id) WHERE v.tenant_id=t AND v.project_id=p),
+ (SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.link_id),'[]'::jsonb) FROM verivaro_private.requirement_link_reviews x JOIN verivaro_private.requirement_evidence_links q USING(link_id) JOIN verivaro_private.requirement_versions v USING(version_id) WHERE v.tenant_id=t AND v.project_id=p),
  (SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.version_id),'[]'::jsonb) FROM verivaro_private.requirement_sources x WHERE x.tenant_id=t AND x.project_id=p),
  (SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.edge_id),'[]'::jsonb) FROM verivaro_private.requirement_dependencies x WHERE x.tenant_id=t AND x.project_id=p),
  (SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.edge_id),'[]'::jsonb) FROM verivaro_private.requirement_dependency_reviews x JOIN verivaro_private.requirement_dependencies q USING(edge_id) WHERE q.tenant_id=t AND q.project_id=p),

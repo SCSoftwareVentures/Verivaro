@@ -568,6 +568,17 @@ function renderCsvImport(g){
    }));preview.append(row);}
  }),preview);root.append(box,link('Download watermarked internal draft cover (PDF)',current.base+'/verification/draft-handover'));
 }
+function renderTrustProof(g){
+ const box=node('details'),root=node('div'),base=current.base;let cursor=0,head=null,previous='0'.repeat(64);
+ box.append(node('summary','TrustProof — audit integrity'),node('p','Read append-only decision digests in pages. Retain the head hash independently to check later for rewriting. Backfill sequence is not historical event order; no signature or delivery claim.','meta'),button('Verify and export next audit page',async()=>{
+  const page=await api(base+'/verification/trustproof-page',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({afterSequence:cursor,pageSize:128})});
+  if(page.tenantId!==g.tenantId||page.projectId!==g.projectId||page.afterSequence!==cursor||page.previousHash!==previous||!page.verification?.integrityVerified)throw Error('Audit page continuity failed.');
+  if(head&&(page.headSequence!==head.sequence||page.headHash!==head.hash))throw Error('Audit changed during scan. Refresh and restart to obtain one consistent head.');
+  head={sequence:page.headSequence,hash:page.headHash};cursor=page.verification.nextSequence;previous=page.verification.nextHash;
+  root.replaceChildren(node('p','Retained head sequence: '+head.sequence),node('p',head.hash,'meta'),node('p','Sources reconciled: '+page.sourceCount+' · Checked through '+cursor,'state'),node('p',page.verification.complete?'Reached recorded head. Retain all pages and independent head hash.':'More pages remain.'));
+  const blob=new Blob([JSON.stringify(page,null,2)+'\n'],{type:'application/json'}),url=URL.createObjectURL(blob),a=node('a');a.href=url;a.download='trustproof-'+g.projectId+'-'+page.afterSequence+'.json';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);say('Audit page exported.');
+ }),root);el('preflightActions').append(box);
+}
 async function loadGraph(){
  const {base,data}=current,g=await api(base+'/verification'),items=el('graphItems'),metrics=el('graphMetrics');
  el('graphPanel').hidden=false;el('requirementForm').hidden=!g.canWrite;items.replaceChildren();metrics.replaceChildren();
@@ -636,6 +647,7 @@ async function loadGraph(){
  if(g.coordinationEnabled)await loadCoordination(g);
  if(g.proofLockEnabled)await loadProofLock();
  if(g.financialEnabled&&((data.tenantRole==='owner'&&data.projectRole==='owner')||(data.tenantRole==='reviewer'&&data.projectRole==='reviewer')))await loadFinancial();
+ if(g.trustproofEnabled&&((data.tenantRole==='owner'&&data.projectRole==='owner')||(data.tenantRole==='reviewer'&&data.projectRole==='reviewer')))renderTrustProof(g);
  if(g.intelligenceEnabled&&((data.tenantRole==='owner'&&data.projectRole==='owner')||(data.tenantRole==='reviewer'&&data.projectRole==='reviewer')))await loadIntelligence();
 }
 el('extractForm').addEventListener('submit',event=>{event.preventDefault();perform(async()=>{

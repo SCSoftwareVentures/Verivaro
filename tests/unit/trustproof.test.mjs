@@ -1,0 +1,7 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {trustproofEntryHash,verifyTrustProofPage} from '../../src/security/trustproof.mjs';
+const id=n=>'00000000-0000-4000-8000-'+String(n).padStart(12,'0');
+function fixture(){const p={version:1,tenantId:id(1),projectId:id(2),afterSequence:0,previousHash:'0'.repeat(64),headSequence:2,sourceCount:2,ledgerCount:2,entries:[]};let previous=p.previousHash;for(let i=1;i<=2;i++){const e={sequence:i,sourceType:'requirement_reviews',sourceId:id(i+2),origin:'live',recordedAt:'2026-11-20T00:00:00.000Z',sourceDigest:'a'.repeat(64),previousHash:previous,sourceIntact:true};e.entryHash=trustproofEntryHash(p,e);previous=e.entryHash;p.entries.push(e);}p.headHash=previous;return p;}
+test('ordered pages verify against retained independent head',()=>{const p=fixture(),first={...p,entries:p.entries.slice(0,1)},a=verifyTrustProofPage(first,p);assert.equal(a.complete,false);const last={...p,afterSequence:1,previousHash:a.nextHash,entries:p.entries.slice(1)};assert.equal(verifyTrustProofPage(last,{...p,afterSequence:1,previousHash:a.nextHash}).complete,true);});
+test('tamper, omission, reordering and scope substitution fail',()=>{for(const mutate of [p=>p.entries[0].sourceDigest='b'.repeat(64),p=>p.entries[0].sourceIntact=false,p=>p.entries.reverse(),p=>p.entries.splice(0,1),p=>p.sourceCount++,p=>p.headHash='c'.repeat(64),p=>p.projectId=id(99)]){const p=fixture(),a=structuredClone(p);mutate(p);assert.throws(()=>verifyTrustProofPage(p,a));}});
