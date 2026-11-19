@@ -48,12 +48,13 @@ async function loadTenantAdmin(){
  root.hidden=false;
 }
 el('enrollTenant').addEventListener('submit',event=>{event.preventDefault();perform(async()=>{const subjectDigest=el('enrollDigest').value.trim(),role=el('enrollRole').value,base='/api/v1/tenants/'+tenant.value+'/administration';if(!/^[a-f0-9]{64}$/.test(subjectDigest))throw Error('Provide the verified lowercase SHA-256 digest.');const key=base+':enroll:'+subjectDigest+':'+role;await api(base+'/enroll',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({requestId:retryId(key),subjectDigest,role})});attempts.delete(key);el('enrollDigest').value='';await loadTenantAdmin();say('Enrollment requested; independent operator approval required.');});});
-async function loadProjects(preferred){
+async function loadProjects(preferred,strict=false){
  clear();el('tenantAdmin').hidden=true;project.replaceChildren();projects=[];selectionNames();el('creation').hidden=tenantRows.find(t=>t.id===tenant.value)?.role!=='owner';
  if(!uuid.test(tenant.value))return;
  await loadTenantAdmin();
  projects=(await api('/api/v1/tenants/'+tenant.value+'/projects')).items;
  for(const p of projects)if(uuid.test(p.id))namedOption(project,p.id,p.name);
+ if(strict&&!projects.some(p=>p.id===preferred)){project.selectedIndex=-1;selectionNames();say('Capture link unavailable or permission denied.');return;}
  if(preferred&&projects.some(p=>p.id===preferred))project.value=preferred;
  selectionNames();if(project.options.length)await loadProject();else say('No accessible projects.');
 }
@@ -83,6 +84,52 @@ function graphReview(row,action,idKey,idValue,choices){
   const why=reason.value.trim();if(!why)throw Error('Provide a review reason.');if(!confirm('Record this immutable review decision?'))return;
   await graphPost(action,{[idKey]:idValue,decision:s.value,reason:why});await loadProject();
  }));row.append(a);
+}
+// Only the decoded RGB pixels enter the derived PNG; no original metadata,
+// active content, arbitrary chunks or EXIF are retained. Never silently
+// substitute this derivative for an original evidence file.
+async function cameraDerivative(file){
+ if(!file||!['image/jpeg','image/png','image/heic','image/heif'].includes(file.type)||file.size<1||file.size>12582912||typeof createImageBitmap!=='function'||typeof CompressionStream!=='function')throw Error('Unsupported camera image. Choose a supported original evidence file instead.');
+ let bitmap;const canvas=node('canvas');
+ try{
+  try{bitmap=await createImageBitmap(file);}catch{throw Error('This browser cannot decode the selected photo. Choose a supported original evidence file.');}
+  if(!bitmap.width||!bitmap.height||bitmap.width>8192||bitmap.height>8192||bitmap.width*bitmap.height>32000000)throw Error('Camera image dimensions exceed the capture limit.');
+  const table=Uint32Array.from({length:256},(_,i)=>{let c=i;for(let j=0;j<8;j++)c=c&1?0xedb88320^(c>>>1):c>>>1;return c>>>0;});
+  const chunk=(type,data)=>{const b=new Uint8Array(data.length+12),v=new DataView(b.buffer);v.setUint32(0,data.length);b.set(new TextEncoder().encode(type),4);b.set(data,8);let c=0xffffffff;for(let i=4;i<b.length-4;i++)c=table[(c^b[i])&255]^(c>>>8);v.setUint32(b.length-4,(c^0xffffffff)>>>0);return b;};
+  for(const limit of [1024,768,512,384,256]){
+   const scale=Math.min(1,limit/Math.max(bitmap.width,bitmap.height)),w=Math.max(1,Math.floor(bitmap.width*scale)),h=Math.max(1,Math.floor(bitmap.height*scale));
+   canvas.width=w;canvas.height=h;const ctx=canvas.getContext('2d',{alpha:false,willReadFrequently:true});if(!ctx)throw Error('Camera conversion unavailable.');
+   ctx.fillStyle='#ffffff';ctx.fillRect(0,0,w,h);ctx.drawImage(bitmap,0,0,w,h);
+   const rgba=ctx.getImageData(0,0,w,h).data,stride=w*3+1,raw=new Uint8Array(stride*h);
+   // PNG filter 1 (Sub), deterministic RGB without ancillary chunks.
+   try{
+    for(let y=0;y<h;y++){let start=y*stride;raw[start]=1;for(let x=0;x<w;x++)for(let z=0;z<3;z++){const at=(y*w+x)*4+z;raw[start+1+x*3+z]=(rgba[at]-(x?rgba[at-4]:0)+256)&255;}}
+    const compressed=new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new CompressionStream('deflate'))).arrayBuffer());
+    if(compressed.length+57<=262144){
+     const ihdr=new Uint8Array(13),v=new DataView(ihdr.buffer);v.setUint32(0,w);v.setUint32(4,h);ihdr[8]=8;ihdr[9]=2;
+     const parts=[new Uint8Array([137,80,78,71,13,10,26,10]),chunk('IHDR',ihdr),chunk('IDAT',compressed),chunk('IEND',new Uint8Array())],result=new Uint8Array(parts.reduce((n,p)=>n+p.length,0));let at=0;for(const p of parts){result.set(p,at);at+=p.length;}
+     return {bytes:result.buffer,width:w,height:h,originalWidth:bitmap.width,originalHeight:bitmap.height};
+    }
+   }finally{rgba.fill(0);raw.fill(0);}
+  }
+  throw Error('Unable to create an acceptable photo derivative. Choose an original supported file.');
+ }finally{bitmap?.close();canvas.width=0;canvas.height=0;}
+}
+function captureFragment(tenantId,projectId,windowId,versionId,revisionId){
+ const identifiers=[tenantId,projectId,windowId,versionId,revisionId];if(!identifiers.every(x=>typeof x==='string'&&uuid.test(x)))throw Error('Invalid capture context.');return '#capture/'+identifiers.join('/');
+}
+function readCaptureFragment(){
+ const hash=location.hash;if(!hash.startsWith('#capture/'))return null;
+ const parts=hash.slice(9).split('/');return parts.length===5&&parts.every(x=>uuid.test(x))?parts:[];
+}
+async function openCaptureLink(){
+ const ids=readCaptureFragment();if(!ids)return reloadWorkspaces();
+ if(ids.length!==5){clear();say('Invalid capture link.');return;}
+ const [t,p]=ids;await reloadWorkspaces(t,p,true);
+ if(tenant.value!==t||project.value!==p){say('Capture link unavailable or permission denied.');return;}
+ const target=el('capture-'+ids.slice(2).join('-'));
+ if(!target){say('Capture link unavailable, stale, or permission denied.');return;}
+ target.open=true;target.scrollIntoView({block:'start'});target.querySelector('summary')?.focus();say('Capture context opened. Verify the requirement before submitting.');
 }
 function milestoneEditor(root,prior){
  const box=node('details'),title=node('input'),mode=graphChoice([['unknown','Date unknown'],['confirmed','Confirmed date']],prior?.confirmed?'confirmed':'unknown'),local=node('input'),zone=node('input'),offset=node('input');
@@ -115,17 +162,29 @@ async function loadProofLock(){
   if(t.history.length){const history=node('details');history.append(node('summary','Calculated deadline history'));for(const h of t.history)history.append(node('p','Revision '+h.revision+' · '+(h.deadline??'Unknown deadline')+(h.superseded?' · Superseded':' · Current')+(h.deadlineElapsedBeforeSupersessionOrAsOf?' · Deadline elapsed':'')+(h.ruleApprovedDuringOrBeforeRevisionEnd===false?' · Rule was not yet approved':''),'meta'));row.append(history);}
   const win=p.windows.find(w=>w.windowId===t.windowId);
   if(writable&&data.uploadsEnabled&&q?.canLink&&q.versionId===t.versionId&&win?.ruleDecision==='approved'&&stage?.revisionId){
-   const box=node('details'),file=node('input');file.type='file';file.accept='.txt,.png,.pdf';
-   box.append(node('summary','Capture evidence'),node('p','Upload a supported file directly to this exact capture rule. The server records receipt time, not the original capture time. Independent evidence review is still required.','meta'),graphField('Capture evidence file',file),button('Submit captured evidence',async()=>{
-    const f=file.files[0];if(!f||f.size<1||f.size>262144)throw Error('Choose a supported file of 1–262144 bytes.');
-    const media=f.type==='image/png'?'image/png':f.type==='application/pdf'?'application/pdf':f.type==='text/plain'||f.name.toLowerCase().endsWith('.txt')?'text/plain; charset=utf-8':null;
-    if(!media)throw Error('Unsupported evidence format. Use a supported PNG, text or canonical PDF file.');
-    if(!confirm('Upload and link this file for independent review?'))return;
-    const bytes=await f.arrayBuffer();try{
+   const box=node('details'),file=node('input'),camera=node('input'),captureLink=node('a','Open or share authenticated capture link');
+   box.id='capture-'+[t.windowId,t.versionId,stage.revisionId].join('-');
+   captureLink.href=captureFragment(tenant.value,project.value,t.windowId,t.versionId,stage.revisionId);
+   file.type='file';file.accept='.txt,.png,.pdf';camera.type='file';camera.accept='image/jpeg,image/png,image/heic,image/heif';camera.setAttribute('capture','environment');
+   async function submitCapture(f,photo){
+    if(!f||f.size<1)throw Error('Choose a file first.');
+    let bytes,media;
+    try{
+     if(photo){
+      if(!confirm('Create a PNG photo derivative on this device? Original metadata is removed and resolution may be reduced. The original is not uploaded.'))return;
+      const d=await cameraDerivative(f);bytes=d.bytes;media='image/png';
+      if(!confirm('Submit derived PNG '+d.width+'×'+d.height+' pixels (original '+d.originalWidth+'×'+d.originalHeight+')? Confirm that the resulting image is suitable; independent review remains required.'))return;
+     }else{
+      if(f.size>262144)throw Error('Choose a supported file of 1–262144 bytes.');
+      media=f.type==='image/png'?'image/png':f.type==='application/pdf'?'application/pdf':f.type==='text/plain'||f.name.toLowerCase().endsWith('.txt')?'text/plain; charset=utf-8':null;
+      if(!media)throw Error('Unsupported evidence format. Use a supported PNG, text or canonical PDF file.');
+      if(!confirm('Upload and link this original file for independent review?'))return;bytes=await f.arrayBuffer();
+     }
      const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join(''),endpoint=base+'/evidence/capture/'+t.windowId+'/'+t.versionId+'/'+stage.revisionId,key=endpoint+':'+media+':'+digest;
-     await api(endpoint,{method:'POST',headers:{'Content-Type':media,'Idempotency-Key':retryId(key),'X-Evidence-SHA256':digest},body:bytes});attempts.delete(key);file.value='';await loadProject();say('Captured evidence submitted for independent review.');
-    }finally{new Uint8Array(bytes).fill(0);}
-   }));row.append(box);
+     await api(endpoint,{method:'POST',headers:{'Content-Type':media,'Idempotency-Key':retryId(key),'X-Evidence-SHA256':digest},body:bytes});attempts.delete(key);file.value='';camera.value='';await loadProject();say('Captured evidence submitted for independent review.');
+    }finally{if(bytes)new Uint8Array(bytes).fill(0);}
+   }
+   box.append(node('summary','Capture evidence'),captureLink,node('p','Upload original supported files or explicitly approve a derived camera PNG. Server receipt time is not original capture time. Keep originals where required.','meta'),graphField('Capture evidence file',file),button('Submit captured evidence',()=>submitCapture(file.files[0],false)),graphField('Take or choose photo',camera),button('Submit photo derivative',()=>submitCapture(camera.files[0],true)));row.append(box);
   }
   tasks.append(row);
  }
@@ -417,13 +476,15 @@ el('acceptInvite').addEventListener('submit',event=>{event.preventDefault();perf
  await api('/api/v1/tenants/'+tenantId+'/administration/invite-redeem',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({requestId,code})});
  input.value='';await reloadWorkspaces(tenantId);say('Invitation accepted.');
 });});
-async function reloadWorkspaces(preferredTenant,preferredProject){
+async function reloadWorkspaces(preferredTenant,preferredProject,strict=false){
  const data=await api('/api/v1/workspaces');tenantRows=data.items;tenant.replaceChildren();el('recipientPanel').hidden=false;el('invitationPanel').hidden=false;
  for(const t of data.items)if(uuid.test(t.id))namedOption(tenant,t.id,t.name);
+ if(strict&&!tenantRows.some(t=>t.id===preferredTenant)){clear();project.replaceChildren();tenant.selectedIndex=-1;el('tenantAdmin').hidden=true;el('creation').hidden=true;el('workspace').hidden=false;say('Capture link unavailable or permission denied.');return;}
  if(preferredTenant&&tenantRows.some(t=>t.id===preferredTenant))tenant.value=preferredTenant;
  el('workspace').hidden=false;
- selectionNames();if(tenant.options.length)await loadProjects(tenant.value===preferredTenant?preferredProject:undefined);
+ selectionNames();if(tenant.options.length)await loadProjects(tenant.value===preferredTenant?preferredProject:undefined,strict);
  else{clear();project.replaceChildren();el('tenantAdmin').hidden=true;el('creation').hidden=true;say('No accessible workspaces.');}
 }
-perform(()=>reloadWorkspaces());
+window.addEventListener('hashchange',()=>{if(location.hash.startsWith('#capture/'))perform(openCaptureLink);});
+perform(openCaptureLink);
 `;
