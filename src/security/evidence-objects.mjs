@@ -1,19 +1,24 @@
 import {createCipheriv,createDecipheriv,createHash,randomBytes,randomUUID,timingSafeEqual} from 'node:crypto';
+import {TYPES,validatePng,validatePdf} from './evidence-formats.mjs';
 import {Readable} from 'node:stream';
 import {createPrivateFileStore,isArtifactId} from './private-file-store.mjs';
 export const MAX_EVIDENCE_UPLOAD=256*1024;
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const keyId=/^[a-z][a-z0-9_-]{0,31}$/;
-function metadata(m){if(!m||![m.id,m.tenantId,m.projectId].every(isArtifactId)||!/^[a-f0-9]{64}$/.test(m.sha256)||!Number.isInteger(m.bytes)||m.bytes<1||m.bytes>MAX_EVIDENCE_UPLOAD||!keyId.test(m.keyId))throw Error('invalid evidence metadata');return Buffer.from(JSON.stringify(['vv-evidence-v1',m.id,m.tenantId,m.projectId,m.sha256,m.bytes,m.keyId]));}
+function metadata(m){if(!m||![m.id,m.tenantId,m.projectId].every(isArtifactId)||!/^[a-f0-9]{64}$/.test(m.sha256)||!Number.isInteger(m.bytes)||m.bytes<1||m.bytes>MAX_EVIDENCE_UPLOAD||!keyId.test(m.keyId))throw Error('invalid evidence metadata');const type=m.mediaType??TYPES[0];if(!TYPES.includes(type))throw Error('invalid evidence type');return Buffer.from(JSON.stringify(type===TYPES[0]?['vv-evidence-v1',m.id,m.tenantId,m.projectId,m.sha256,m.bytes,m.keyId]:['vv-evidence-v2',m.id,m.tenantId,m.projectId,m.sha256,m.bytes,m.keyId,type]));}
 export function validateTextEvidence(data){
  if(!Buffer.isBuffer(data)||data.length<1||data.length>MAX_EVIDENCE_UPLOAD)throw Error('invalid evidence size');
  const text=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(data);
  if(!text.trim()||/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/u.test(text)||text.charCodeAt(0)===0xfeff)throw Error('invalid evidence text');
  return data;
 }
-export function sealEvidence(data,{tenantId,projectId,id=randomUUID(),key,keyId}){
- validateTextEvidence(data);if(!Buffer.isBuffer(key)||key.length!==32)throw Error('invalid evidence key');
- const m={id,tenantId,projectId,sha256:hash(data),bytes:data.length,keyId},nonce=randomBytes(12);
+export function validateEvidence(data,mediaType=TYPES[0]){
+ if(!Buffer.isBuffer(data)||data.length<1||data.length>MAX_EVIDENCE_UPLOAD||!TYPES.includes(mediaType))throw Error('invalid evidence format');
+ return mediaType===TYPES[0]?validateTextEvidence(data):mediaType==='image/png'?validatePng(data):validatePdf(data);
+}
+export function sealEvidence(data,{tenantId,projectId,id=randomUUID(),key,keyId,mediaType=TYPES[0]}){
+ validateEvidence(data,mediaType);if(!Buffer.isBuffer(key)||key.length!==32)throw Error('invalid evidence key');
+ const m={id,tenantId,projectId,sha256:hash(data),bytes:data.length,keyId,mediaType},nonce=randomBytes(12);
  const cipher=createCipheriv('aes-256-gcm',key,nonce);cipher.setAAD(metadata(m));
  const envelope=Buffer.concat([nonce,cipher.update(data),cipher.final(),cipher.getAuthTag()]);
  return {...m,envelope,cipherDigest:hash(envelope)};
@@ -33,11 +38,11 @@ export function createEvidenceRecoverySource({client,sourceRoot,readKey}){
  return async function source(id,{signal,maxBytes}){
   signal.throwIfAborted();
   if(!isArtifactId(id))throw Error('invalid evidence ID');
-  const r=await client.query("SELECT e.storage_ref,e.tenant_id,e.project_id,e.sha256 AS expected_hash,o.evidence_id,o.tenant_id AS object_tenant,o.project_id AS object_project,o.sha256,o.bytes,o.key_id,o.envelope,encode(o.cipher_digest,'hex') AS cipher_digest FROM verivaro.evidence e LEFT JOIN verivaro_private.evidence_objects o ON o.evidence_id=e.id WHERE e.id=$1",[id]);
+  const r=await client.query("SELECT e.storage_ref,e.tenant_id,e.project_id,e.sha256 AS expected_hash,o.evidence_id,o.tenant_id AS object_tenant,o.project_id AS object_project,o.sha256,o.bytes,o.key_id,o.media_type,o.envelope,encode(o.cipher_digest,'hex') AS cipher_digest FROM verivaro.evidence e LEFT JOIN verivaro_private.evidence_objects o ON o.evidence_id=e.id WHERE e.id=$1",[id]);
   const row=r.rows[0];
   if(!row||row.storage_ref!=='db-encrypted-v1'){if(row?.evidence_id)throw Error('inconsistent evidence storage');return legacy(id,{signal,maxBytes});}
   if(row.evidence_id!==id||row.tenant_id!==row.object_tenant||row.project_id!==row.object_project||row.sha256!==row.expected_hash||row.bytes>maxBytes)throw Error('inconsistent evidence storage');
-  const clear=openEvidence({id,tenantId:row.tenant_id,projectId:row.project_id,sha256:row.sha256,bytes:row.bytes,keyId:row.key_id,envelope:row.envelope,cipherDigest:row.cipher_digest},await readKey(row.key_id));
+  const clear=openEvidence({id,tenantId:row.tenant_id,projectId:row.project_id,sha256:row.sha256,bytes:row.bytes,keyId:row.key_id,mediaType:row.media_type,envelope:row.envelope,cipherDigest:row.cipher_digest},await readKey(row.key_id));
   // Stream the verified bytes directly into the encrypted backup writer.
   const stream=Readable.from([clear]);stream.once('close',()=>clear.fill(0));return stream;
  };

@@ -37,7 +37,7 @@ BEGIN
   FOR p IN SELECT pr.oid,pr.proname,n.nspname FROM pg_proc pr JOIN pg_namespace n ON n.oid=pr.pronamespace
    WHERE n.nspname IN ('verivaro_identity','verivaro_sharing','verivaro_admission','verivaro_monitor','verivaro_alerting','verivaro_recovery','verivaro_mutation','verivaro_ingestion') LOOP
    IF has_function_privilege(r.oid,p.oid,'EXECUTE') AND NOT (
-    (r.rolname='verivaro_evidence_ingestor' AND p.nspname='verivaro_ingestion' AND p.proname IN ('authorize_upload','commit_upload')) OR
+    (r.rolname='verivaro_evidence_ingestor' AND p.nspname='verivaro_ingestion' AND p.proname IN ('authorize_upload','commit_upload_v2')) OR
     (r.rolname='verivaro_runtime' AND p.nspname='verivaro_mutation' AND p.proname='rename_project') OR
     (r.rolname='verivaro_runtime' AND p.nspname='verivaro_sharing' AND p.proname IN ('issue_share','issue_recipient_share','revoke_share')) OR
     (r.rolname='verivaro_identity_service' AND p.nspname='verivaro_identity' AND p.proname IN ('begin_login','redeem_login','revoke_session','store_browser_flow','take_browser_flow','store_browser_session','read_browser_session','logout_browser','logout_all_browser','record_auth')) OR

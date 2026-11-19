@@ -1,6 +1,6 @@
 import {assertServiceLogin,validateServiceIdentity} from './service-login.mjs';
 import {signDatabaseContext} from './sign-database-context.mjs';
-import {validateTextEvidence,sealEvidence,openEvidence} from './evidence-objects.mjs';
+import {validateEvidence,sealEvidence,openEvidence} from './evidence-objects.mjs';
 const role='verivaro_evidence_ingestor';
 export class IngestionDenied extends Error{}
 export class IngestionConflict extends Error{}
@@ -29,21 +29,21 @@ export function createIngestionDatabase(pool,{expectedLogin,verifier,contextKey}
  }
  return Object.freeze({
   async authorize({token,tenantId,projectId}){return (await run(token,tenantId,'SELECT verivaro_ingestion.authorize_upload($1,$2) AS ok',[tenantId,projectId])).ok===true;},
-  async commit({token,tenantId,projectId,requestId,object}){return run(token,tenantId,'SELECT * FROM verivaro_ingestion.commit_upload($1,$2,$3,$4,$5,$6,$7,$8)',[tenantId,projectId,requestId,object.id,object.sha256,object.bytes,object.keyId,object.envelope]);}
+  async commit({token,tenantId,projectId,requestId,object}){return run(token,tenantId,'SELECT * FROM verivaro_ingestion.commit_upload_v2($1,$2,$3,$4,$5,$6,$7,$8,$9)',[tenantId,projectId,requestId,object.id,object.sha256,object.bytes,object.keyId,object.envelope,object.mediaType]);}
  });
 }
 export function createEvidenceIngestion({db,scan,key,keyId,maxConcurrent=4}){
  if(typeof db?.authorize!=='function'||typeof db?.commit!=='function'||typeof scan!=='function'||!Buffer.isBuffer(key)||key.length!==32||!/^[a-z][a-z0-9_-]{0,31}$/.test(keyId)||!Number.isInteger(maxConcurrent)||maxConcurrent<1||maxConcurrent>8)throw Error('invalid evidence ingestion');
  const secret=Buffer.from(key);let active=0;
- return async function ingest({data,token,tenantId,projectId,requestId,signal}){
+ return async function ingest({data,token,tenantId,projectId,requestId,signal,mediaType='text/plain; charset=utf-8'}){
   if(active>=maxConcurrent)throw Error('ingestion busy');active++;
   let clear,object;
   try{
    signal.throwIfAborted();
-   try{validateTextEvidence(data);}catch{throw new IngestionRejected('invalid evidence');}
+   try{validateEvidence(data,mediaType);}catch{throw new IngestionRejected('invalid evidence');}
    if(!await db.authorize({token,tenantId,projectId}))throw new IngestionDenied('ingestion denied');
    // Quarantined only in memory; no named plaintext file or rejected payload retained.
-   object=sealEvidence(data,{tenantId,projectId,key:secret,keyId});
+   object=sealEvidence(data,{tenantId,projectId,key:secret,keyId,mediaType});
    clear=openEvidence(object,secret);
    const verdict=await scan(clear,signal);
    if(verdict==='infected')throw new IngestionRejected('evidence rejected');

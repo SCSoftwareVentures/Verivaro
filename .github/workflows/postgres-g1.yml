@@ -142,6 +142,7 @@ jobs:
           echo "::add-mask::$VV_INGEST_PASSWORD"
           export VV_INGEST_PASSWORD
           psql -X -v ON_ERROR_STOP=1 -f db/tests/ingestion_login.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0022_evidence_formats_quotas.sql
           VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-evidence-ingestion.test.mjs
           psql -X -v ON_ERROR_STOP=1 -f db/tests/full_security_gate.sql
           # Real encrypted logical backup and isolated recovery; no artifacts uploaded.

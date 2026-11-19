@@ -38,7 +38,7 @@ test('real encrypted evidence registration, required scan, permissions, immutabl
   fixture.setVerdict('clean');const results=await Promise.all(Array.from({length:4},()=>ingest(input)));
   assert.ok(results.every(r=>r.id===results[0].id));const {id,sha256,bytes}=results[0];assert.equal(sha256,createHash('sha256').update(input.data).digest('hex'));assert.equal(bytes,input.data.length);
   const r=(await admin.query("SELECT *,encode(cipher_digest,'hex') AS cipher_hex FROM verivaro_private.evidence_objects WHERE evidence_id=$1",[id])).rows[0];
-  assert.equal(r.scan_policy,'clamd-instream-text-v1');assert.equal(r.actor_id,principals.contributor.actor);
+  assert.equal(r.scan_policy,'clamd-instream-format-v2');assert.equal(r.actor_id,principals.contributor.actor);
   assert.deepEqual(openEvidence({id,tenantId:tenant,projectId:project,sha256,bytes,keyId:r.key_id,envelope:r.envelope,cipherDigest:r.cipher_hex},key),input.data);
   const source=createEvidenceRecoverySource({client:admin,sourceRoot:dir,readKey:async k=>{assert.equal(k,'fixture');return key;}});
   const stream=await source(id,{signal:input.signal,maxBytes:262144});const parts=[];for await(const b of stream)parts.push(Buffer.from(b));assert.deepEqual(Buffer.concat(parts),input.data);

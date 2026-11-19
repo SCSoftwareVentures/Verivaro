@@ -1,5 +1,6 @@
 import {createHash} from 'node:crypto';
 import {verifyIdentityToken} from './verify-identity.mjs';
+import {TYPES} from './evidence-formats.mjs';
 import {MAX_EVIDENCE_UPLOAD} from './evidence-objects.mjs';
 import {IngestionDenied,IngestionConflict,IngestionRejected} from './evidence-ingestion.mjs';
 const id='([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})',route=new RegExp('^/api/v1/tenants/'+id+'/projects/'+id+'/evidence$');
@@ -14,7 +15,7 @@ const failure=(res,status,extra)=>reply(res,status,{error:status===401?'authenti
 function safeHeaders(req,origin){
  const h=req.headers,seen=new Set(),critical=new Set(['host','origin','cookie','authorization','content-length','transfer-encoding','content-encoding','content-type','idempotency-key','x-evidence-sha256','expect','sec-fetch-site']);
  for(let i=0;i<req.rawHeaders.length;i+=2){const k=req.rawHeaders[i].toLowerCase();if(critical.has(k)&&seen.has(k))return false;seen.add(k);}
- return h.host===origin.host&&h.authorization===undefined&&h['transfer-encoding']===undefined&&h['content-encoding']===undefined&&h.expect===undefined&&h['content-type']==='text/plain; charset=utf-8'&&
+ return h.host===origin.host&&h.authorization===undefined&&h['transfer-encoding']===undefined&&h['content-encoding']===undefined&&h.expect===undefined&&TYPES.includes(h['content-type'])&&
  /^[1-9][0-9]{0,5}$/.test(h['content-length']??'')&&Number(h['content-length'])<=MAX_EVIDENCE_UPLOAD&&uuid.test(h['idempotency-key']??'')&&/^[a-f0-9]{64}$/.test(h['x-evidence-sha256']??'');
 }
 export function createEvidenceUploadHandler({origin,verifier,admission,resolveSession,ingest,maxConcurrent=4}){
@@ -45,7 +46,7 @@ export function createEvidenceUploadHandler({origin,verifier,admission,resolveSe
    data=Buffer.concat(chunks);
    if(createHash('sha256').update(data).digest('hex')!==req.headers['x-evidence-sha256'])return failure(res,422);
    const [,tenantId,projectId]=route.exec(req.url);
-   const result=await ingest({token,tenantId,projectId,requestId:req.headers['idempotency-key'],data,signal:controller.signal});
+   const result=await ingest({token,tenantId,projectId,requestId:req.headers['idempotency-key'],data,mediaType:req.headers['content-type'],signal:controller.signal});
    return reply(res,200,{evidence:{id:result.id,sha256:result.sha256,bytes:result.bytes}});
   }catch(e){return failure(res,e instanceof IngestionDenied?404:e instanceof IngestionConflict?409:e instanceof IngestionRejected?422:503);}
   finally{clearTimeout(timer);res.removeListener('close',abort);data?.fill(0);for(const chunk of chunks)chunk.fill(0);active--;}
