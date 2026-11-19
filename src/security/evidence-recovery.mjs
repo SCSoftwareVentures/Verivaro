@@ -1,9 +1,7 @@
 import {createHash,sign,verify,randomUUID,createPrivateKey,createPublicKey} from 'node:crypto';
-import {open,mkdtemp,rename,rm,stat,writeFile} from 'node:fs/promises';
+import {open,mkdtemp,rename,rm,stat} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {join,isAbsolute} from 'node:path';
-import {Readable} from 'node:stream';
-import {pipeline} from 'node:stream/promises';
 import {createEncryptedBackup,verifyAndStageBackup} from './encrypted-database-backup.mjs';
 import {createPrivateFileStore,isArtifactId} from './private-file-store.mjs';
 const LIMIT=4096,MAX_TOTAL=2*1024*1024*1024,MAX_MANIFEST=2*1024*1024;
@@ -92,7 +90,7 @@ export async function restoreEvidenceBackup({path,destinationRoot,spoolDirectory
     const output=await open(join(stage,item.id),constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,0o600);
     try{
      // Explicit positionless writes; sync before publishing the private directory.
-     for await(const block of s.read()){let offset=0;while(offset<block.length){const r=await output.write(block,offset,block.length-offset,null);if(!r.bytesWritten)throw Error('short restore write');offset+=r.bytesWritten;}}
+     for await(const block of s.read()){let offset=0;while(offset<block.length){cfg.signal.throwIfAborted();const r=await output.write(block,offset,block.length-offset,null);if(!r.bytesWritten)throw Error('short restore write');offset+=r.bytesWritten;}}
      await output.sync();
     }finally{await output.close();}
    }finally{await s.close();}
@@ -101,4 +99,10 @@ export async function restoreEvidenceBackup({path,destinationRoot,spoolDirectory
   const restoredPath=join(destinationRoot,'recovered-'+randomUUID());await rename(stage,restoredPath);published=true;await syncDir(destinationRoot);
   return Object.freeze({path:restoredPath,backupId:databaseBackup.backupId,catalogSha256:checkpoint.catalogSha256,sequence:checkpoint.sequence,objects:expected.length,bytes:total,inventorySha256:digest(canonical(expected))});
  }finally{if(!published)await rm(stage,{recursive:true,force:true});}
+}
+// Run only through a trusted backup/recovery administrator on a frozen snapshot.
+// Query result is bounded before loading all rows. Never interpret storage_ref.
+export async function readRecoveryInventory(client){
+ const result=await client.query("SELECT id,sha256 FROM (SELECT id,sha256 FROM verivaro.evidence UNION ALL SELECT artifact_id AS id,sha256 FROM verivaro_private.released_exports) AS items ORDER BY id LIMIT 4097");
+ return normalizeRecoveryInventory(result.rows);
 }

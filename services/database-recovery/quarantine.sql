@@ -35,4 +35,47 @@ UPDATE verivaro_private.alert_outbox SET state='dead',claim_id=NULL,claimed_by=N
 UPDATE verivaro_private.monitor_state SET evaluated_at=NULL;
 -- Explicitly remove the test-only signer if present; production never uses it.
 DROP FUNCTION IF EXISTS verivaro_private.ci_sign(uuid,uuid,integer,text,integer);
+
+CREATE TABLE verivaro_private.restoration_reviews(
+ reviewer_login name PRIMARY KEY DEFAULT session_user,
+ backup_id uuid NOT NULL, catalogue_sha256 text NOT NULL CHECK(catalogue_sha256 ~ '^[0-9a-f]{64}$'),
+ inventory_sha256 text NOT NULL CHECK(inventory_sha256 ~ '^[0-9a-f]{64}$'),
+ case_ref uuid NOT NULL UNIQUE,
+ reviewed_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE TRIGGER restoration_reviews_immutable BEFORE UPDATE OR DELETE OR TRUNCATE
+ ON verivaro_private.restoration_reviews FOR EACH STATEMENT EXECUTE FUNCTION verivaro_private.identity_event_immutable();
+REVOKE ALL ON verivaro_private.restoration_reviews FROM PUBLIC;
+-- Approval attests to external review; the DB cannot prove the review or the
+-- filesystem. A trusted administrator records the verified evidence receipt.
+CREATE TABLE verivaro_private.restoration_evidence_receipt(
+ singleton boolean PRIMARY KEY DEFAULT true CHECK(singleton),
+ backup_id uuid NOT NULL, catalogue_sha256 text NOT NULL CHECK(catalogue_sha256 ~ '^[0-9a-f]{64}$'),
+ inventory_sha256 text NOT NULL CHECK(inventory_sha256 ~ '^[0-9a-f]{64}$'),
+ verified_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE TRIGGER restoration_receipt_immutable BEFORE UPDATE OR DELETE OR TRUNCATE
+ ON verivaro_private.restoration_evidence_receipt FOR EACH STATEMENT EXECUTE FUNCTION verivaro_private.identity_event_immutable();
+REVOKE ALL ON verivaro_private.restoration_evidence_receipt FROM PUBLIC;
+CREATE FUNCTION verivaro_recovery.attest_review(b uuid,c text,h text,r uuid) RETURNS boolean
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,verivaro_private AS $review$
+BEGIN
+ IF r IS NULL OR NOT EXISTS(SELECT 1 FROM verivaro_private.restore_quarantine q
+ JOIN verivaro_private.restoration_evidence_receipt e ON e.backup_id=q.backup_id
+ WHERE q.backup_id=b AND e.catalogue_sha256=c AND e.inventory_sha256=h)
+ THEN RETURN false; END IF;
+ INSERT INTO verivaro_private.restoration_reviews(backup_id,catalogue_sha256,inventory_sha256,case_ref)
+ VALUES(b,c,h,r) ON CONFLICT(reviewer_login) DO NOTHING;
+ RETURN FOUND;
+END $review$;
+CREATE FUNCTION verivaro_recovery.review_status() RETURNS TABLE(review_count bigint,review_ready boolean)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,verivaro_private AS $status$
+ SELECT count(*),count(*)>=2 FROM verivaro_private.restoration_reviews v
+ JOIN verivaro_private.restoration_evidence_receipt e ON e.backup_id=v.backup_id AND e.catalogue_sha256=v.catalogue_sha256 AND e.inventory_sha256=v.inventory_sha256
+ JOIN pg_catalog.pg_roles p ON p.rolname=v.reviewer_login
+ WHERE p.rolcanlogin AND NOT p.rolsuper AND pg_has_role(p.oid,'verivaro_restore_reviewer','MEMBER')
+$status$;
+REVOKE ALL ON FUNCTION verivaro_recovery.attest_review(uuid,text,text,uuid),verivaro_recovery.review_status() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION verivaro_recovery.attest_review(uuid,text,text,uuid),verivaro_recovery.review_status() TO verivaro_restore_reviewer;
+
 COMMIT;

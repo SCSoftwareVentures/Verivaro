@@ -110,6 +110,7 @@ jobs:
           export VV_ALERT_A_PASSWORD VV_ALERT_B_PASSWORD
           psql -X -v ON_ERROR_STOP=1 -f db/tests/alert_logins.sql
           VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-alert-outbox.test.mjs
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0015_restore_review.sql
           # Real encrypted logical backup and isolated recovery; no artifacts uploaded.
           backup_root="$(mktemp -d)"
           trap 'rm -rf "$backup_root"' EXIT
@@ -137,3 +138,4 @@ jobs:
             test "$source_hash" = "$restored_hash"
           done
           echo "isolated_restore_content_and_security_gate_passed"
+          VV_CI_BACKUP_PATH="$backup_path" VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-evidence-recovery.test.mjs
