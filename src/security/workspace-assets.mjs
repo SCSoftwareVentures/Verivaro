@@ -79,7 +79,7 @@ function graphChoice(options,selected){const s=node('select');for(const [v,t] of
 const graphApplicability=[['unknown','Unknown'],['required','Required'],['optional','Optional'],['not_applicable','Not applicable']];
 function graphReview(row,action,idKey,idValue,choices){
  const s=graphChoice(choices),reason=node('textarea'),a=node('div',undefined,'graph-controls');reason.rows=2;reason.maxLength=512;
- a.append(graphField('Decision',s),graphField('Review reason',reason),button('Record '+(action==='rule-review'?'rule review':'evidence assessment'),async()=>{
+ a.append(graphField('Decision',s),graphField('Review reason',reason),button('Record '+(action==='rule-review'?'rule review':action==='dependency-review'?'dependency review':'evidence assessment'),async()=>{
   const why=reason.value.trim();if(!why)throw Error('Provide a review reason.');if(!confirm('Record this immutable review decision?'))return;
   await graphPost(action,{[idKey]:idValue,decision:s.value,reason:why});await loadProject();
  }));row.append(a);
@@ -115,6 +115,13 @@ async function loadSubmissions(g){
    }));}
    if(s.canAuthorize)panel.append(button('Authorize package download',async()=>{if(!confirm('Authorize this exact reviewed package for internal download?'))return;await graphPost('submission-authorize',args);await loadProject();}));
   }));
+  row.append(button('Compare current requirements',async()=>{
+   const diff=await api(base+'/verification/submission-impact',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({submissionId:s.id})});
+   if(diff.baselineSha256!==s.sha256)throw Error('Snapshot mismatch.');
+   panel.replaceChildren(node('p',diff.changedCount+' changed · '+diff.unchangedCount+' unchanged · '+diff.currentBlockers+' current blockers'));
+   for(const change of diff.changes){const a=node('a',change.requirementId);a.href='#requirement-'+change.requirementId;panel.append(a,node('p',change.reasons.map(x=>x.replaceAll('_',' ')).join(' · ')));}
+   panel.append(node('p',diff.scope,'meta'));
+  }));
   if(s.canDownload&&listing.downloadEnabled)row.append(button('Download authorized package',async()=>{
    const response=await fetch(base+'/verification/submission-download',{method:'POST',credentials:'same-origin',cache:'no-store',redirect:'error',headers:{'Content-Type':'application/json'},body:JSON.stringify({submissionId:s.id,sha256:s.sha256})});
    if(!response.ok)throw Error(messages[response.status]||'Package unavailable.');
@@ -141,6 +148,24 @@ async function loadGraph(){
   const row=node('article',undefined,'item');row.id='requirement-'+q.requirementId;row.append(node('h3',q.title),node('p',q.criterion),node('p','Revision '+q.revision+' | '+q.applicability+' | Rule '+q.ruleDecision,'meta'),node('p',q.state.replaceAll('_',' '),'state'));
   if(q.source){row.append(node('p','Source: '+q.source.evidenceId+' | '+(q.source.page?'Page '+q.source.page+' | ':'')+'Line '+q.source.line,'meta'),node('p','Source SHA-256: '+q.source.sha256,'meta'),node('p','Quote SHA-256: '+q.source.quoteSha256,'meta'),link('Download source document',base+'/evidence/'+q.source.evidenceId+'/download'));}
   if(q.ruleReason)row.append(node('p','Rule review: '+q.ruleReason));
+  const pins=q.dependencyPins??[];
+  for(const pin of pins){
+   const parent=g.requirements.find(x=>x.requirementId===pin.prerequisiteId),box=node('div',undefined,'graph-link');
+   const label=node('a',parent?.title??'Prerequisite');label.href='#requirement-'+pin.prerequisiteId;
+   box.append(node('strong','Prerequisite: '),label,node('p','Decision: '+pin.decision+' | Current state: '+pin.prerequisiteState.replaceAll('_',' '),'meta'),node('p',pin.pinnedFingerprint===pin.currentFingerprint?'Exact prerequisite pin matches.':'Prerequisite changed — fresh review required.','state'));
+   if(pin.reason)box.append(node('p',pin.reason));
+   if(g.dependencyManagementEnabled&&!g.archived&&data.tenantRole==='reviewer'&&data.projectRole==='reviewer'&&pin.decision==='pending')graphReview(box,'dependency-review','edgeId',pin.edgeId,[['rejected','Reject'],['approved','Approve']]);
+   row.append(box);
+  }
+  const prerequisites=g.requirements.filter(x=>x.requirementId!==q.requirementId&&x.state==='satisfied'&&!pins.some(p=>p.prerequisiteId===x.requirementId));
+  if(g.dependencyManagementEnabled&&g.canWrite&&q.ruleDecision==='pending'&&['required','optional'].includes(q.applicability)&&pins.length<8&&prerequisites.length){
+   const choice=graphChoice(prerequisites.map(x=>[x.requirementId,x.title+' · '+x.requirementId.slice(-8)])),box=node('div',undefined,'graph-controls');
+   box.append(graphField('Satisfied prerequisite',choice),button('Propose dependency',async()=>{
+    if(!prerequisites.some(x=>x.requirementId===choice.value)||!confirm('Pin this exact prerequisite assessment? An independent reviewer must approve the dependency.'))return;
+    const key=base+':dependency:'+q.versionId+':'+choice.value;
+    await graphPost('dependency-propose',{versionId:q.versionId,edgeId:retryId(key),prerequisiteId:choice.value});attempts.delete(key);await loadProject();say('Dependency proposed.');
+   }));row.append(box);
+  }
   if(q.canReview)graphReview(row,'rule-review','versionId',q.versionId,[['rejected','Reject'],['approved','Approve']]);
   if(q.canRevise){const box=node('details'),title=node('input'),criterion=node('textarea'),app=graphChoice(graphApplicability,q.applicability);title.value=q.title;title.maxLength=128;criterion.value=q.criterion;criterion.maxLength=1024;criterion.rows=3;
    box.append(node('summary','Draft new revision'),graphField('Requirement title',title),graphField('Verification criterion',criterion),graphField('Applicability',app),button('Save new revision',async()=>{

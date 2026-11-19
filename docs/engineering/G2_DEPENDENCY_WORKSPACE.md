@@ -1,0 +1,5 @@
+# Dependency management workspace
+
+The authenticated graph API exposes strict same-origin POST dependency-propose (versionId, edgeId, prerequisiteId) and dependency-review (edgeId, decision, reason). Existing PostgreSQL policies calculate exact pins, enforce current membership and independent review, reject invalid scopes and cycles, and block stale packages. No browser-supplied fingerprint, actor or authority is accepted. Workspace shows prerequisite titles, review and pin freshness, conditional proposal and reviewer controls, and historical submission impact comparison. Review controls are role-based hints only: self-review still fails at the authoritative DB boundary. Archived projects cannot mutate. Real HTTP integration and Chromium/WebKit fixture checks cover the new controls; no tests are skipped.
+
+Controlled removal or exemptions, precisely actor-specific reviewer UI hints, explicit source/evidence supersession, deadlines, and incremental database caching remain separate priorities. No changes to main or production deployment.

@@ -323,6 +323,27 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   assert.ok(preflight.issues.some(x=>x.code==='RULE_REVIEW_REQUIRED'&&x.requirementId===rule.requirementId));
   assert.ok(preflight.limitations.some(x=>x.includes('not release authorization')));
   console.log('https_rejection_preflight_gate_passed');
+  // Exercise actual HTTPS dependency routes with authenticated scoped sessions.
+  assert.equal((await g('rule-review',{versionId:graphRevision.versionId,decision:'approved',reason:'Updated criterion confirmed'},reviewer)).status,200);
+  const rootLink={...edge,versionId:graphRevision.versionId,linkId:randomUUID()};
+  assert.equal((await g('link',rootLink)).status,200);
+  assert.equal((await g('link-review',{linkId:rootLink.linkId,decision:'pass',reason:'Fresh assessment'},reviewer)).status,200);
+  const child={...rule,requirementId:randomUUID(),versionId:randomUUID(),title:'Dependent criterion'};
+  assert.equal((await g('requirement',child)).status,200);
+  const dependency={versionId:child.versionId,edgeId:randomUUID(),prerequisiteId:rule.requirementId};
+  assert.equal((await g('dependency-propose',{...dependency,pinnedFingerprint:'0'.repeat(64)})).status,400);
+  assert.equal((await g('dependency-propose',dependency,contributor)).status,404);
+  assert.equal((await g('dependency-propose',{...dependency,prerequisiteId:child.requirementId})).status,404);
+  assert.equal((await g('dependency-propose',dependency)).status,200);
+  assert.equal((await g('dependency-propose',dependency)).status,200);
+  const pending=await getGraph();assert.equal(pending.dependencyManagementEnabled,true);
+  assert.equal(pending.requirements.find(x=>x.requirementId===child.requirementId).dependencyPins[0].decision,'pending');
+  const depReview={edgeId:dependency.edgeId,decision:'approved',reason:'Reviewed exact prerequisite'};
+  assert.equal((await g('dependency-review',depReview)).status,404);
+  assert.equal((await g('dependency-review',depReview,reviewer)).status,200);
+  assert.equal((await getGraph()).requirements.find(x=>x.requirementId===child.requirementId).dependencyPins[0].decision,'approved');
+  assert.equal((await g('submission-impact',{submissionId:packageId})).status,200);
+  console.log('https_dependency_management_gate_passed');
   assert.equal((await request('/auth/logout-all',{method:'POST',headers:{origin,cookie:session}})).status,204);
   assert.equal((await request(route,{headers:{cookie:session}})).status,401);
   await app.stop();assert.equal(app.server.listening,false);
