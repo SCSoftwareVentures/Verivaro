@@ -23,13 +23,18 @@ export function createEvidenceReleaseDatabase(pool,{expectedLogin,verifier,conte
    await c.query("SELECT set_config('verivaro.signed_context',$1,true)",[signDatabaseContext({token,tenantId,challenge},{verifier,key})]);
    const r=await c.query(sql,values);if(r.rows.length!==1)throw Error('invalid release result');
    await c.query('COMMIT');tx=false;await c.query('DISCARD ALL');clean=true;return r.rows[0];
-  }catch(e){if(tx)try{await c.query('ROLLBACK');}catch{}
+  }catch(e){if(tx&&e.message!=='Query read timeout')try{await c.query('ROLLBACK');}catch{}
    if(e.code==='42501')throw new ReleaseDenied('release denied');
    if(e.code==='23505')throw new ReleaseConflict('release conflict');
    throw Error('release unavailable');
   }finally{c.release(clean?undefined:new Error('discard release connection'));}
  }
  if(mode==='workflow')return Object.freeze({
+  async writeRequirement({token,tenantId,projectId,requirementId,versionId,expectedRevision,title,criterion,applicability}){return (await run(token,tenantId,'SELECT verivaro_verification.write_requirement($1,$2,$3,$4,$5,$6,$7,$8) AS data',[tenantId,projectId,requirementId,versionId,expectedRevision,title,criterion,applicability])).data;},
+  async reviewRequirement({token,tenantId,projectId,versionId,decision,reason}){return (await run(token,tenantId,'SELECT verivaro_verification.review_requirement($1,$2,$3,$4,$5) AS ok',[tenantId,projectId,versionId,decision,reason])).ok===true;},
+  async linkEvidence({token,tenantId,projectId,versionId,linkId,evidenceId,sha256}){return (await run(token,tenantId,'SELECT verivaro_verification.link_evidence($1,$2,$3,$4,$5,$6) AS id',[tenantId,projectId,versionId,linkId,evidenceId,sha256])).id;},
+  async reviewLink({token,tenantId,projectId,linkId,decision,reason}){return (await run(token,tenantId,'SELECT verivaro_verification.review_link($1,$2,$3,$4,$5) AS ok',[tenantId,projectId,linkId,decision,reason])).ok===true;},
+  async assessment({token,tenantId,projectId}){return (await run(token,tenantId,'SELECT verivaro_verification.assessment($1,$2) AS data',[tenantId,projectId])).data;},
   async archiveProject({token,tenantId,projectId,requestId,revision}){return (await run(token,tenantId,'SELECT verivaro_mutation.archive_project($1,$2,$3,$4) AS data',[tenantId,projectId,requestId,revision])).data;},
   async report({token,tenantId,projectId}){return (await run(token,tenantId,'SELECT verivaro_mutation.project_report($1,$2) AS data',[tenantId,projectId])).data;},
   async createProject({token,tenantId,requestId,name}){return (await run(token,tenantId,'SELECT verivaro_mutation.create_project($1,$2,$3) AS id',[tenantId,requestId,name])).id;},
