@@ -2,7 +2,7 @@ import {createPublicKey,verify,createHash} from 'node:crypto';
 const opaque=x=>typeof x==='string'&&/^[A-Za-z0-9_-]{43}$/.test(x)&&Buffer.from(x,'base64url').toString('base64url')===x;
 export const digestOpaque=x=>{if(!opaque(x))throw Error('invalid login challenge');return createHash('sha256').update(Buffer.from(x,'base64url')).digest();};
 export const digestSubject=x=>{if(typeof x!=='string'||!/^[\x21-\x7e]{1,255}$/.test(x))throw Error('invalid provider subject');return createHash('sha256').update(x,'utf8').digest();};
-function decode(part){
+export function decodeStrictJson(part){
  if(typeof part!=='string'||part.length>16384||!/^[A-Za-z0-9_-]+$/.test(part))throw Error('invalid token encoding');
  const raw=Buffer.from(part,'base64url'),json=raw.toString('utf8');
  if(raw.toString('base64url')!==part||!Buffer.from(json).equals(raw))throw Error('invalid token encoding');
@@ -46,10 +46,10 @@ export function createProviderVerifier({issuer,audience,keys,requiredAcr,require
  return Object.freeze({issuer,audience,verify(token,now=Math.floor(Date.now()/1000)){
   if(typeof token!=='string'||token.length>32768||!Number.isSafeInteger(now))throw Error('invalid provider token');
   const parts=token.split('.');if(parts.length!==3)throw Error('invalid provider token');
-  const [h,p,s]=parts,header=decode(h);
+  const [h,p,s]=parts,header=decodeStrictJson(h);
   if(header.alg!=='RS256'||(header.typ!==undefined&&header.typ!=='JWT')||Object.keys(header).some(k=>!['alg','typ','kid'].includes(k))||!pinned.has(header.kid))throw Error('unsupported provider header');
   const signature=Buffer.from(s,'base64url');if(!s||signature.toString('base64url')!==s||!verify('RSA-SHA256',Buffer.from(h+'.'+p),pinned.get(header.kid),signature))throw Error('invalid provider signature');
-  const c=decode(p);
+  const c=decodeStrictJson(p);
   if(c.iss!==issuer||!(c.aud===audience||Array.isArray(c.aud)&&c.aud.length===1&&c.aud[0]===audience)||(c.azp!==undefined&&c.azp!==audience)||
   !opaque(c.nonce)||c.acr!==requiredAcr||!Array.isArray(c.amr)||c.amr.length>16||c.amr.some(x=>typeof x!=='string')||!mfa.every(x=>c.amr.includes(x))||
   ![c.iat,c.exp,c.auth_time].every(Number.isSafeInteger)||c.iat>now||c.exp<=now||c.exp<=c.iat||c.exp-c.iat>600||c.auth_time>c.iat||now-c.auth_time>240||

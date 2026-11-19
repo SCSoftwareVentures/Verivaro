@@ -18,7 +18,7 @@ BEGIN
   FOR t IN SELECT c.oid,c.relname,c.relowner,n.nspname,c.relrowsecurity,c.relforcerowsecurity FROM pg_class c
    JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname LIKE 'verivaro%' AND c.relkind IN ('r','p','v','m') LOOP
    IF pg_has_role(r.oid,t.relowner,'MEMBER') OR has_table_privilege(r.oid,t.oid,'UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
-   OR (has_table_privilege(r.oid,t.oid,'INSERT') AND NOT(r.rolname='verivaro_runtime' AND t.nspname='verivaro' AND t.relname='evidence'))
+   OR has_table_privilege(r.oid,t.oid,'INSERT')
    OR (has_table_privilege(r.oid,t.oid,'SELECT') AND NOT(r.rolname='verivaro_runtime' AND t.nspname='verivaro' AND t.relname IN ('tenants','projects','memberships','project_members','evidence')))
    THEN RAISE EXCEPTION 'unexpected table privilege: % %.%',r.rolname,t.nspname,t.relname; END IF;
    IF t.nspname='verivaro' AND t.relname IN ('tenants','projects','memberships','project_members','evidence')
@@ -35,8 +35,9 @@ BEGIN
  -- Audit sensitive functions across every service role including future roles.
  FOR r IN SELECT oid,rolname FROM pg_roles WHERE rolname LIKE 'verivaro_%' LOOP
   FOR p IN SELECT pr.oid,pr.proname,n.nspname FROM pg_proc pr JOIN pg_namespace n ON n.oid=pr.pronamespace
-   WHERE n.nspname IN ('verivaro_identity','verivaro_sharing','verivaro_admission','verivaro_monitor','verivaro_alerting','verivaro_recovery') LOOP
+   WHERE n.nspname IN ('verivaro_identity','verivaro_sharing','verivaro_admission','verivaro_monitor','verivaro_alerting','verivaro_recovery','verivaro_mutation') LOOP
    IF has_function_privilege(r.oid,p.oid,'EXECUTE') AND NOT (
+    (r.rolname='verivaro_runtime' AND p.nspname='verivaro_mutation' AND p.proname='rename_project') OR
     (r.rolname='verivaro_runtime' AND p.nspname='verivaro_sharing' AND p.proname IN ('issue_share','issue_recipient_share','revoke_share')) OR
     (r.rolname='verivaro_identity_service' AND p.nspname='verivaro_identity' AND p.proname IN ('begin_login','redeem_login','revoke_session','store_browser_flow','take_browser_flow','store_browser_session','read_browser_session','logout_browser','logout_all_browser','record_auth')) OR
     (r.rolname='verivaro_api_admission' AND p.nspname='verivaro_admission' AND p.proname IN ('api_peer','api_actor')) OR

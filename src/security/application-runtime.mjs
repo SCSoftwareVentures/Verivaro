@@ -8,7 +8,7 @@ import {createAuthenticationGateway} from './authentication-gateway.mjs';
 import {createBrowserAuthentication} from './browser-authentication.mjs';
 import {createScopedDatabase} from './scoped-database.mjs';
 import {createApiAdmission,apiPeer} from './api-admission.mjs';
-import {createApplicationApi} from './application-api.mjs';
+import {createApplicationApi,isRenameRequest} from './application-api.mjs';
 const roles={identity:'verivaro_identity_service',runtime:'verivaro_runtime',admission:'verivaro_api_admission'};
 const baseHeaders={'Cache-Control':'no-store, private','Content-Type':'text/plain; charset=utf-8','Strict-Transport-Security':'max-age=31536000','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY','Content-Security-Policy':"default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",'Cross-Origin-Resource-Policy':'same-origin','Permissions-Policy':'camera=(), microphone=(), geolocation=()'};
 function exact(o,keys){if(!o||typeof o!=='object'||Array.isArray(o)||Object.keys(o).length!==keys.length||keys.some(k=>!Object.hasOwn(o,k)))throw Error('invalid application configuration');}
@@ -19,10 +19,10 @@ function reply(res,status,body='',extra={}){
  res.writeHead(status,{...baseHeaders,'Content-Length':Buffer.byteLength(body),...extra});res.end(body);
 }
 function invalidHeaders(req,host){
- const seen=new Set(),critical=new Set(['host','cookie','origin','authorization','content-length','transfer-encoding','content-encoding','expect','sec-fetch-site']);
+ const seen=new Set(),critical=new Set(['host','cookie','origin','authorization','content-length','transfer-encoding','content-encoding','expect','sec-fetch-site','content-type','idempotency-key']);
  for(let i=0;i<req.rawHeaders.length;i+=2){const h=req.rawHeaders[i].toLowerCase();if(critical.has(h)&&seen.has(h))return true;seen.add(h);}
  return req.headers.host!==host||req.headers.authorization!==undefined||req.headers['transfer-encoding']!==undefined||req.headers['content-encoding']!==undefined||
- (req.headers['content-length']!==undefined&&req.headers['content-length']!=='0')||req.headers.expect!==undefined;
+ (!isRenameRequest(req)&&req.headers['content-length']!==undefined&&req.headers['content-length']!=='0')||req.headers.expect!==undefined;
 }
 const page='<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Verivaro</title><main><h1>Verivaro</h1><p>Secure verification workspace.</p><form action="/auth/login" method="post"><button>Sign in</button></form><form action="/auth/logout" method="post"><button>Sign out</button></form><form action="/auth/logout-all" method="post"><button>Sign out on all devices</button></form></main></html>';
 // Only file paths and bounded deployment settings; no environment fallbacks.

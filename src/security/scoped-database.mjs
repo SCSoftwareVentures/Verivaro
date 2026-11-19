@@ -5,12 +5,14 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const validId = value => typeof value==='string' && uuid.test(value);
 const requireId = value => { if(!validId(value)) throw new TypeError('invalid identifier'); return value.toLowerCase(); };
 
+export class ScopedConflict extends Error {constructor(){super('mutation conflict');this.name='ScopedConflict';}}
 export class ScopedAccessDenied extends Error {constructor(){super('scoped database operation failed');this.name='ScopedAccessDenied';}}
 
 // Only fixed repository-owned statements are exposed; no generic SQL or transaction callback.
 const operations = Object.freeze({
- listProjects: { sql: 'SELECT id, left(name,256) AS name FROM verivaro.projects WHERE tenant_id=$1 ORDER BY id LIMIT 200', values: () => [] },
- getProject: { sql: 'SELECT id, left(name,256) AS name FROM verivaro.projects WHERE tenant_id=$1 AND id=$2', values: args => [requireId(args.projectId)] },
+ listProjects: { sql: 'SELECT id, left(name,256) AS name, COALESCE((to_jsonb(projects)->>'revision')::integer,0) AS revision FROM verivaro.projects WHERE tenant_id=$1 ORDER BY id LIMIT 200', values: () => [] },
+ getProject: { sql: 'SELECT id, left(name,256) AS name, COALESCE((to_jsonb(projects)->>'revision')::integer,0) AS revision FROM verivaro.projects WHERE tenant_id=$1 AND id=$2', values: args => [requireId(args.projectId)] },
+ renameProject: { sql: 'SELECT * FROM verivaro_mutation.rename_project($1::uuid,$2::uuid,$3::uuid,$4::text,$5::integer)', values: args => [requireId(args.projectId),requireId(args.requestId),args.name,args.revision] },
  listEvidence: { sql: 'SELECT id, project_id, sha256, created_by, created_at FROM verivaro.evidence WHERE tenant_id=$1 AND project_id=$2 ORDER BY id LIMIT 200', values: args => [requireId(args.projectId)] }
 });
 
@@ -63,7 +65,8 @@ export function createScopedDatabase(pool, { verifier, key, expectedLogin }) {
      try { await client.query('ROLLBACK'); } catch { /* discard the connection below */ }
     }
     // Never return an uncertain or errored connection to the pool.
-    if(error instanceof ScopedAccessDenied)throw error;
+    if(error instanceof ScopedAccessDenied||operation==='renameProject'&&error.code==='42501')throw new ScopedAccessDenied();
+    if(operation==='renameProject'&&error.code==='23505')throw new ScopedConflict();
     throw new Error('scoped database operation failed');
    } finally {
     client.release(clean ? undefined : new Error('discard unsafe database lease'));
