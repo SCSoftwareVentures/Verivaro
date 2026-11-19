@@ -3,6 +3,8 @@
 RESET ROLE;
 INSERT INTO verivaro.memberships(tenant_id,actor_id,role)
 VALUES ('11111111-1111-4111-8111-111111111111','cccccccc-cccc-4ccc-8ccc-cccccccccccc','contributor');
+INSERT INTO verivaro.project_members(tenant_id,project_id,actor_id,role) VALUES
+ ('11111111-1111-4111-8111-111111111111','33333333-3333-4333-8333-333333333333','cccccccc-cccc-4ccc-8ccc-cccccccccccc','contributor');
 SET ROLE verivaro_runtime;
 BEGIN;
 RESET ROLE;

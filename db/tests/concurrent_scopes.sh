@@ -27,6 +27,8 @@ SQL
 psql -X -v ON_ERROR_STOP=1 <<'SQL'
 INSERT INTO verivaro.memberships(tenant_id,actor_id,role)
 VALUES ('11111111-1111-4111-8111-111111111111','dddddddd-dddd-4ddd-8ddd-dddddddddddd','viewer');
+INSERT INTO verivaro.project_members(tenant_id,project_id,actor_id,role) VALUES
+ ('11111111-1111-4111-8111-111111111111','33333333-3333-4333-8333-333333333333','dddddddd-dddd-4ddd-8ddd-dddddddddddd','viewer');
 SQL
 run_scope '11111111-1111-4111-8111-111111111111' 'dddddddd-dddd-4ddd-8ddd-dddddddddddd' '33333333-3333-4333-8333-333333333333' &
 a=$!
