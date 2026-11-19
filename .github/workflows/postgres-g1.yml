@@ -69,3 +69,5 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f db/tests/dual_recovery_gate.sql
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/0008_scoped_sharing.sql
           psql -X -v ON_ERROR_STOP=1 -f db/tests/scoped_sharing_gate.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0009_share_generation.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/share_generation_gate.sql
