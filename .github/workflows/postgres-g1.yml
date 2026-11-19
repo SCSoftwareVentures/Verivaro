@@ -34,6 +34,9 @@ jobs:
       - name: Apply schema and adversarial checks
         run: |
           set -euo pipefail
+          VV_RUNTIME_PASSWORD="$(openssl rand -hex 32)"
+          echo "::add-mask::$VV_RUNTIME_PASSWORD"
+          export VV_RUNTIME_PASSWORD
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/0001_tenant_foundation.sql
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/0002_evidence_immutability.sql
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/0003_signed_context.sql

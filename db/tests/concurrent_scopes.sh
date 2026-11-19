@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export VV_ADMIN_PASSWORD="${PGPASSWORD:?missing CI administrator credential}"
 # Two simultaneous independent connections with incompatible tenant/actor scopes.
 # Both must see only their own project. Synthetic data from tenant_isolation.sql.
 run_scope() {
   local tenant="$1" actor="$2" expected="$3"
-  PGUSER=verivaro_runtime PGPASSWORD=ci-only-not-a-secret psql -X -qAt -v ON_ERROR_STOP=1 <<SQL
+  PGUSER=verivaro_runtime PGPASSWORD="$VV_RUNTIME_PASSWORD" psql -X -qAt -v ON_ERROR_STOP=1 <<SQL
 BEGIN;
 SELECT pg_backend_pid() AS pid, pg_current_xact_id()::text AS xid \\gset
 \\setenv VV_PID :pid
 \\setenv VV_XID :xid
-\\set signed \`PGUSER=postgres PGPASSWORD=ci-only psql -XqAt -v ON_ERROR_STOP=1 -c "SELECT verivaro_private.ci_sign('$tenant','$actor',\$VV_PID,'\$VV_XID')"\`
+\\set signed \`PGUSER=postgres PGPASSWORD="\$VV_ADMIN_PASSWORD" psql -XqAt -v ON_ERROR_STOP=1 -c "SELECT verivaro_private.ci_sign('$tenant','$actor',\$VV_PID,'\$VV_XID')"\`
 SELECT set_config('verivaro.signed_context', :'signed', true);
 SELECT pg_sleep(1);
 DO \$\$
