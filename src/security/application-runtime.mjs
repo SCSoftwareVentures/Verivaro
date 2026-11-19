@@ -35,7 +35,7 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
  const cfg=JSON.parse(await readText(configPath,16384));
  const enabled=Object.hasOwn(cfg,'ingestion'),serviceRoles=enabled?{...roles,ingestion:'verivaro_evidence_ingestor',evidenceReader:'verivaro_evidence_reader'}:roles;
  exact(cfg,['origin','listenHost','listenPort','tlsKeyFile','tlsCertFile','database','logins','provider','local','secrets',...(enabled?['ingestion']:[])]);
- if(enabled)exact(cfg.ingestion,['keyId','keyFile','scannerSocket']);
+ if(enabled)exact(cfg.ingestion,['keyId','keyFile','scannerSocket',...(Object.hasOwn(cfg.ingestion,'retiredKeys')?['retiredKeys']:[])]);
  const origin=new URL(cfg.origin);
  if(origin.protocol!=='https:'||origin.href!==origin.origin+'/'||!['127.0.0.1','::1','0.0.0.0'].includes(cfg.listenHost)||!Number.isInteger(cfg.listenPort)||cfg.listenPort<1024||cfg.listenPort>65535)throw Error('invalid listener configuration');
  exact(cfg.database,['host','port','name','caFile']);exact(cfg.logins,Object.keys(serviceRoles));
@@ -74,7 +74,17 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
    if(rawKeys.slice(0,-1).some(k=>k.equals(evidenceKey)))throw Error('duplicate evidence key');
    const ingestDb=createIngestionDatabase(pools.ingestion,{verifier,contextKey,expectedLogin:cfg.logins.ingestion.user});
    const ingest=createEvidenceIngestion({db:ingestDb,scan:createClamdScanner({socketPath:cfg.ingestion.scannerSocket}),key:evidenceKey,keyId:cfg.ingestion.keyId});
-   const evidenceReadKey=Buffer.from(evidenceKey),retrieve=createEvidenceReader(pools.evidenceReader,{verifier,contextKey,expectedLogin:cfg.logins.evidenceReader.user,readKey:async id=>{if(id!==cfg.ingestion.keyId)throw Error('evidence key unavailable');return evidenceReadKey;}});
+   const readKeys=new Map([[cfg.ingestion.keyId,Buffer.from(evidenceKey)]]);
+   const retired=cfg.ingestion.retiredKeys??[];
+   if(!Array.isArray(retired)||retired.length>15)throw Error('invalid evidence keyring');
+   for(const entry of retired){
+    exact(entry,['keyId','keyFile']);
+    if(typeof entry.keyId!=='string'||!/^[a-z][a-z0-9_-]{0,31}$/.test(entry.keyId)||readKeys.has(entry.keyId))throw Error('invalid evidence key version');
+    const old=await readKey(entry.keyFile);rawKeys.push(old);
+    if(rawKeys.slice(0,-1).some(k=>k.equals(old)))throw Error('duplicate evidence key');
+    readKeys.set(entry.keyId,Buffer.from(old));
+   }
+   const retrieve=createEvidenceReader(pools.evidenceReader,{verifier,contextKey,expectedLogin:cfg.logins.evidenceReader.user,readKey:async id=>{if(!readKeys.has(id))throw Error('evidence key unavailable');return readKeys.get(id);}});
    upload=createEvidenceUploadHandler({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,ingest});
    download=createEvidenceDownloadHandler({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,retrieve});
   }

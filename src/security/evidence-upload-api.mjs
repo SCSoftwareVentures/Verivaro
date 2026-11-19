@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto';
 import {verifyIdentityToken} from './verify-identity.mjs';
 import {TYPES} from './evidence-formats.mjs';
 import {MAX_EVIDENCE_UPLOAD} from './evidence-objects.mjs';
-import {IngestionDenied,IngestionConflict,IngestionRejected} from './evidence-ingestion.mjs';
+import {IngestionDenied,IngestionConflict,IngestionRejected,IngestionQuota} from './evidence-ingestion.mjs';
 const id='([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})',route=new RegExp('^/api/v1/tenants/'+id+'/projects/'+id+'/evidence$');
 const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 export function isEvidenceUpload(req){return req.method==='POST'&&typeof req.url==='string'&&route.test(req.url);}
@@ -11,7 +11,7 @@ function reply(res,status,payload,extra={}){
  const body=JSON.stringify(payload);
  res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store, private','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY','Content-Security-Policy':"default-src 'none'; frame-ancestors 'none'",'Cross-Origin-Resource-Policy':'same-origin','Connection':'close','Content-Length':Buffer.byteLength(body),...extra});res.end(body);
 }
-const failure=(res,status,extra)=>reply(res,status,{error:status===401?'authentication_required':status===404?'not_found':status===409?'conflict':status===422?'evidence_rejected':status===429?'rate_limited':status===503?'temporarily_unavailable':'request_denied'},extra);
+const failure=(res,status,extra)=>reply(res,status,{error:status===401?'authentication_required':status===404?'not_found':status===409?'conflict':status===422?'evidence_rejected':status===507?'storage_quota_exhausted':status===429?'rate_limited':status===503?'temporarily_unavailable':'request_denied'},extra);
 function safeHeaders(req,origin){
  const h=req.headers,seen=new Set(),critical=new Set(['host','origin','cookie','authorization','content-length','transfer-encoding','content-encoding','content-type','idempotency-key','x-evidence-sha256','expect','sec-fetch-site']);
  for(let i=0;i<req.rawHeaders.length;i+=2){const k=req.rawHeaders[i].toLowerCase();if(critical.has(k)&&seen.has(k))return false;seen.add(k);}
@@ -48,7 +48,7 @@ export function createEvidenceUploadHandler({origin,verifier,admission,resolveSe
    const [,tenantId,projectId]=route.exec(req.url);
    const result=await ingest({token,tenantId,projectId,requestId:req.headers['idempotency-key'],data,mediaType:req.headers['content-type'],signal:controller.signal});
    return reply(res,200,{evidence:{id:result.id,sha256:result.sha256,bytes:result.bytes}});
-  }catch(e){return failure(res,e instanceof IngestionDenied?404:e instanceof IngestionConflict?409:e instanceof IngestionRejected?422:503);}
+  }catch(e){return failure(res,e instanceof IngestionDenied?404:e instanceof IngestionConflict?409:e instanceof IngestionRejected?422:e instanceof IngestionQuota?507:503);}
   finally{clearTimeout(timer);res.removeListener('close',abort);data?.fill(0);for(const chunk of chunks)chunk.fill(0);active--;}
  };
 }

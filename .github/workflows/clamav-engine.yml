@@ -1,0 +1,42 @@
+name: G1 actual antivirus engine
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  actual-clamd:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.16.0'
+      - name: Install distribution ClamAV daemon
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends clamav-daemon
+      - name: Scan clean and standard benign test signature over real local daemon
+        run: |
+          set -euo pipefail
+          root="$(mktemp -d /tmp/vv-clamd.XXXXXX)"
+          pid=''
+          trap 'if test -n "$pid"; then kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; fi; rm -rf "$root"' EXIT
+          mkdir -m 700 "$root/db"
+          printf '%s\n' '44d88612fea8a8f36de82e1278abb02f:68:Verivaro.EICAR.Test' > "$root/db/test.hdb"
+          printf 'LocalSocket %s\nDatabaseDirectory %s\nForeground yes\nLocalSocketMode 600\nStreamMaxLength 1M\nMaxScanSize 2M\nMaxFileSize 1M\n' "$root/clamd.sock" "$root/db" > "$root/clamd.conf"
+          clamd --version
+          clamd --config-file="$root/clamd.conf" >"$root/engine.log" 2>&1 &
+          pid=$!
+          for i in $(seq 1 60); do
+            if test -S "$root/clamd.sock"; then break; fi
+            if ! kill -0 "$pid" 2>/dev/null; then cat "$root/engine.log"; exit 1; fi
+            sleep 1
+          done
+          test -S "$root/clamd.sock" || { cat "$root/engine.log"; exit 1; }
+          VV_REAL_CLAMD_SOCKET="$root/clamd.sock" node --test tests/integration/real-clamd.test.mjs

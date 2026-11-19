@@ -6,9 +6,11 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {randomUUID,randomBytes,sign,createHash} from 'node:crypto';
 import {local} from '../fixtures/provider-fixture.mjs';
+import {fixturePng} from '../fixtures/evidence-formats-fixture.mjs';
+import {canonicalTextPdf} from '../../src/security/evidence-formats.mjs';
 import {scannerFixture} from '../fixtures/clamd-fixture.mjs';
 import {createClamdScanner} from '../../src/security/clamd-scanner.mjs';
-import {createEvidenceIngestion,createIngestionDatabase,IngestionDenied,IngestionRejected,IngestionConflict} from '../../src/security/evidence-ingestion.mjs';
+import {createEvidenceIngestion,createIngestionDatabase,IngestionDenied,IngestionRejected,IngestionConflict,IngestionQuota} from '../../src/security/evidence-ingestion.mjs';
 import {openEvidence,createEvidenceRecoverySource} from '../../src/security/evidence-objects.mjs';
 if(process.env.VV_LIVE_TEST!=='1'||process.env.PGDATABASE!=='verivaro_test'||!process.env.VV_TEST_DRIVER_DIR||!process.env.VV_INGEST_PASSWORD)throw Error('disposable CI only');
 const {Pool}=createRequire(resolve(process.env.VV_TEST_DRIVER_DIR,'package.json'))('pg');
@@ -45,6 +47,18 @@ test('real encrypted evidence registration, required scan, permissions, immutabl
   await assert.rejects(ingest({...input,data:Buffer.from('different')}),IngestionConflict);
   await assert.rejects(admin.query('DELETE FROM verivaro_private.evidence_objects WHERE evidence_id=$1',[id]),e=>e.code==='42501');
   const c=await pool.connect();try{await c.query('SET ROLE verivaro_evidence_ingestor');await assert.rejects(c.query('SELECT * FROM verivaro_private.evidence_objects'),e=>e.code==='42501');await assert.rejects(c.query('INSERT INTO verivaro.evidence(id) VALUES($1)',[randomUUID()]),e=>e.code==='42501');}finally{c.release(true);}
+  for(const [mediaType,data] of [['image/png',fixturePng()],['application/pdf',canonicalTextPdf(['Verified PDF evidence'])]]){
+   const x=await ingest({...input,data,mediaType,requestId:randomUUID()});
+   assert.equal(x.bytes,data.length);
+   assert.equal((await admin.query('SELECT media_type FROM verivaro_private.evidence_objects WHERE evidence_id=$1',[x.id])).rows[0].media_type,mediaType);
+  }
+  // Exact actor storage budget exercised with real encrypted 256 KiB objects.
+  const block=Buffer.alloc(262144,65);
+  for(let i=0;i<31;i++)await ingest({...input,data:block,requestId:randomUUID()});
+  const quotaRequest=randomUUID();
+  await assert.rejects(ingest({...input,data:block,requestId:quotaRequest}),IngestionQuota);
+  assert.equal((await admin.query('SELECT count(*)::int AS n FROM verivaro_private.evidence_objects WHERE request_id=$1',[quotaRequest])).rows[0].n,0);
+  assert.equal((await ingest(input)).id,id);
   // Revocation after scan begins must still block the commit.
   const revoked=createEvidenceIngestion({db,key,keyId:'fixture',scan:async()=>{await admin.query('UPDATE verivaro.project_members SET revoked_at=clock_timestamp() WHERE actor_id=$1',[principals.contributor.actor]);return 'clean';}});
   await assert.rejects(revoked({...input,requestId:randomUUID()}),IngestionDenied);

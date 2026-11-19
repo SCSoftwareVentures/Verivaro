@@ -5,6 +5,7 @@ const role='verivaro_evidence_ingestor';
 export class IngestionDenied extends Error{}
 export class IngestionConflict extends Error{}
 export class IngestionRejected extends Error{}
+export class IngestionQuota extends Error{}
 export function createIngestionDatabase(pool,{expectedLogin,verifier,contextKey}){
  validateServiceIdentity(role,expectedLogin);
  if(typeof pool?.connect!=='function'||!verifier||!Buffer.isBuffer(contextKey)||contextKey.length!==32)throw Error('invalid ingestion database');
@@ -24,6 +25,7 @@ export function createIngestionDatabase(pool,{expectedLogin,verifier,contextKey}
   }catch(e){if(tx)try{await c.query('ROLLBACK');}catch{}
    if(e.code==='42501')throw new IngestionDenied('ingestion denied');
    if(e.code==='23505')throw new IngestionConflict('ingestion conflict');
+   if(e.code==='54000')throw new IngestionQuota('evidence storage quota exhausted');
    throw Error('ingestion unavailable');
   }finally{c.release(clean?undefined:new Error('discard ingestion lease'));}
  }
