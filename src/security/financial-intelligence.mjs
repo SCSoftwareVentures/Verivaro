@@ -33,6 +33,7 @@ export function buildFinancialSummary({scope,assessment,records,asOf}={}){
   seen.add(r.recordId);scale(r.currency);
   const amount=r.amountStatus==='confirmed'?decimalToMinor(r.amount,r.currency):null;
   if(r.amountStatus==='unknown'&&r.amount!==null)invalid();
+  if(Object.hasOwn(r,'storedMinor')&&r.storedMinor!==amount)invalid();
   if(r.dueStatus==='unknown'&&r.dueAt!==null)invalid();
   const due=r.dueStatus==='confirmed'?timestamp(r.dueAt):null;
   const pins=new Set(),conditions=[];
