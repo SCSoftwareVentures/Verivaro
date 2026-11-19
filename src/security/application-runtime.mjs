@@ -33,7 +33,6 @@ function invalidHeaders(req,host){
  return req.headers.host!==host||req.headers.authorization!==undefined||req.headers['transfer-encoding']!==undefined||req.headers['content-encoding']!==undefined||
  (!isRenameRequest(req)&&!isEvidenceUpload(req)&&!isReleaseWorkspaceMutation(req)&&req.headers['content-length']!==undefined&&req.headers['content-length']!=='0')||req.headers.expect!==undefined;
 }
-const page='<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Verivaro</title><main><h1>Verivaro</h1><p>Secure verification workspace.</p><form action="/auth/login" method="post"><button>Sign in</button></form><form action="/auth/logout" method="post"><button>Sign out</button></form><form action="/auth/logout-all" method="post"><button>Sign out on all devices</button></form></main></html>';
 // Only file paths and bounded deployment settings; no environment fallbacks.
 export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,report=()=>{}}){
  if(typeof Pool!=='function')throw Error('missing database driver');

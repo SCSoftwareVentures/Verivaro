@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {resolve,join} from 'node:path';
-import {mkdtemp,writeFile,readFile,rm} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {randomUUID,randomBytes,generateKeyPairSync,createHash,sign} from 'node:crypto';
 import {request as httpsRequest} from 'node:https';
@@ -28,9 +28,17 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   await admin.query('UPDATE verivaro_private.api_rate_state SET bucket=-1,requests=0,global_limit=600,peer_limit=120,actor_limit=60');
   const context=(await admin.query('SELECT key_bytes FROM verivaro_private.context_key WHERE singleton')).rows[0].key_bytes,secret=randomBytes(32).toString('base64url');
   scanner=await scannerFixture(dir);
-  const cfg={origin,ingestion:{keyId:'runtime-fixture',keyFile:await put('evidence-key',randomBytes(32).toString('base64url')),scannerSocket:scanner.socketPath},listenHost:'127.0.0.1',listenPort:18443,tlsKeyFile:join(tls,'server.key'),tlsCertFile:join(tls,'server.crt'),
+  const releaseRoot=join(dir,'exports');await mkdir(releaseRoot,{mode:0o700});
+  const actors={owner:subject};
+  for(const [label,role] of [['contributor','contributor'],['reviewer','reviewer'],['viewer','viewer']]){
+   const a=randomUUID(),s='runtime-'+label+'-'+randomUUID();actors[label]=s;
+   await admin.query('INSERT INTO verivaro.memberships(tenant_id,actor_id,role) VALUES($1,$2,$3)',[tenant,a,role]);
+   await admin.query('INSERT INTO verivaro.project_members(tenant_id,project_id,actor_id,role) VALUES($1,$2,$3,$4)',[tenant,project,a,role]);
+   await admin.query('SELECT verivaro_identity.provision_binding($1,$2,$3,$4)',[issuer,digestSubject(s),a,randomUUID()]);
+  }
+  const cfg={origin,release:{root:releaseRoot},ingestion:{keyId:'runtime-fixture',keyFile:await put('evidence-key',randomBytes(32).toString('base64url')),scannerSocket:scanner.socketPath},listenHost:'127.0.0.1',listenPort:18443,tlsKeyFile:join(tls,'server.key'),tlsCertFile:join(tls,'server.crt'),
    database:{host:'localhost',port:Number(process.env.PGPORT),name:'verivaro_test',caFile:join(tls,'ca.pem')},
-   logins:{evidenceReader:{user:'vv_ci_evidence_reader',passwordFile:await put('reader',process.env.VV_EVIDENCE_READER_PASSWORD)},ingestion:{user:'vv_ci_ingest',passwordFile:await put('ingestion',process.env.VV_INGEST_PASSWORD)},identity:{user:'vv_ci_identity',passwordFile:await put('identity',process.env.VV_IDENTITY_PASSWORD)},runtime:{user:'vv_ci_runtime',passwordFile:await put('runtime',process.env.VV_RUNTIME_PASSWORD)},admission:{user:'vv_ci_api_a',passwordFile:await put('admission',process.env.VV_API_A_PASSWORD)}},
+   logins:{release:{user:'vv_ci_release',passwordFile:await put('release',process.env.VV_RELEASE_PASSWORD)},evidenceReader:{user:'vv_ci_evidence_reader',passwordFile:await put('reader',process.env.VV_EVIDENCE_READER_PASSWORD)},ingestion:{user:'vv_ci_ingest',passwordFile:await put('ingestion',process.env.VV_INGEST_PASSWORD)},identity:{user:'vv_ci_identity',passwordFile:await put('identity',process.env.VV_IDENTITY_PASSWORD)},runtime:{user:'vv_ci_runtime',passwordFile:await put('runtime',process.env.VV_RUNTIME_PASSWORD)},admission:{user:'vv_ci_api_a',passwordFile:await put('admission',process.env.VV_API_A_PASSWORD)}},
    provider:{issuer,audience,authorizationEndpoint:issuer+'/authorize',tokenEndpoint:issuer+'/token',requiredAcr:'fixture:mfa',requiredAmr:['mfa'],authorityFile:await put('authority',authority.publicKey.export({type:'spki',format:'pem'})),checkpointFile:await put('checkpoint',JSON.stringify({sequence:1,digest:createHash('sha256').update(catalogue).digest('hex')})),catalogueFile:await put('catalogue',catalogue),signatureFile:await put('sig',sign(null,catalogue,authority.privateKey)),clientSecretFile:await put('client-secret',secret)},
    local:{issuer:'urn:verivaro:runtime-fixture',audience:'api',signingKeyFile:await put('signing',local.privateKey.export({type:'pkcs8',format:'pem'}))},
    secrets:{admissionKeyFile:await put('admission-key',randomBytes(32).toString('base64url')),contextKeyFile:await put('context-key',context.toString('base64url')),browserKeyFile:await put('browser-key',randomBytes(32).toString('base64url'))}};
@@ -42,7 +50,7 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
    const c=codes.get(opts.body.get('code'));assert.ok(c);
    assert.equal(createHash('sha256').update(opts.body.get('code_verifier')).digest('base64url'),c.challenge);
    codes.delete(opts.body.get('code'));
-   return new Response(JSON.stringify({id_token:token(c.nonce,{sub:subject})}),{headers:{'content-type':'application/json'}});
+   return new Response(JSON.stringify({id_token:token(c.nonce,{sub:c.subject??subject})}),{headers:{'content-type':'application/json'}});
   }});
   await app.listen();
   const ca=await readFile(join(tls,'ca.pem'));
@@ -65,6 +73,17 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   const flow=login.headers['set-cookie'][0].split(';')[0];
   const cb=await request('/auth/callback?'+new URLSearchParams({state:u.searchParams.get('state'),code,iss:issuer}),{headers:{cookie:flow,'sec-fetch-site':'cross-site'}});
   assert.equal(cb.status,303);const session=cb.headers['set-cookie'].find(x=>x.startsWith('__Host-vv_session=')).split(';')[0];
+  async function loginAs(label){
+   const l=await request('/auth/login',{method:'POST',headers:{origin}});assert.equal(l.status,303);
+   const u=new URL(l.headers.location),code=randomUUID();codes.set(code,{challenge:u.searchParams.get('code_challenge'),nonce:u.searchParams.get('nonce'),subject:actors[label]});
+   const cb=await request('/auth/callback?'+new URLSearchParams({state:u.searchParams.get('state'),code,iss:issuer}),{headers:{cookie:l.headers['set-cookie'][0].split(';')[0],'sec-fetch-site':'cross-site'}});
+   assert.equal(cb.status,303);return cb.headers['set-cookie'].find(x=>x.startsWith('__Host-vv_session=')).split(';')[0];
+  }
+  assert.match(root.body,/Review &amp; release/);assert.match(root.headers['content-security-policy'],/script-src 'self'/);
+  const script=await request('/assets/workspace.js');assert.equal(script.status,200);assert.match(script.body,/Submit for review/);assert.doesNotMatch(script.body,/innerHTML/);
+  const css=await request('/assets/workspace.css');assert.equal(css.status,200);
+  const workspaces=await request('/api/v1/workspaces',{headers:{cookie:session}});assert.equal(workspaces.status,200);assert.deepEqual(JSON.parse(workspaces.body).items.map(x=>x.id),[tenant]);
+  assert.equal((await request('/api/v1/workspaces')).status,401);
   const data=await request(route,{headers:{cookie:session}});assert.equal(data.status,200);assert.deepEqual(JSON.parse(data.body).items.map(x=>x.id),[project]);assert.equal(data.headers['strict-transport-security'],'max-age=31536000');
   assert.equal((await request(route.replace(tenant,'22222222-2222-4222-8222-222222222222'),{headers:{cookie:session}})).status,404);
   const detail=await request(route+'/'+project,{headers:{cookie:session}});assert.equal(detail.status,200);
@@ -93,6 +112,27 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   const pdfId=JSON.parse(pdfUpload.body).evidence.id,pdfDownload=await request(route+'/'+project+'/evidence/'+pdfId+'/download',{headers:{cookie:session}});
   assert.equal(pdfDownload.status,200);assert.equal(pdfDownload.body,pdf);assert.match(pdfDownload.headers['content-disposition'],/\.pdf"/);
   const listed=await request(route+'/'+project+'/evidence',{headers:{cookie:session}});assert.equal(listed.status,200);assert.ok(JSON.parse(listed.body).items.some(x=>x.id===uploadedId));
+  const contributor=await loginAs('contributor'),reviewer=await loginAs('reviewer'),viewer=await loginAs('viewer'),releases=route+'/'+project+'/releases';
+  const cUpload=await request(route+'/'+project+'/evidence',{method:'POST',headers:{...evidenceHeaders,cookie:contributor,'idempotency-key':randomUUID()},body:evidenceBody});assert.equal(cUpload.status,200);
+  const obj=JSON.parse(cUpload.body).evidence,submission={requestId:randomUUID(),evidenceId:obj.id,sha256:obj.sha256};
+  const action=(name,body,cookie,extra={})=>request(releases+'/'+name,{method:'POST',headers:{cookie,origin,'content-type':'application/json',...extra},body:JSON.stringify(body)});
+  assert.equal((await action('submit',submission,contributor,{origin:'https://evil.invalid'})).status,403);
+  assert.equal((await action('submit',{...submission,actorId:actor},contributor)).status,400);
+  assert.equal((await action('submit',submission,contributor)).status,200);
+  assert.equal((await action('submit',submission,contributor)).status,200);
+  assert.equal((await action('publish',submission,session)).status,404);
+  const unseen=JSON.parse((await request(releases,{headers:{cookie:viewer}})).body);assert.equal(unseen.requests.length,0);
+  const queue=JSON.parse((await request(releases,{headers:{cookie:reviewer}})).body);assert.ok(queue.requests.some(x=>x.id===submission.requestId&&x.canReview&&x.state==='pending'));
+  const review={requestId:submission.requestId,sha256:obj.sha256,decision:'approved',reason:'verified'};
+  assert.equal((await action('review',review,contributor)).status,404);
+  assert.equal((await action('review',review,reviewer)).status,200);
+  const approved=JSON.parse((await request(releases,{headers:{cookie:session}})).body);assert.ok(approved.requests.some(x=>x.id===submission.requestId&&x.canPublish&&x.state==='approved'));
+  assert.equal((await action('publish',submission,reviewer)).status,404);
+  const published=await action('publish',submission,session);assert.equal(published.status,200);assert.equal(JSON.parse(published.body).exportId,submission.requestId);
+  assert.equal((await action('publish',submission,session)).status,200);
+  assert.equal((await readFile(join(releaseRoot,obj.id))).toString(),evidenceBody);
+  const finished=JSON.parse((await request(releases,{headers:{cookie:session}})).body);assert.ok(finished.requests.some(x=>x.id===submission.requestId&&x.state==='released'));
+  console.log('browser_evidence_approval_workspace_gate_passed');
   assert.equal((await request('/auth/logout-all',{method:'POST',headers:{origin,cookie:session}})).status,204);
   assert.equal((await request(route,{headers:{cookie:session}})).status,401);
   await app.stop();assert.equal(app.server.listening,false);
