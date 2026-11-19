@@ -45,7 +45,7 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   const configPath=await put('configuration',JSON.stringify(cfg));
   const invalidPath=await put('invalid',JSON.stringify({...cfg,logins:{...cfg.logins,admission:cfg.logins.identity}}));
   await assert.rejects(createApplicationRuntime({configPath:invalidPath,Pool}),/startup denied/);
-  app=await createApplicationRuntime({configPath,Pool,fetcher:async(url,opts)=>{
+  app=await createApplicationRuntime({configPath,Pool,report:event=>console.log(event),fetcher:async(url,opts)=>{
    assert.equal(url,issuer+'/token');assert.equal(opts.redirect,'error');
    const c=codes.get(opts.body.get('code'));assert.ok(c);
    assert.equal(createHash('sha256').update(opts.body.get('code_verifier')).digest('base64url'),c.challenge);
@@ -172,6 +172,32 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   assert.equal((await admin.query('SELECT count(*)::int AS n FROM verivaro_private.project_admin_events WHERE project_id=$1',[newId])).rows[0].n,3);
   await assert.rejects(admin.query('DELETE FROM verivaro_private.project_admin_events WHERE project_id=$1',[newId]),e=>e.code==='42501');
   console.log('browser_project_permission_and_recipient_gate_passed');
+  const reportPath=route+'/'+project+'/report';
+  const reportResponse=await request(reportPath,{headers:{cookie:session}});assert.equal(reportResponse.status,200);
+  const report=JSON.parse(reportResponse.body);assert.equal(report.project.id,project);assert.ok(report.summary.evidence>=3);assert.ok(report.evidence.some(x=>x.id===uploadedId));
+  assert.ok(report.reviews.some(x=>x.id===submission.requestId&&x.state==='released'));
+  assert.equal(reportResponse.headers['x-report-sha256'],createHash('sha256').update(reportResponse.body).digest('hex'));
+  assert.equal((await request(reportPath,{headers:{cookie:reviewer}})).status,200);
+  assert.equal((await request(reportPath,{headers:{cookie:contributor}})).status,404);
+  assert.equal((await request(reportPath,{headers:{cookie:viewer}})).status,404);
+  assert.equal((await request(reportPath+'-download',{headers:{cookie:session}})).status,200);
+  const activeCode=randomBytes(32).toString('base64url'),activeShare=randomUUID();
+  assert.equal((await adminPost(sharePath,{...shareInput,shareId:activeShare,code:activeCode})).status,200);
+  const archivedInput={requestId:randomUUID(),revision:report.project.revision};
+  const archivePath=route+'/'+project+'/archive';
+  assert.equal((await adminPost(archivePath,archivedInput,reviewer)).status,404);
+  const archived=await adminPost(archivePath,archivedInput);assert.equal(archived.status,200);
+  assert.equal((await adminPost(archivePath,archivedInput)).body,archived.body);
+  assert.equal((await adminPost(archivePath,{...archivedInput,requestId:randomUUID()})).status,409);
+  const closed=JSON.parse((await request(reportPath,{headers:{cookie:session}})).body);assert.ok(closed.project.archivedAt);
+  assert.equal(closed.summary.evidence,report.summary.evidence);assert.ok(closed.reviews.some(x=>x.id===submission.requestId&&x.state==='revoked'));
+  assert.equal((await request('/api/v1/recipient-download',{method:'POST',headers:{cookie:reviewer,origin,'x-verivaro-share':activeCode}})).status,404);
+  assert.equal((await request(route+'/'+project+'/evidence',{method:'POST',headers:{...evidenceHeaders,'idempotency-key':randomUUID()},body:evidenceBody})).status,404);
+  assert.equal((await action('submit',{...submission,requestId:randomUUID()},contributor)).status,404);
+  assert.equal((await request(route+'/'+project,{method:'PATCH',headers:{...mutationHeaders,'idempotency-key':randomUUID()},body:JSON.stringify({name:'Blocked rename',revision:closed.project.revision})})).status,404);
+  assert.equal((await request(route+'/'+project+'/evidence/'+uploadedId+'/download',{headers:{cookie:session}})).status,200);
+  await assert.rejects(admin.query('DELETE FROM verivaro_private.project_archive_receipts WHERE project_id=$1',[project]),e=>e.code==='42501');
+  console.log('project_archive_report_gate_passed');
   assert.equal((await request('/auth/logout-all',{method:'POST',headers:{origin,cookie:session}})).status,204);
   assert.equal((await request(route,{headers:{cookie:session}})).status,401);
   await app.stop();assert.equal(app.server.listening,false);

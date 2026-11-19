@@ -70,7 +70,7 @@ export function createApplicationApi({resolveSession,scoped,admission,verifier,o
    if((operation==='getProject'||mutation)&&!rows.length)return error(res,404);
    // Fixed public projection; storage refs, actor IDs, credentials or other
    // added database columns cannot leak through object serialization.
-   const items=rows.map(r=>operation==='listEvidence'?{id:r.id,projectId:r.project_id,sha256:r.sha256,createdAt:r.created_at}:{id:r.id,name:r.name,revision:r.revision});
+   const items=rows.map(r=>operation==='listEvidence'?{id:r.id,projectId:r.project_id,sha256:r.sha256,createdAt:r.created_at}:{id:r.id,name:r.name,revision:r.revision,archivedAt:r.archived_at??null});
    return send(res,200,(operation==='getProject'||mutation)?{project:items[0]}:{items,limit:200});
   }catch(e){return error(res,e instanceof ScopedAccessDenied?404:e instanceof ScopedConflict?409:503);}
   finally{active--;}

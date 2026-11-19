@@ -30,6 +30,8 @@ export function createEvidenceReleaseDatabase(pool,{expectedLogin,verifier,conte
   }finally{c.release(clean?undefined:new Error('discard release connection'));}
  }
  if(mode==='workflow')return Object.freeze({
+  async archiveProject({token,tenantId,projectId,requestId,revision}){return (await run(token,tenantId,'SELECT verivaro_mutation.archive_project($1,$2,$3,$4) AS data',[tenantId,projectId,requestId,revision])).data;},
+  async report({token,tenantId,projectId}){return (await run(token,tenantId,'SELECT verivaro_mutation.project_report($1,$2) AS data',[tenantId,projectId])).data;},
   async createProject({token,tenantId,requestId,name}){return (await run(token,tenantId,'SELECT verivaro_mutation.create_project($1,$2,$3) AS id',[tenantId,requestId,name])).id;},
   async directory({token,tenantId,projectId}){return (await run(token,tenantId,'SELECT verivaro_mutation.project_directory($1,$2) AS data',[tenantId,projectId])).data;},
   async changeAccess({token,tenantId,projectId,requestId,targetId,role,generation}){return (await run(token,tenantId,'SELECT verivaro_mutation.change_project_access($1,$2,$3,$4,$5,$6) AS generation',[tenantId,projectId,requestId,targetId,role,generation])).generation;},

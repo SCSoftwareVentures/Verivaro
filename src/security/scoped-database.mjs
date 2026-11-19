@@ -10,8 +10,8 @@ export class ScopedAccessDenied extends Error {constructor(){super('scoped datab
 
 // Only fixed repository-owned statements are exposed; no generic SQL or transaction callback.
 const operations = Object.freeze({
- listProjects: { sql: 'SELECT id, left(name,256) AS name, COALESCE((to_jsonb(projects)->>\'revision\')::integer,0) AS revision FROM verivaro.projects WHERE tenant_id=$1 ORDER BY id LIMIT 200', values: () => [] },
- getProject: { sql: 'SELECT id, left(name,256) AS name, COALESCE((to_jsonb(projects)->>\'revision\')::integer,0) AS revision FROM verivaro.projects WHERE tenant_id=$1 AND id=$2', values: args => [requireId(args.projectId)] },
+ listProjects: { sql: 'SELECT id, left(name,256) AS name, COALESCE((to_jsonb(projects)->>\'revision\')::integer,0) AS revision, to_jsonb(projects)->>\'archived_at\' AS archived_at FROM verivaro.projects WHERE tenant_id=$1 ORDER BY id LIMIT 200', values: () => [] },
+ getProject: { sql: 'SELECT id, left(name,256) AS name, COALESCE((to_jsonb(projects)->>\'revision\')::integer,0) AS revision, to_jsonb(projects)->>\'archived_at\' AS archived_at FROM verivaro.projects WHERE tenant_id=$1 AND id=$2', values: args => [requireId(args.projectId)] },
  renameProject: { sql: 'SELECT * FROM verivaro_mutation.rename_project($1::uuid,$2::uuid,$3::uuid,$4::text,$5::integer)', values: args => [requireId(args.projectId),requireId(args.requestId),args.name,args.revision] },
  listEvidence: { sql: 'SELECT id, project_id, sha256, created_by, created_at FROM verivaro.evidence WHERE tenant_id=$1 AND project_id=$2 ORDER BY id LIMIT 200', values: args => [requireId(args.projectId)] }
 });
@@ -21,7 +21,7 @@ const operations = Object.freeze({
  * Dedicated nonprivileged login, exclusive lease, no named prepared statements.
  * No caller-supplied SQL; this adapter is a candidate, not yet a live driver integration.
  */
-export function createScopedDatabase(pool, { verifier, key, expectedLogin }) {
+export function createScopedDatabase(pool, { verifier, key, expectedLogin, report=()=>{} }) {
  if(!pool || typeof pool.connect!=='function' || !Buffer.isBuffer(key) || key.length!==32 || !verifier)
   throw new TypeError('invalid database configuration');
  validateServiceIdentity('verivaro_runtime',expectedLogin);
@@ -67,6 +67,8 @@ export function createScopedDatabase(pool, { verifier, key, expectedLogin }) {
     // Never return an uncertain or errored connection to the pool.
     if(error instanceof ScopedAccessDenied||operation==='renameProject'&&error.code==='42501')throw new ScopedAccessDenied();
     if(operation==='renameProject'&&error.code==='23505')throw new ScopedConflict();
+    // Never emit query text, error messages, bind parameters or credentials.
+    try{report('scoped_database_failure:'+operation+':'+(/^[0-9A-Z]{5}$/.test(error?.code??'')?error.code:'unclassified'));}catch{}
     throw new Error('scoped database operation failed');
    } finally {
     client.release(clean ? undefined : new Error('discard unsafe database lease'));
