@@ -4,6 +4,7 @@ import {createRequire} from 'node:module';
 import {resolve} from 'node:path';
 import {randomUUID,randomBytes,sign} from 'node:crypto';
 import {buildRejectionPreflight} from '../../src/security/rejection-preflight.mjs';
+import {compareSubmissionGraph} from '../../src/security/change-impact.mjs';
 import {local} from '../fixtures/provider-fixture.mjs';
 import {createEvidenceIngestion,createIngestionDatabase} from '../../src/security/evidence-ingestion.mjs';
 import {createEvidenceReleaseDatabase,ReleaseDenied,ReleaseConflict} from '../../src/security/evidence-release.mjs';
@@ -68,6 +69,9 @@ test('persistent graph independently reviews exact versions and links; contradic
   const submission={submissionId,sha256:prepared.sha256};
   const inspect=await graph.inspectSubmission(as('reviewer',submission));assert.equal(inspect.sha256,prepared.sha256);
   assert.equal(JSON.parse(inspect.manifest).evidence[0].id,good.id);
+  const impactScope={tenantId:JSON.parse(inspect.manifest).tenantId,projectId:JSON.parse(inspect.manifest).projectId,submissionId};
+  const impact=async()=>compareSubmissionGraph(inspect,await graph.assessment(as('viewer')),impactScope);
+  assert.equal((await impact()).changedCount,0);
   await assert.rejects(graph.inspectSubmission(as('outsider',submission)),ReleaseDenied);
   await assert.rejects(graph.authorizeSubmission(as('owner',submission)),ReleaseDenied);
   await assert.rejects(graph.reviewSubmission(as('author',{...submission,decision:'approved',reason:'No self review'})),ReleaseDenied);
@@ -80,6 +84,7 @@ test('persistent graph independently reviews exact versions and links; contradic
   await assert.rejects(graph.readSubmission(as('author',submission)),ReleaseDenied);
   assert.equal((await graph.listSubmissions(as('owner')))[0].canDownload,true);
   const second=link(bad);await graph.linkEvidence(as('author',second));
+  const linkedImpact=await impact();assert.equal(linkedImpact.changedCount,1);assert.ok(linkedImpact.changes[0].reasons.includes('evidence_links_changed'));assert.equal(linkedImpact.currentStatus,'blocked');
   assert.equal((await status()).status,'blocked');
   await assert.rejects(graph.readSubmission(as('owner',submission)),ReleaseConflict);
   await graph.reviewLink(as('reviewer2',{linkId:second.linkId,decision:'fail',reason:'Conflicting identifier'}));
@@ -92,6 +97,7 @@ test('persistent graph independently reviews exact versions and links; contradic
   const nextId=competing.find(x=>x.status==='fulfilled').value.versionId;
   await assert.rejects(graph.reviewRequirement(as('reviewer',approve)),ReleaseConflict);
   const changed=await graph.assessment(as('viewer'));assert.equal(changed.requirements[0].versionId,nextId);assert.deepEqual(changed.requirements[0].links,[]);assert.equal(changed.summary.verifiedRequired,0);
+  const revisedImpact=await impact();assert.ok(revisedImpact.changes[0].reasons.includes('criterion_revision_changed'));assert.equal(revisedImpact.changes[0].currentState,'awaiting_rule_review');
   const uncertain={...rule,requirementId:randomUUID(),versionId:randomUUID(),applicability:'unknown'};
   await graph.writeRequirement(as('author',uncertain));await graph.reviewRequirement(as('reviewer',{...approve,versionId:uncertain.versionId}));
   const unknown=await graph.assessment(as('owner'));assert.equal(unknown.summary.blockers,2);assert.ok(unknown.requirements.some(x=>x.state==='unknown_applicability'));

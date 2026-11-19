@@ -1,11 +1,12 @@
 import {createHash} from 'node:crypto';
 import {buildRejectionPreflight} from './rejection-preflight.mjs';
+import {compareSubmissionGraph} from './change-impact.mjs';
 import {UnsupportedExtraction} from './contractiq-extraction.mjs';
 import {EvidenceAccessDenied} from './evidence-retrieval.mjs';
 import {verifyIdentityToken} from './verify-identity.mjs';
 import {decodeStrictJson} from './provider-identity.mjs';
 import {ReleaseDenied,ReleaseConflict} from './evidence-release.mjs';
-const U='([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})',route=new RegExp('^/api/v1/tenants/'+U+'/projects/'+U+'/verification(?:/(requirement|rule-review|link|link-review|extract|import-source|submission-list|submission-inspect|submission-prepare|submission-review|submission-authorize|submission-download))?$'),id=new RegExp('^'+U+'$'),v4=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/,hash=/^[a-f0-9]{64}$/;
+const U='([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})',route=new RegExp('^/api/v1/tenants/'+U+'/projects/'+U+'/verification(?:/(requirement|rule-review|link|link-review|extract|import-source|submission-list|submission-inspect|submission-impact|submission-prepare|submission-review|submission-authorize|submission-download))?$'),id=new RegExp('^'+U+'$'),v4=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/,hash=/^[a-f0-9]{64}$/;
 export function isGraphWorkspaceRequest(req){return typeof req.url==='string'&&route.test(req.url);}
 export function isGraphWorkspaceMutation(req){return req.method==='POST'&&typeof req.url==='string'&&!!route.exec(req.url)?.[3]&&route.exec(req.url)[3]!=='submission-list';}
 function response(res,status,data){
@@ -20,13 +21,13 @@ async function read(req,action){
   for await(const c of req){n+=c.length;if(n>8192||n>Number(req.headers['content-length']))throw Error('invalid body');chunks.push(c);}
   if(n!==Number(req.headers['content-length']))throw Error('invalid body');
   const v=decodeStrictJson(Buffer.concat(chunks).toString('base64url'));
-  const shapes={'submission-inspect':['submissionId'],'submission-prepare':['submissionId'],'submission-review':['submissionId','sha256','decision','reason'],'submission-authorize':['submissionId','sha256'],'submission-download':['submissionId','sha256'],extract:['evidenceId','sha256'],'import-source':['evidenceId','sha256','line','quoteSha256','requirementId','versionId','applicability'],requirement:['requirementId','versionId','expectedRevision','title','criterion','applicability'],'rule-review':['versionId','decision','reason'],link:['versionId','linkId','evidenceId','sha256'],'link-review':['linkId','decision','reason']},keys=shapes[action];
+  const shapes={'submission-inspect':['submissionId'],'submission-impact':['submissionId'],'submission-prepare':['submissionId'],'submission-review':['submissionId','sha256','decision','reason'],'submission-authorize':['submissionId','sha256'],'submission-download':['submissionId','sha256'],extract:['evidenceId','sha256'],'import-source':['evidenceId','sha256','line','quoteSha256','requirementId','versionId','applicability'],requirement:['requirementId','versionId','expectedRevision','title','criterion','applicability'],'rule-review':['versionId','decision','reason'],link:['versionId','linkId','evidenceId','sha256'],'link-review':['linkId','decision','reason']},keys=shapes[action];
   if(!v||typeof v!=='object'||Array.isArray(v)||Object.keys(v).length!==keys.length||keys.some(k=>!Object.hasOwn(v,k)))throw Error('invalid fields');
   const isId=k=>typeof v[k]==='string'&&v[k].length===36&&id.test(v[k]),isV4=k=>typeof v[k]==='string'&&v[k].length===36&&v4.test(v[k]);
   const text=(x,n)=>typeof x==='string'&&[...x].length>=1&&[...x].length<=n&&Buffer.byteLength(x)<=4*n&&x===x.trim()&&!/[\x00-\x1f\x7f-\x9f\ud800-\udfff]/u.test(x);
   if(action.startsWith('submission-')){
    if(!isV4('submissionId'))throw Error('invalid submission');
-   if(!['submission-prepare','submission-inspect'].includes(action)&&(typeof v.sha256!=='string'||v.sha256.length!==64||!hash.test(v.sha256)))throw Error('invalid digest');
+   if(!['submission-prepare','submission-inspect','submission-impact'].includes(action)&&(typeof v.sha256!=='string'||v.sha256.length!==64||!hash.test(v.sha256)))throw Error('invalid digest');
    if(action==='submission-review'&&(!['approved','rejected'].includes(v.decision)||!text(v.reason,512)))throw Error('invalid review');
   }else if(action==='extract'||action==='import-source'){
    if(!isId('evidenceId')||typeof v.sha256!=='string'||v.sha256.length!==64||!hash.test(v.sha256))throw Error('invalid source');
@@ -68,6 +69,13 @@ export function createGraphWorkspaceApi({origin,verifier,admission,resolveSessio
    const args={...input,...scope};
    if(action==='submission-prepare')return response(res,200,await workflow.prepareSubmission(args));
    if(action==='submission-inspect')return response(res,200,await workflow.inspectSubmission(args));
+   if(action==='submission-impact'){
+    const baseline=await workflow.inspectSubmission(args);
+    controller.signal.throwIfAborted();
+    const current=await workflow.assessment(scope);
+    controller.signal.throwIfAborted();
+    return response(res,200,compareSubmissionGraph(baseline,current,{tenantId,projectId,submissionId:input.submissionId}));
+   }
    if(action==='submission-review')return response(res,200,{reviewed:await workflow.reviewSubmission(args)});
    if(action==='submission-authorize')return response(res,200,{authorized:await workflow.authorizeSubmission(args)});
    if(action==='submission-download'){
