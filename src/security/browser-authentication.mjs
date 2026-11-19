@@ -53,6 +53,7 @@ export function createBrowserAuthentication({db,gateway,provider,localVerifier,o
   // Only fixed routes; never use Host or forwarded headers to generate URLs.
   if(typeof req.url!=='string'||req.url.length>8192||!req.url.startsWith('/auth/'))return send(res,404);
   const url=new URL(req.url,app.origin);
+  if(req.url.split('?')[0]!==url.pathname)return send(res,404);
   if(url.origin!==app.origin||!['/auth/login','/auth/callback','/auth/logout','/auth/session'].includes(url.pathname))return send(res,404);
   if(req.headers['transfer-encoding']!==undefined||(req.headers['content-length']!==undefined&&req.headers['content-length']!=='0'))return send(res,400,'Request denied',{'Connection':'close'});
   if(active>=maxConcurrent)return send(res,429,'Temporarily unavailable',{'Retry-After':'5'});
@@ -70,6 +71,7 @@ export function createBrowserAuthentication({db,gateway,provider,localVerifier,o
    }
    if(url.pathname==='/auth/callback'){
     if(req.method!=='GET')return send(res,405);
+    if(await resolveSession(req))return send(res,409,'Already signed in');
     // Require issuer response parameter (RFC 9207) and exactly one of each field.
     if([...url.searchParams.keys()].length!==3||!['state','code','iss'].every(k=>url.searchParams.getAll(k).length===1)||url.searchParams.get('iss')!==provider.issuer)throw Error('callback denied');
     const state=url.searchParams.get('state'),code=url.searchParams.get('code'),browser=cookie(req,flow);
@@ -95,7 +97,7 @@ export function createBrowserAuthentication({db,gateway,provider,localVerifier,o
    }
    if(req.method!=='GET'||url.search)return send(res,405);
    return send(res,(await resolveSession(req))?204:401);
-  }catch{return send(res,401,'Authentication unavailable');}
+  }catch{return send(res,url.pathname==='/auth/callback'?401:503,'Authentication unavailable');}
   finally{active--;}
  }
  return Object.freeze({handler,resolveSession});
