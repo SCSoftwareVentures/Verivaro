@@ -4,7 +4,7 @@ test "$PGDATABASE" = verivaro_test
 test -n "$VV_CI_PG_CONTAINER"
 tls_root="$(mktemp -d)"
 cleanup_tls() { rm -rf "$tls_root"; }
-trap 'cleanup_tls; rm -rf "$backup_root"' EXIT
+trap cleanup_tls EXIT
 umask 077
 openssl req -new -x509 -newkey rsa:2048 -nodes -days 2 -subj '/CN=Verivaro CI CA' -addext 'basicConstraints=critical,CA:TRUE' -keyout "$tls_root/ca.key" -out "$tls_root/ca.pem" 2>/dev/null
 openssl req -new -x509 -newkey rsa:2048 -nodes -days 2 -subj '/CN=Wrong CI CA' -addext 'basicConstraints=critical,CA:TRUE' -keyout "$tls_root/wrong.key" -out "$tls_root/wrong.pem" 2>/dev/null
