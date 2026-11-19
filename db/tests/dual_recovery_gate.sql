@@ -99,6 +99,31 @@ END $inactive$;
 RESET ROLE;
 UPDATE verivaro_private.recovery_operators SET active=true WHERE login_name='vv_ci_reviewer_two';
 SET ROLE verivaro_recovery_service;
+DO $reactivated$
+BEGIN
+ BEGIN
+  PERFORM verivaro_identity.recover_actor('10000000-0000-4000-8000-000000000003','20000000-0000-4000-8000-000000000001');
+  RAISE EXCEPTION 'previous approval revived after reactivation';
+ EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+END $reactivated$;
+RESET ROLE;
+SET SESSION AUTHORIZATION vv_ci_reviewer_two;
+SET ROLE verivaro_recovery_approver;
+SELECT verivaro_identity.approve_recovery('20000000-0000-4000-8000-000000000001');
+RESET ROLE;
+RESET SESSION AUTHORIZATION;
+REVOKE verivaro_recovery_approver FROM vv_ci_reviewer_two;
+SET ROLE verivaro_recovery_service;
+DO $membership$
+BEGIN
+ BEGIN
+  PERFORM verivaro_identity.recover_actor('10000000-0000-4000-8000-000000000003','20000000-0000-4000-8000-000000000001');
+  RAISE EXCEPTION 'removed approver role counted';
+ EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+END $membership$;
+RESET ROLE;
+GRANT verivaro_recovery_approver TO vv_ci_reviewer_two;
+SET ROLE verivaro_recovery_service;
 SELECT verivaro_identity.request_recovery('10000000-0000-4000-8000-000000000003','20000000-0000-4000-8000-000000000002');
 SELECT verivaro_identity.recover_actor('10000000-0000-4000-8000-000000000003','20000000-0000-4000-8000-000000000001');
 SELECT verivaro_identity.disable_actor('10000000-0000-4000-8000-000000000003');
@@ -125,9 +150,9 @@ RESET SESSION AUTHORIZATION;
 INSERT INTO verivaro_private.recovery_requests
  SELECT '20000000-0000-4000-8000-000000000003',actor_id,lockdown_id,clock_timestamp()-interval '20 minutes',clock_timestamp()-interval '5 minutes'
  FROM verivaro_private.disabled_actors WHERE actor_id='10000000-0000-4000-8000-000000000003';
-INSERT INTO verivaro_private.recovery_approvals(request_id,approver_id,approved_at) VALUES
- ('20000000-0000-4000-8000-000000000003','10000000-0000-4000-8000-000000000001',clock_timestamp()-interval '10 minutes'),
- ('20000000-0000-4000-8000-000000000003','10000000-0000-4000-8000-000000000002',clock_timestamp()-interval '10 minutes');
+INSERT INTO verivaro_private.recovery_approvals(request_id,approver_id,operator_generation,approved_at)
+ SELECT '20000000-0000-4000-8000-000000000003',actor_id,generation,clock_timestamp()-interval '10 minutes'
+ FROM verivaro_private.recovery_operators WHERE login_name IN ('vv_ci_reviewer_one','vv_ci_reviewer_two');
 SET ROLE verivaro_recovery_service;
 DO $expired$
 BEGIN

@@ -9,8 +9,18 @@ ALTER TABLE verivaro_private.disabled_actors ADD COLUMN lockdown_id uuid NOT NUL
 CREATE TABLE verivaro_private.recovery_operators(
  login_name name PRIMARY KEY,
  actor_id uuid NOT NULL UNIQUE,
- active boolean NOT NULL DEFAULT true
+ active boolean NOT NULL DEFAULT true,
+ generation uuid NOT NULL DEFAULT gen_random_uuid()
 );
+CREATE FUNCTION verivaro_private.rotate_operator_generation() RETURNS trigger
+LANGUAGE plpgsql SET search_path=pg_catalog AS $generation$
+BEGIN
+ NEW.generation:=gen_random_uuid();
+ RETURN NEW;
+END $generation$;
+REVOKE ALL ON FUNCTION verivaro_private.rotate_operator_generation() FROM PUBLIC;
+CREATE TRIGGER recovery_operator_generation BEFORE UPDATE ON verivaro_private.recovery_operators
+ FOR EACH ROW EXECUTE FUNCTION verivaro_private.rotate_operator_generation();
 CREATE TABLE verivaro_private.recovery_requests(
  request_id uuid PRIMARY KEY,
  actor_id uuid NOT NULL,
@@ -22,8 +32,9 @@ CREATE TABLE verivaro_private.recovery_requests(
 CREATE TABLE verivaro_private.recovery_approvals(
  request_id uuid NOT NULL REFERENCES verivaro_private.recovery_requests(request_id),
  approver_id uuid NOT NULL,
+ operator_generation uuid NOT NULL,
  approved_at timestamptz NOT NULL DEFAULT clock_timestamp(),
- PRIMARY KEY(request_id,approver_id)
+ PRIMARY KEY(request_id,approver_id,operator_generation)
 );
 REVOKE ALL ON verivaro_private.recovery_operators,verivaro_private.recovery_requests,verivaro_private.recovery_approvals FROM PUBLIC;
 CREATE TRIGGER recovery_requests_immutable BEFORE UPDATE OR DELETE OR TRUNCATE
@@ -44,18 +55,18 @@ END $req$;
 
 CREATE FUNCTION verivaro_identity.approve_recovery(r uuid) RETURNS void
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,verivaro_private AS $approve$
-DECLARE req verivaro_private.recovery_requests%ROWTYPE; operator_id uuid;
+DECLARE req verivaro_private.recovery_requests%ROWTYPE; operator_id uuid; operator_generation uuid;
 BEGIN
  SELECT * INTO req FROM verivaro_private.recovery_requests WHERE request_id=r;
  IF NOT FOUND THEN RAISE EXCEPTION 'recovery approval denied' USING ERRCODE='42501'; END IF;
  PERFORM verivaro_private.lock_identity(req.actor_id);
- SELECT actor_id INTO operator_id FROM verivaro_private.recovery_operators
- WHERE login_name=session_user AND active;
+ SELECT actor_id,generation INTO operator_id,operator_generation FROM verivaro_private.recovery_operators
+ WHERE login_name=session_user AND active FOR SHARE;
  IF operator_id IS NULL OR operator_id=req.actor_id OR req.expires_at<=clock_timestamp()
  OR NOT EXISTS(SELECT 1 FROM verivaro_private.disabled_actors d WHERE d.actor_id=req.actor_id AND d.lockdown_id=req.lockdown_id)
  OR EXISTS(SELECT 1 FROM verivaro_private.identity_events WHERE authorization_ref=r)
  THEN RAISE EXCEPTION 'recovery approval denied' USING ERRCODE='42501'; END IF;
- INSERT INTO verivaro_private.recovery_approvals(request_id,approver_id) VALUES(r,operator_id);
+ INSERT INTO verivaro_private.recovery_approvals(request_id,approver_id,operator_generation) VALUES(r,operator_id,operator_generation);
 END $approve$;
 
 -- Replace the old UUID-only authorization interface; no legacy bypass remains.
@@ -74,9 +85,12 @@ BEGIN
  PERFORM o.actor_id FROM verivaro_private.recovery_operators o
  JOIN verivaro_private.recovery_approvals p ON p.approver_id=o.actor_id
  WHERE p.request_id=approval ORDER BY o.actor_id FOR SHARE OF o;
- SELECT count(*) INTO approved_count
+ SELECT count(DISTINCT p.approver_id) INTO approved_count
  FROM verivaro_private.recovery_approvals p JOIN verivaro_private.recovery_operators o ON o.actor_id=p.approver_id
+ JOIN pg_catalog.pg_roles role_login ON role_login.rolname=o.login_name
  WHERE p.request_id=approval AND o.active AND p.approver_id<>a
+ AND p.operator_generation=o.generation
+ AND pg_catalog.pg_has_role(role_login.oid,'verivaro_recovery_approver','MEMBER')
  AND p.approved_at>=req.requested_at AND p.approved_at<req.expires_at;
  n:=clock_timestamp();
  IF approved_count<2 OR n>=req.expires_at THEN RAISE EXCEPTION 'recovery denied' USING ERRCODE='42501'; END IF;
