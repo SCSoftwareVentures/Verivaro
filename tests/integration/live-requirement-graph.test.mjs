@@ -101,6 +101,21 @@ test('persistent graph independently reviews exact versions and links; contradic
   const uncertain={...rule,requirementId:randomUUID(),versionId:randomUUID(),applicability:'unknown'};
   await graph.writeRequirement(as('author',uncertain));await graph.reviewRequirement(as('reviewer',{...approve,versionId:uncertain.versionId}));
   const unknown=await graph.assessment(as('owner'));assert.equal(unknown.summary.blockers,2);assert.ok(unknown.requirements.some(x=>x.state==='unknown_applicability'));
+  // Separate ready project for dependency/release regression; no other blockers.
+  const dp=randomUUID();await admin.query('INSERT INTO verivaro.projects(id,tenant_id,name) VALUES($1,$2,$3)',[dp,tenantId,'Dependencies']);
+  for(const [who,role] of [['owner','owner'],['author','contributor'],['reviewer','reviewer'],['reviewer2','reviewer'],['viewer','viewer']])await admin.query('INSERT INTO verivaro.project_members(tenant_id,project_id,actor_id,role) VALUES($1,$2,$3,$4)',[tenantId,dp,actors[who].a,role]);
+  const da=(who,x={})=>as(who,{projectId:dp,...x}),de=await upload('Dependency evidence','author',dp);
+  const mk=()=>({...rule,requirementId:randomUUID(),versionId:randomUUID(),expectedRevision:0});
+  const complete=async q=>{await graph.reviewRequirement(da('reviewer',{...approve,versionId:q.versionId}));const l={...link(de),versionId:q.versionId};await graph.linkEvidence(da('author',l));await graph.reviewLink(da('reviewer',{...pass,linkId:l.linkId}));};
+  const root=mk(),dependent=mk(),leaf=mk();await graph.writeRequirement(da('author',root));await complete(root);
+  const connect=async(q,pr)=>{await graph.writeRequirement(da('author',q));const edge={edgeId:randomUUID(),versionId:q.versionId,prerequisiteId:pr.requirementId};assert.equal(await graph.proposeDependency(da('author',edge)),edge.edgeId);assert.equal(await graph.proposeDependency(da('author',edge)),edge.edgeId);await assert.rejects(graph.reviewDependency(da('author',{...edge,decision:'approved',reason:'Self review'})),ReleaseDenied);await complete(q);const pending=await graph.assessment(da('viewer'));assert.equal(pending.requirements.find(x=>x.requirementId===q.requirementId).state,'dependency_blocked');await graph.reviewDependency(da('reviewer2',{...edge,decision:'approved',reason:'Pinned prerequisite assessed'}));return edge;};
+  await connect(dependent,root);await connect(leaf,dependent);
+  assert.equal((await graph.assessment(da('viewer'))).summary.status,'criteria_satisfied');
+  const ds=await graph.prepareSubmission(da('author',{submissionId:randomUUID()}));await graph.reviewSubmission(da('reviewer',{...ds,decision:'approved',reason:'Dependency package'}));await graph.authorizeSubmission(da('owner',ds));await graph.readSubmission(da('owner',ds));
+  const revised={...root,versionId:randomUUID(),expectedRevision:1};await graph.writeRequirement(da('author',revised));await complete(revised);
+  const affected=await graph.assessment(da('viewer'));assert.equal(affected.summary.blockers,2);assert.equal(affected.requirements.find(x=>x.requirementId===root.requirementId).state,'satisfied');assert.equal(buildRejectionPreflight(affected).issues.filter(x=>x.code==='DEPENDENCY_BLOCKED').length,2);
+  await assert.rejects(graph.readSubmission(da('owner',ds)),ReleaseConflict);await assert.rejects(graph.prepareSubmission(da('author',{submissionId:randomUUID()})),ReleaseConflict);
+  const omit={...dependent,versionId:randomUUID(),expectedRevision:1};await graph.writeRequirement(da('author',omit));await assert.rejects(graph.reviewRequirement(da('reviewer',{...approve,versionId:omit.versionId})),ReleaseConflict);
   const c=await runtime.connect();try{await c.query('SET ROLE verivaro_runtime');await assert.rejects(c.query('SELECT * FROM verivaro_private.requirement_versions'),e=>e.code==='42501');}finally{c.release(true);}
   for(const table of ['requirement_versions','requirement_reviews','requirement_evidence_links','requirement_link_reviews'])await assert.rejects(admin.query('DELETE FROM verivaro_private.'+table+' WHERE false'),e=>e.code==='42501');
   await graph.archiveProject(as('owner',{requestId:randomUUID(),revision:0}));

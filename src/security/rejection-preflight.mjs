@@ -1,9 +1,10 @@
 // Deterministic remediation for a scoped assessment; no inferred legal
 // obligations, semantic contradiction detection, or release permission.
-const states=new Set(['awaiting_rule_review','rule_rejected','unknown_applicability','not_applicable','conflict','failed','unresolved_evidence','satisfied','missing_evidence','integrity_failure']);
+const states=new Set(['awaiting_rule_review','rule_rejected','unknown_applicability','not_applicable','conflict','failed','unresolved_evidence','satisfied','missing_evidence','integrity_failure','dependency_blocked']);
 const apps=new Set(['required','optional','not_applicable','unknown']);
-const safety=new Set(['awaiting_rule_review','rule_rejected','unknown_applicability','integrity_failure']);
+const safety=new Set(['awaiting_rule_review','rule_rejected','unknown_applicability','integrity_failure','dependency_blocked']);
 const guidance={
+ dependency_blocked:['DEPENDENCY_BLOCKED','Resolve the prerequisite and submit a fresh criterion revision with independently reviewed dependency pins.','reviewer',1],
  integrity_failure:['INTEGRITY_FAILURE','Stop use of affected evidence; have an authorized operator investigate source and storage integrity before any further assessment.','operator',0],
  conflict:['CONFLICTING_EVIDENCE','Resolve contradictory evidence with an independent reviewer. Record a new criterion revision and reassess relevant evidence; do not discard the historical conflict.','reviewer',1],
  failed:['FAILED_EVIDENCE','Correct the underlying deficiency and submit fresh evidence on a new reviewed revision; prior failed assessments remain in history.','contributor',2],
