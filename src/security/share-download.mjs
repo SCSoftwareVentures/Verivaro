@@ -83,15 +83,17 @@ export function createShareDownloadHandler({resolveShare,resolveRecipientShare,r
   timer.unref?.();
   const disconnect=()=>{if(!res.writableFinished)controller.abort();};
   res.once('close',disconnect);
-  let staged,source,reservation,distributedLease,cleanupUncertain=false;
+  let staged,source,reservation,distributedLease,cleanupUncertain=false,outcome='failed';
   try{
    if(distributedAdmission){
     distributedLease=await distributedAdmission.acquire(peer,maxBytes,controller.signal);
     if(!distributedLease){send(res,429,Buffer.from('Not available\n'),{'Content-Type':'text/plain; charset=utf-8','Retry-After':'60','Connection':'close'});return;}
    }
+   outcome='denied';
    const first=await authorize();
    controller.signal.throwIfAborted();
    if(!validArtifact(first))throw Error('denied');
+   outcome='failed';
    if(budget){
     reservation=await budget.reserve(maxBytes,controller.signal);
     if(!reservation){send(res,429,Buffer.from('Not available\n'),{'Content-Type':'text/plain; charset=utf-8','Retry-After':'60','Connection':'close'});return;}
@@ -112,16 +114,19 @@ export function createShareDownloadHandler({resolveShare,resolveRecipientShare,r
    controller.signal.throwIfAborted();
    if(!length)throw Error('empty artifact');
    body=buffer.subarray(0,length);
-   if(!timingSafeEqual(createHash('sha256').update(body).digest(),Buffer.from(first.sha256,'hex')))throw Error('integrity mismatch');
+   if(!timingSafeEqual(createHash('sha256').update(body).digest(),Buffer.from(first.sha256,'hex'))){const e=Error('integrity mismatch');e.integrityFailure=true;throw e;}
    }
    // Recheck AFTER reading and hashing, immediately before sending.
+   outcome='denied';
    const final=await authorize();
    controller.signal.throwIfAborted();
    if(!validArtifact(final)||final.artifact_id!==first.artifact_id||final.sha256!==first.sha256)throw Error('denied');
+   outcome='failed';
    if(staged){
     if(res.destroyed||res.writableEnded)return;
     res.writeHead(200,{...baseHeaders,'Content-Type':'application/octet-stream','Content-Length':staged.length,'Content-Disposition':'attachment; filename="verivaro-export.bin"'});
     await pipeline(Readable.from(staged.read()),res,{signal:controller.signal});
+    if(res.writableFinished)outcome='completed';
     return;
    }
    // Keep the concurrency slot until bytes are flushed or the peer disconnects.
@@ -132,13 +137,14 @@ export function createShareDownloadHandler({resolveShare,resolveRecipientShare,r
     res.once('finish',done);res.once('close',done);res.once('error',failed);
     try{send(res,200,body,{'Content-Disposition':'attachment; filename="verivaro-export.bin"'});}catch(e){done();reject(e);}
    });
-  }catch(e){cleanupUncertain=e?.cleanupUncertain===true;if(res.headersSent){res.destroy();}else{deny(res);}}
+   if(res.writableFinished)outcome='completed';
+  }catch(e){if(e?.integrityFailure===true)outcome='integrity';cleanupUncertain=e?.cleanupUncertain===true;if(res.headersSent){res.destroy();}else{deny(res);}}
   finally{
    try{source?.destroy?.();}catch{res.destroy();}
    let cleaned=!cleanupUncertain;
    try{if(staged)await staged.close();}catch{cleaned=false;res.destroy();}
    // Fail closed if descriptor cleanup is uncertain: retain reservation until restart.
-   if(cleaned){reservation?.release();try{await distributedLease?.release();}catch{res.destroy();}}
+   if(cleaned){reservation?.release();try{await distributedLease?.release(outcome);}catch{res.destroy();}}
    // Failed release or ambiguous commit retains the durable lease for incident reconciliation.
    clearTimeout(timer);res.removeListener('close',disconnect);inFlight--;
   }

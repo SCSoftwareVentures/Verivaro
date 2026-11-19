@@ -72,7 +72,7 @@ export async function stageEncryptedArtifact(source,{directory,maxBytes,sha256,s
   }
   if(used)await flush();
   signal.throwIfAborted();
-  if(!total||!timingSafeEqual(hash.digest(),Buffer.from(sha256,'hex')))throw Error('artifact integrity mismatch');
+  if(!total||!timingSafeEqual(hash.digest(),Buffer.from(sha256,'hex'))){const e=Error('artifact integrity mismatch');e.integrityFailure=true;throw e;}
   const length=total;
   return Object.freeze({length,close,async *read(){
    if(closed||consumed)throw Error('staged artifact unavailable');
@@ -85,7 +85,7 @@ export async function stageEncryptedArtifact(source,{directory,maxBytes,sha256,s
     const decipher=createDecipheriv('aes-256-gcm',key,nonce(prefix,block));
     decipher.setAAD(aad(block,n));decipher.setAuthTag(sealed.subarray(n));
     // Authenticate the entire block before yielding any of its plaintext.
-    const plain=Buffer.concat([decipher.update(sealed.subarray(0,n)),decipher.final()]);
+    let plain;try{plain=Buffer.concat([decipher.update(sealed.subarray(0,n)),decipher.final()]);}catch{const e=Error('staging block authentication failed');e.integrityFailure=true;throw e;}
     position+=n+TAG;remaining-=n;block++;
     yield plain;
    }

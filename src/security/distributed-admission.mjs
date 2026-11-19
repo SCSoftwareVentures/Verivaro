@@ -47,9 +47,9 @@ export function createDistributedAdmission(pool,{peerKey}){
    const accepted=await run('SELECT verivaro_admission.acquire($1::uuid,$2::bytea,$3::bigint) AS ok',[lease,digest,need]);
    if(!accepted)return null;
    let released=false;
-   const release=async()=>{
+   const release=async(outcome='unknown')=>{
     if(released)return;
-    await run('SELECT verivaro_admission.release($1::uuid) AS ok',[lease]);released=true;
+    await run('SELECT verivaro_admission.finish($1::uuid,$2::text) AS ok',[lease,outcome]);released=true;
    };
    if(signal.aborted){await release();signal.throwIfAborted();}
    return Object.freeze({release});
