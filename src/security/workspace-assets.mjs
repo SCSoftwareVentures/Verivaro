@@ -80,7 +80,7 @@ function graphChoice(options,selected){const s=node('select');for(const [v,t] of
 const graphApplicability=[['unknown','Unknown'],['required','Required'],['optional','Optional'],['not_applicable','Not applicable']];
 function graphReview(row,action,idKey,idValue,choices){
  const s=graphChoice(choices),reason=node('textarea'),a=node('div',undefined,'graph-controls');reason.rows=2;reason.maxLength=512;
- a.append(graphField('Decision',s),graphField('Review reason',reason),button('Record '+(action==='rule-review'?'rule review':action==='dependency-review'?'dependency review':action==='dependency-removal-review'?'dependency removal review':action==='window-review'?'capture rule review':'evidence assessment'),async()=>{
+ a.append(graphField('Decision',s),graphField('Review reason',reason),button('Record '+(action==='rule-review'?'rule review':action==='dependency-review'?'dependency review':action==='dependency-removal-review'?'dependency removal review':action==='window-review'?'capture rule review':action==='recovery-review'?'recovery approach review':'evidence assessment'),async()=>{
   const why=reason.value.trim();if(!why)throw Error('Provide a review reason.');if(!confirm('Record this immutable review decision?'))return;
   await graphPost(action,{[idKey]:idValue,decision:s.value,reason:why});await loadProject();
  }));row.append(a);
@@ -236,6 +236,30 @@ function renderProofLockInsights(p,data,g){
  root.append(node('h3','Deadline and receipt reconciliation'));
  if(!i.recovery.length)root.append(node('p','No historical receipt gaps identified under the current recorded rules.'));
  for(const r of i.recovery){const row=node('div',undefined,'preflight-item'),l=node('a',r.classification.replaceAll('_',' '));l.href='#requirement-'+r.requirementId;row.append(l,node('p','Planned deadline (UTC): '+r.deadline+(r.superseded?' · Superseded schedule':'')),node('p',r.guidance));root.append(row);}
+ const proposals=p.recoveryProposals??[],currentVersions=new Map(g.requirements.map(q=>[q.requirementId,q])),windows=new Map(p.windows.map(w=>[w.windowId,w]));
+ root.append(node('h3','Recovery approaches'),node('p','Approval permits consideration of the proposed approach only. It does not waive the original criterion, verify the evidence or authorise release.','meta'));
+ for(const r of proposals){
+  const row=node('article',undefined,'item'),q=currentVersions.get(r.requirementId);
+  row.append(node('h4',q?.title??'Historical criterion'),node('p',r.approach.replaceAll('_',' ')+' · '+r.decision+(r.criterionCurrent?'':' · Superseded criterion'),'state'),node('p','Original planned deadline: '+r.deadline),node('p',r.reason),node('p','Source '+r.evidenceId+' · SHA-256 '+r.sha256+(r.sourceIntact?'':' · Integrity failure'),'meta'));
+  if(r.reviewReason)row.append(node('p',r.reviewReason));
+  if(!g.archived&&data.tenantRole==='reviewer'&&data.projectRole==='reviewer'&&r.decision==='pending'&&r.sourceIntact)graphReview(row,'recovery-review','recoveryId',r.recoveryId,[['rejected','Reject'],['approved','Approve approach for assessment']]);
+  root.append(row);
+ }
+ if(g.canWrite&&!g.archived&&Array.isArray(data.evidence)&&data.evidence.length){
+  for(const gap of i.recovery){
+   const w=windows.get(gap.windowId),q=currentVersions.get(gap.requirementId);if(!w||q?.versionId!==w.versionId)continue;
+   const existing=proposals.filter(x=>x.windowId===gap.windowId&&x.revisionId===gap.revisionId);if(existing.length>=4)continue;
+   const sources=data.evidence.filter(e=>!existing.some(x=>x.evidenceId===e.id));if(!sources.length)continue;
+   const form=node('details'),source=node('select'),approach=graphChoice([['contemporaneous_record','Original contemporaneous record'],['independent_inspection','Independent inspection'],['documented_exception_request','Documented exception request']]),reason=node('textarea');reason.rows=2;reason.maxLength=512;
+   for(const e of sources)namedOption(source,e.id,e.id);
+   form.append(node('summary','Propose recovery for '+q.title),node('p','Original planned deadline: '+gap.deadline,'meta'),graphField('Recovery source evidence',source),graphField('Recovery approach',approach),graphField('Recovery justification',reason),button('Submit recovery approach',async()=>{
+    const e=sources.find(x=>x.id===source.value),why=reason.value.trim();if(!e||!why)throw Error('Select supporting evidence and explain the approach.');
+    if(!confirm('Record this recovery approach for independent review? The original requirement is not waived.'))return;
+    const key=current.base+':recovery:'+JSON.stringify([gap.windowId,gap.revisionId,w.versionId,e.id,e.sha256,approach.value,why]);
+    await graphPost('recovery-propose',{recoveryId:retryId(key),windowId:gap.windowId,revisionId:gap.revisionId,versionId:w.versionId,evidenceId:e.id,sha256:e.sha256,approach:approach.value,reason:why});attempts.delete(key);await loadProject();say('Recovery approach proposed.');
+   }));root.append(form);
+  }
+ }
  if(i.receiptTimeline.length){const timeline=node('details');timeline.append(node('summary','Immutable capture receipt history'));for(const t of i.receiptTimeline){timeline.append(node('h4','Schedule revision '+t.revision+(t.superseded?' (superseded)':'')));for(const r of t.receipts)timeline.append(node('p','Received '+r.receivedAt+' · '+r.timing.replaceAll('_',' ')+' · review '+r.decision+' · evidence '+r.evidenceId,'meta'));}root.append(timeline);}
  const owner=!g.archived&&!current.project.archivedAt&&data.tenantRole==='owner'&&data.projectRole==='owner',policy=i.policy;
  if(owner&&policy.revision<32){
