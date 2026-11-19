@@ -1,3 +1,4 @@
+import {buildRejectionPreflight} from './rejection-preflight.mjs';
 import {UnsupportedExtraction} from './contractiq-extraction.mjs';
 import {EvidenceAccessDenied} from './evidence-retrieval.mjs';
 import {verifyIdentityToken} from './verify-identity.mjs';
@@ -55,7 +56,7 @@ export function createGraphWorkspaceApi({origin,verifier,admission,resolveSessio
    if(!await admission.actor(p.actorId))return denied(res,429);
    if(res.destroyed)return;
    const [,tenantId,projectId]=m,scope={token,tenantId,projectId};
-   if(!mutation)return response(res,200,{...await workflow.assessment(scope),extractionEnabled:typeof extract==='function'});
+   if(!mutation){const assessment=await workflow.assessment(scope);return response(res,200,{...assessment,preflight:buildRejectionPreflight(assessment),extractionEnabled:typeof extract==='function'});}
    let input;try{input=await read(req,action);}catch{return denied(res,400);}
    controller.signal.throwIfAborted();
    const args={...input,...scope};

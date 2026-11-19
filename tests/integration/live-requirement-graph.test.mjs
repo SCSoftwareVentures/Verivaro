@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {resolve} from 'node:path';
 import {randomUUID,randomBytes,sign} from 'node:crypto';
+import {buildRejectionPreflight} from '../../src/security/rejection-preflight.mjs';
 import {local} from '../fixtures/provider-fixture.mjs';
 import {createEvidenceIngestion,createIngestionDatabase} from '../../src/security/evidence-ingestion.mjs';
 import {createEvidenceReleaseDatabase,ReleaseDenied,ReleaseConflict} from '../../src/security/evidence-release.mjs';
@@ -48,10 +49,24 @@ test('persistent graph independently reviews exact versions and links; contradic
   const pass={linkId:first.linkId,decision:'pass',reason:'Exact identifier matched'};
   await assert.rejects(graph.reviewLink(as('author',pass)),ReleaseDenied);
   await graph.reviewLink(as('reviewer',pass));assert.equal((await status()).status,'criteria_satisfied');
+  const ready=buildRejectionPreflight(await graph.assessment(as('viewer')));assert.equal(ready.mandatoryCoveragePercent,100);assert.equal(ready.blockers,0);
+  // Simulate storage corruption with trusted admin in disposable CI only;
+  // restore exact envelope immediately even when assertion fails.
+  const originalEnvelope=(await admin.query('SELECT envelope FROM verivaro_private.evidence_objects WHERE evidence_id=$1',[good.id])).rows[0].envelope;
+  const broken=Buffer.from(originalEnvelope);broken[0]^=1;
+  await admin.query('ALTER TABLE verivaro_private.evidence_objects DISABLE TRIGGER evidence_object_immutable');
+  try{
+   await admin.query('UPDATE verivaro_private.evidence_objects SET envelope=$2 WHERE evidence_id=$1',[good.id,broken]);
+   const corrupt=await graph.assessment(as('viewer'));assert.equal(corrupt.requirements[0].state,'integrity_failure');assert.equal(corrupt.summary.status,'blocked');
+   assert.equal(buildRejectionPreflight(corrupt).issues[0].code,'INTEGRITY_FAILURE');
+  }finally{
+   try{await admin.query('UPDATE verivaro_private.evidence_objects SET envelope=$2 WHERE evidence_id=$1',[good.id,originalEnvelope]);}finally{await admin.query('ALTER TABLE verivaro_private.evidence_objects ENABLE TRIGGER evidence_object_immutable');}
+  }
+  assert.equal((await status()).status,'criteria_satisfied');
   const second=link(bad);await graph.linkEvidence(as('author',second));
   assert.equal((await status()).status,'blocked');
   await graph.reviewLink(as('reviewer2',{linkId:second.linkId,decision:'fail',reason:'Conflicting identifier'}));
-  const conflicting=await graph.assessment(as('owner'));assert.equal(conflicting.requirements[0].state,'conflict');assert.equal(conflicting.summary.blockers,1);
+  const conflicting=await graph.assessment(as('owner'));assert.equal(conflicting.requirements[0].state,'conflict');assert.equal(conflicting.summary.blockers,1);assert.equal(buildRejectionPreflight(conflicting).issues[0].code,'CONFLICTING_EVIDENCE');
   const selfLink=link(self);await graph.linkEvidence(as('author',selfLink));
   await assert.rejects(graph.reviewLink(as('reviewer',{linkId:selfLink.linkId,decision:'pass',reason:'Own upload'})),ReleaseDenied);
   const next={...rule,versionId:randomUUID(),expectedRevision:1,criterion:'Updated register identifier must match.'};
@@ -68,6 +83,6 @@ test('persistent graph independently reviews exact versions and links; contradic
   await graph.archiveProject(as('owner',{requestId:randomUUID(),revision:0}));
   await assert.rejects(graph.writeRequirement(as('author',{...rule,requirementId:randomUUID(),versionId:randomUUID()})),ReleaseDenied);
   assert.equal((await status()).status,'blocked');
-  console.log('persistent_requirement_graph_and_readiness_gate_passed');
+  console.log('persistent_requirement_graph_and_readiness_gate_passed');console.log('rejection_preflight_storage_integrity_gate_passed');
  }finally{await Promise.all([admin.end(),runtime.end(),ingestPool.end()]);}
 });

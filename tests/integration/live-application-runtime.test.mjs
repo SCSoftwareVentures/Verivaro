@@ -300,6 +300,12 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   assert.equal((await getGraph()).requirements.find(x=>x.versionId===imported.versionId).state,'missing_evidence');
   await assert.rejects(admin.query('DELETE FROM verivaro_private.requirement_sources WHERE version_id=$1',[imported.versionId]),e=>e.code==='42501');
   console.log('https_contractiq_source_line_gate_passed');
+  const preflight=(await getGraph()).preflight;
+  assert.equal(preflight.status,'blocked');assert.equal(preflight.mandatoryCoveragePercent,0);assert.equal(preflight.blockers,2);
+  assert.ok(preflight.issues.some(x=>x.code==='MISSING_EVIDENCE'&&x.requirementId===imported.requirementId));
+  assert.ok(preflight.issues.some(x=>x.code==='RULE_REVIEW_REQUIRED'&&x.requirementId===rule.requirementId));
+  assert.ok(preflight.limitations.some(x=>x.includes('not release authorization')));
+  console.log('https_rejection_preflight_gate_passed');
   assert.equal((await request('/auth/logout-all',{method:'POST',headers:{origin,cookie:session}})).status,204);
   assert.equal((await request(route,{headers:{cookie:session}})).status,401);
   await app.stop();assert.equal(app.server.listening,false);
