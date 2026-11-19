@@ -3,8 +3,9 @@ import {open,mkdtemp,rename,rm,stat} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {join,isAbsolute} from 'node:path';
 import {createEncryptedBackup,verifyAndStageBackup} from './encrypted-database-backup.mjs';
+import {backupKeyConfigValid} from './backup-keyring.mjs';
 import {createPrivateFileStore,isArtifactId} from './private-file-store.mjs';
-const LIMIT=4096,MAX_TOTAL=2*1024*1024*1024,MAX_MANIFEST=2*1024*1024;
+const LIMIT=4096,MAX_TOTAL=8*1024*1024*1024,MAX_MANIFEST=2*1024*1024;
 const hash=x=>typeof x==='string'&&/^[a-f0-9]{64}$/.test(x);
 const digest=x=>createHash('sha256').update(x).digest('hex');
 const validDate=x=>typeof x==='string'&&new Date(x).toISOString()===x;
@@ -26,7 +27,7 @@ export function normalizeRecoveryInventory(rows){
  }
  return [...seen].sort(([a],[b])=>a<b?-1:a>b?1:0).map(([id,sha256])=>({id,sha256}));
 }
-function scope(c){if(!isArtifactId(c.installationId)||!/^[a-z][a-z0-9_]{0,62}$/.test(c.database)||!Buffer.isBuffer(c.key)||c.key.length!==32)throw Error('invalid recovery scope');}
+function scope(c){if(!isArtifactId(c.installationId)||!/^[a-z][a-z0-9_]{0,62}$/.test(c.database)||!backupKeyConfigValid(c.key,c.keyring))throw Error('invalid recovery scope');}
 function checkAnchor(a){if(!a||!Number.isSafeInteger(a.sequence)||a.sequence<1||!hash(a.catalogSha256))throw Error('trusted checkpoint required');}
 function checkDb(db){if(!db||!isArtifactId(db.backupId)||!hash(db.sha256)||!validDate(db.createdAt))throw Error('invalid database backup');}
 function canonical(m){return Buffer.from(JSON.stringify(m));}

@@ -5,6 +5,7 @@ import {isAbsolute,join} from 'node:path';
 
 const BLOCK=256*1024,TAG=16;
 export const MAX_SPOOL_BYTES=512*1024*1024;
+export const MAX_RECOVERY_SPOOL_BYTES=2*1024*1024*1024;
 const nonce=(prefix,index)=>{const iv=Buffer.alloc(12);prefix.copy(iv);iv.writeUInt32BE(index,8);return iv;};
 const aad=(index,length)=>{const bytes=Buffer.alloc(8);bytes.writeUInt32BE(index,0);bytes.writeUInt32BE(length,4);return bytes;};
 async function writeAll(handle,data,offset,signal){
@@ -29,8 +30,8 @@ async function readAll(handle,length,offset,signal){
 }
 // POSIX anonymous encrypted temporary file. The trusted spool parent must be
 // private to the service. No recoverable key or named plaintext file is written.
-export async function stageEncryptedArtifact(source,{directory,maxBytes,sha256,signal}){
- if(typeof directory!=='string'||!isAbsolute(directory)||!Number.isSafeInteger(maxBytes)||maxBytes<1||maxBytes>MAX_SPOOL_BYTES||
+export async function stageEncryptedArtifact(source,{directory,maxBytes,sha256,signal,recovery=false}){
+ if(typeof directory!=='string'||!isAbsolute(directory)||!Number.isSafeInteger(maxBytes)||maxBytes<1||maxBytes>(recovery===true?MAX_RECOVERY_SPOOL_BYTES:MAX_SPOOL_BYTES)||
  typeof sha256!=='string'||!/^[0-9a-f]{64}$/.test(sha256))throw Error('invalid staging request');
  let folder,file,handle;
  const key=randomBytes(32),prefix=randomBytes(8);

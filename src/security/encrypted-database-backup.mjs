@@ -3,17 +3,20 @@ import {open,mkdtemp,rename,rm,stat} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {join,isAbsolute} from 'node:path';
 import {Readable} from 'node:stream';
-import {stageEncryptedArtifact,MAX_SPOOL_BYTES} from './encrypted-artifact-spool.mjs';
+import {stageEncryptedArtifact,MAX_SPOOL_BYTES,MAX_RECOVERY_SPOOL_BYTES} from './encrypted-artifact-spool.mjs';
+import {validBackupKeyId,backupKeyConfigValid} from './backup-keyring.mjs';
+export const MAX_BACKUP_BYTES=MAX_RECOVERY_SPOOL_BYTES;
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const DB=/^[a-z][a-z0-9_]{0,62}$/;
 const fields=['version','backupId','installationId','database','createdAt','salt','nonce','bytes','sha256','cipherSha256','tag'];
 const hex=(v,n)=>typeof v==='string'&&v.length===n*2&&/^[a-f0-9]+$/.test(v);
-const canonical=m=>JSON.stringify(Object.fromEntries(fields.map(k=>[k,m[k]])));
-const header=m=>JSON.stringify(Object.fromEntries(fields.slice(0,7).map(k=>[k,m[k]])));
+const manifestFields=m=>m.version===2?[...fields.slice(0,5),'keyId',...fields.slice(5)]:fields;
+const canonical=m=>JSON.stringify(Object.fromEntries(manifestFields(m).map(k=>[k,m[k]])));
+const header=m=>JSON.stringify(Object.fromEntries(manifestFields(m).slice(0,m.version===2?8:7).map(k=>[k,m[k]])));
 const keys=(key,salt)=>[Buffer.from(hkdfSync('sha256',key,salt,'verivaro-backup-v1/aes',32)),Buffer.from(hkdfSync('sha256',key,salt,'verivaro-backup-v1/manifest',32))];
 const mac=(m,k)=>createHmac('sha256',k).update(canonical(m)).digest();
-function config({key,installationId,database,maxBytes}){
- if(!Buffer.isBuffer(key)||key.length!==32||!UUID.test(installationId)||!DB.test(database)||!Number.isSafeInteger(maxBytes)||maxBytes<1||maxBytes>MAX_SPOOL_BYTES)throw Error('invalid backup configuration');
+function config({key,keyring,installationId,database,maxBytes}){
+ if(!backupKeyConfigValid(key,keyring)||!UUID.test(installationId)||!DB.test(database)||!Number.isSafeInteger(maxBytes)||maxBytes<1||maxBytes>MAX_BACKUP_BYTES)throw Error('invalid backup configuration');
 }
 async function privateDirectory(path){
  if(typeof path!=='string'||!isAbsolute(path))throw Error('private directory required');
@@ -30,18 +33,20 @@ async function readManifest(path){
   const b=Buffer.alloc(s.size);
   let pos=0;while(pos<b.length){const r=await f.read(b,pos,b.length-pos,pos);if(!r.bytesRead)throw Error('truncated manifest');pos+=r.bytesRead;}
   const m=JSON.parse(b.toString('utf8'));
-  if(!m||Object.keys(m).length!==fields.length+1||!fields.every(k=>Object.hasOwn(m,k))||!Object.hasOwn(m,'mac')||
-   m.version!==1||!UUID.test(m.backupId)||!UUID.test(m.installationId)||!DB.test(m.database)||
+  if(!m||Object.keys(m).length!==manifestFields(m).length+1||!manifestFields(m).every(k=>Object.hasOwn(m,k))||!Object.hasOwn(m,'mac')||
+   ![1,2].includes(m.version)||(m.version===2&&!validBackupKeyId(m.keyId))||!UUID.test(m.backupId)||!UUID.test(m.installationId)||!DB.test(m.database)||
    typeof m.createdAt!=='string'||new Date(m.createdAt).toISOString()!==m.createdAt||
    !hex(m.salt,32)||!hex(m.nonce,12)||!hex(m.sha256,32)||!hex(m.cipherSha256,32)||!hex(m.tag,16)||!hex(m.mac,32)||
-   !Number.isSafeInteger(m.bytes)||m.bytes<1||m.bytes>MAX_SPOOL_BYTES)throw Error('invalid manifest');
+   !Number.isSafeInteger(m.bytes)||m.bytes<1||m.bytes>MAX_BACKUP_BYTES)throw Error('invalid manifest');
   return m;
  }finally{await f.close();}
 }
-export async function createEncryptedBackup(source,{root,key,installationId,database,signal,maxBytes=MAX_SPOOL_BYTES,assertComplete=async()=>{}}){
- config({key,installationId,database,maxBytes});await privateDirectory(root);signal.throwIfAborted();
+export async function createEncryptedBackup(source,{root,key,keyring,installationId,database,signal,maxBytes=MAX_SPOOL_BYTES,assertComplete=async()=>{}}){
+ config({key,keyring,installationId,database,maxBytes});await privateDirectory(root);signal.throwIfAborted();
  const m={version:1,backupId:randomUUID(),installationId,database,createdAt:new Date().toISOString(),salt:randomBytes(32).toString('hex'),nonce:randomBytes(12).toString('hex')};
- const [enc,auth]=keys(key,Buffer.from(m.salt,'hex'));
+ const selected=keyring?keyring.writeKey():{key:Buffer.from(key)};
+ if(keyring){m.version=2;m.keyId=selected.id;}
+ const [enc,auth]=keys(selected.key,Buffer.from(m.salt,'hex'));selected.key.fill(0);
  let stage,file,manifest,published=false;
  try{
   stage=await mkdtemp(join(root,'.backup-'));
@@ -63,7 +68,7 @@ export async function createEncryptedBackup(source,{root,key,installationId,data
   const dir=await open(stage,constants.O_RDONLY|constants.O_DIRECTORY);try{await dir.sync();}finally{await dir.close();}
   signal.throwIfAborted();const destination=join(root,'backup-'+m.backupId);await rename(stage,destination);published=true;
   const parent=await open(root,constants.O_RDONLY|constants.O_DIRECTORY);try{await parent.sync();}finally{await parent.close();}
-  return Object.freeze({path:destination,backupId:m.backupId,bytes,sha256:m.sha256,createdAt:m.createdAt});
+  return Object.freeze({path:destination,backupId:m.backupId,bytes,sha256:m.sha256,createdAt:m.createdAt,keyId:m.keyId??null});
  }finally{
   enc.fill(0);auth.fill(0);
   try{await file?.close();await manifest?.close();}finally{if(stage&&!published)await rm(stage,{recursive:true,force:true});}
@@ -71,11 +76,13 @@ export async function createEncryptedBackup(source,{root,key,installationId,data
 }
 // Decrypted bytes are staged in another anonymous encrypted file. No plaintext
 // is passed to a restore process until both AEAD and the full manifest hash pass.
-export async function verifyAndStageBackup({path,spoolDirectory,key,installationId,database,signal,maxBytes=MAX_SPOOL_BYTES}){
- config({key,installationId,database,maxBytes});await privateDirectory(path);await privateDirectory(spoolDirectory);
+export async function verifyAndStageBackup({path,spoolDirectory,key,keyring,installationId,database,signal,maxBytes=MAX_SPOOL_BYTES}){
+ config({key,keyring,installationId,database,maxBytes});await privateDirectory(path);await privateDirectory(spoolDirectory);
  const m=await readManifest(join(path,'manifest.json'));
  if(m.installationId!==installationId||m.database!==database||m.bytes>maxBytes)throw Error('backup scope mismatch');
- const [enc,auth]=keys(key,Buffer.from(m.salt,'hex'));let file;
+ if(m.version===2&&!keyring)throw Error('versioned backup key required');
+ const selected=keyring?keyring.readKey(m.keyId??null):Buffer.from(key);
+ const [enc,auth]=keys(selected,Buffer.from(m.salt,'hex'));selected.fill(0);let file;
  try{
   if(!timingSafeEqual(mac(m,auth),Buffer.from(m.mac,'hex')))throw Error('backup manifest authentication failed');
   file=await open(join(path,'archive.enc'),constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
@@ -91,7 +98,7 @@ export async function verifyAndStageBackup({path,spoolDirectory,key,installation
    if(count!==m.bytes||!timingSafeEqual(digest.digest(),Buffer.from(m.cipherSha256,'hex')))throw Error('backup ciphertext integrity failure');
    const last=decipher.final();if(last.length)yield last;
   })());
-  const staged=await stageEncryptedArtifact(source,{directory:spoolDirectory,maxBytes:m.bytes,sha256:m.sha256,signal});
-  return Object.freeze({backupId:m.backupId,createdAt:m.createdAt,sha256:m.sha256,length:staged.length,read:staged.read,close:staged.close});
+  const staged=await stageEncryptedArtifact(source,{directory:spoolDirectory,maxBytes:m.bytes,sha256:m.sha256,signal,recovery:true});
+  return Object.freeze({backupId:m.backupId,createdAt:m.createdAt,sha256:m.sha256,keyId:m.keyId??null,length:staged.length,read:staged.read,close:staged.close});
  }finally{enc.fill(0);auth.fill(0);await file?.close();}
 }
