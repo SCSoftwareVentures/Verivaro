@@ -28,6 +28,7 @@ UPDATE verivaro_private.recovery_operators SET active=false;
 DELETE FROM verivaro_private.login_challenges;
 DELETE FROM verivaro_private.browser_flows;
 DELETE FROM verivaro_private.browser_sessions;
+DELETE FROM verivaro_private.auth_telemetry;
 WITH revoked AS (
  UPDATE verivaro_private.share_grants SET revoked_at=clock_timestamp() WHERE revoked_at IS NULL RETURNING export_id,share_id,issuer_id
 )

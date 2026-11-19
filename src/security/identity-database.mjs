@@ -24,6 +24,8 @@ export function createIdentityDatabase(pool,{expectedLogin}={}){
   async takeFlow(s,c){return (await run('SELECT verivaro_identity.take_browser_flow($1,$2) AS envelope',[s,c])).envelope;},
   async storeBrowserSession(h,s,e){return (await run('SELECT verivaro_identity.store_browser_session($1,$2,$3) AS ok',[h,s,e])).ok===true;},
   async readBrowserSession(h){return (await run('SELECT verivaro_identity.read_browser_session($1) AS envelope',[h])).envelope;},
+  async recordAuth(outcome){return (await run('SELECT verivaro_identity.record_auth($1) AS ok',[outcome])).ok===true;},
+  async logoutAllBrowser(h){return (await run('SELECT verivaro_identity.logout_all_browser($1) AS ok',[h])).ok===true;},
   async logoutBrowser(h){return (await run('SELECT verivaro_identity.logout_browser($1) AS ok',[h])).ok===true;},
   async revoke(actor,session){return (await run('SELECT verivaro_identity.revoke_session($1,$2) AS ok',[actor,session])).ok===true;}
  });

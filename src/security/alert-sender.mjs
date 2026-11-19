@@ -1,7 +1,7 @@
 import {createHmac} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const kinds=new Set(['access_denials','integrity_failure','resource_pressure','stranded_reservation','delivery_failures']);
+const kinds=new Set(['access_denials','integrity_failure','resource_pressure','stranded_reservation','delivery_failures','authentication_pressure']);
 export function createAlertTransport({endpoint,installationId,key,fetcher=fetch,now=Date.now}){
  const url=new URL(endpoint);
  if(url.protocol!=='https:'||url.username||url.password||url.hash||url.search||!uuid.test(installationId)||!Buffer.isBuffer(key)||key.length!==32||typeof fetcher!=='function')throw Error('invalid alert destination');

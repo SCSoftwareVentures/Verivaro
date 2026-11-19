@@ -2,7 +2,7 @@ import {createHash,timingSafeEqual} from 'node:crypto';
 const esc=x=>String(x??'—').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const date=x=>{if(x===null||x===undefined)return '—';const d=new Date(x);if(!Number.isFinite(d.getTime()))throw Error('invalid timestamp');return d.toISOString();};
 const integer=x=>{const n=Number(x);if(!Number.isSafeInteger(n)||n<0)throw Error('invalid metric');return n;};
-const kinds={access_denials:'Access denials',integrity_failure:'Integrity failure',resource_pressure:'Resource pressure',stranded_reservation:'Stranded reservation',delivery_failures:'Delivery failures'};
+const kinds={access_denials:'Access denials',integrity_failure:'Integrity failure',resource_pressure:'Resource pressure',stranded_reservation:'Stranded reservation',delivery_failures:'Delivery failures',authentication_pressure:'Authentication pressure'};
 const headers={'Cache-Control':'no-store, private','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",'Cross-Origin-Resource-Policy':'same-origin','Content-Type':'text/html; charset=utf-8'};
 function send(res,status,body,extra={}){if(res.destroyed||res.writableEnded)return;res.writeHead(status,{...headers,'Content-Length':Buffer.byteLength(body),...extra});res.end(body);}
 function label(x){if(!Object.hasOwn(kinds,x))throw Error('invalid kind');return kinds[x];}

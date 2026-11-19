@@ -30,7 +30,7 @@ export function createBrowserAuthentication({db,gateway,provider,localVerifier,o
  if(app.href!==app.origin+'/'||auth.origin!==iss.origin||token.origin!==iss.origin||typeof provider.audience!=='string'||typeof requiredAcr!=='string'||!requiredAcr||
  typeof clientSecret!=='string'||clientSecret.length<32||clientSecret.length>256||!/^[A-Za-z0-9_-]+$/.test(clientSecret)||
  !Buffer.isBuffer(key)||key.length!==32||!Number.isInteger(maxConcurrent)||maxConcurrent<1||maxConcurrent>32||
- !['storeFlow','takeFlow','storeBrowserSession','readBrowserSession','logoutBrowser'].every(k=>typeof db?.[k]==='function'))throw Error('invalid browser authentication configuration');
+ !['storeFlow','takeFlow','storeBrowserSession','readBrowserSession','logoutBrowser','logoutAllBrowser','recordAuth'].every(k=>typeof db?.[k]==='function'))throw Error('invalid browser authentication configuration');
  const redirect=app.origin+'/auth/callback',secret=Buffer.from(hkdfSync('sha256',key,Buffer.from(app.origin),'verivaro-browser-v1',32));
  let active=0;
  function seal(value,purpose,handle){
@@ -54,7 +54,7 @@ export function createBrowserAuthentication({db,gateway,provider,localVerifier,o
   if(typeof req.url!=='string'||req.url.length>8192||!req.url.startsWith('/auth/'))return send(res,404);
   const url=new URL(req.url,app.origin);
   if(req.url.split('?')[0]!==url.pathname)return send(res,404);
-  if(url.origin!==app.origin||!['/auth/login','/auth/callback','/auth/logout','/auth/session'].includes(url.pathname))return send(res,404);
+  if(url.origin!==app.origin||!['/auth/login','/auth/callback','/auth/logout','/auth/logout-all','/auth/session'].includes(url.pathname))return send(res,404);
   if(req.headers['transfer-encoding']!==undefined||(req.headers['content-length']!==undefined&&req.headers['content-length']!=='0'))return send(res,400,'Request denied',{'Connection':'close'});
   if(active>=maxConcurrent)return send(res,429,'Temporarily unavailable',{'Retry-After':'5'});
   active++;
@@ -88,16 +88,20 @@ export function createBrowserAuthentication({db,gateway,provider,localVerifier,o
     const p=verifyIdentityToken(result.token,{...localVerifier,now:now()}),h=random();
     try{if(!await db.storeBrowserSession(digestOpaque(h),p.sessionId,seal({token:result.token},'session',h)))throw Error('session unavailable');}
     catch(e){try{await gateway.logout(result.token);}catch{}throw e;}
+    try{await db.recordAuth('completed');}catch{}
     return send(res,303,'',{Location:'/','Set-Cookie':[secure(flow,'',0),secure(session,h,Math.max(0,p.expiresAt-now()))]});
    }
-   if(url.pathname==='/auth/logout'){
+   if(url.pathname==='/auth/logout'||url.pathname==='/auth/logout-all'){
     if(req.method!=='POST'||url.search||req.headers.origin!==app.origin)return send(res,403,'Request denied');
-    const h=cookie(req,session);if(h)await db.logoutBrowser(digestOpaque(h));
+    const h=cookie(req,session);
+    if(url.pathname==='/auth/logout-all'){
+     if(!h||!await db.logoutAllBrowser(digestOpaque(h)))return send(res,401,'Authentication required');
+    }else if(h)await db.logoutBrowser(digestOpaque(h));
     return send(res,204,'',{'Set-Cookie':[secure(session,'',0),secure(flow,'',0)]});
    }
    if(req.method!=='GET'||url.search)return send(res,405);
    return send(res,(await resolveSession(req))?204:401);
-  }catch{return send(res,url.pathname==='/auth/callback'?401:503,'Authentication unavailable');}
+  }catch{if(url.pathname==='/auth/callback')try{await db.recordAuth('denied');}catch{}return send(res,url.pathname==='/auth/callback'?401:503,'Authentication unavailable');}
   finally{active--;}
  }
  return Object.freeze({handler,resolveSession});

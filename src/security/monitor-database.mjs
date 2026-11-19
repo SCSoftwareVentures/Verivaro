@@ -18,12 +18,12 @@ export function createMonitorDatabase(pool,{mode,expectedLogin}){
    if(operation==='evaluate'&&mode==='worker'){
     const r=await c.query('SELECT verivaro_monitor.evaluate() AS opened');
     result=r.rows[0]?.opened;
-    if(!Number.isInteger(result)||result<0||result>5)throw Error('invalid evaluation');
+    if(!Number.isInteger(result)||result<0||result>6)throw Error('invalid evaluation');
    }else if(operation==='snapshot'&&mode==='reader'){
     const h=await c.query('SELECT * FROM verivaro_monitor.health()');
     const i=await c.query('SELECT * FROM verivaro_monitor.list_open()');
     const a=await c.query('SELECT * FROM verivaro_monitor.recent_alerts()');
-    if(h.rows.length!==1||i.rows.length>5||a.rows.length>50)throw Error('invalid snapshot');
+    if(h.rows.length!==1||i.rows.length>6||a.rows.length>50)throw Error('invalid snapshot');
     const d=await c.query('SELECT * FROM verivaro_monitor.alert_delivery_health()');
     if(d.rows.length!==1)throw Error('invalid delivery health');
     result={health:h.rows[0],incidents:i.rows,alerts:a.rows,delivery:d.rows[0]};
