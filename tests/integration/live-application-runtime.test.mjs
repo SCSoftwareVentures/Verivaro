@@ -19,8 +19,8 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
  async function put(name,data){const p=join(dir,name);await writeFile(p,data,{mode:0o600});return p;}
  const now=Math.floor(Date.now()/1000),catalogue=Buffer.from(JSON.stringify({version:1,issuer,audience,sequence:1,issuedAt:now,expiresAt:now+600,keys:[{kid:'fixture',pem:publicKey.export({type:'spki',format:'pem'})}]}));
  try{
-  await admin.query("INSERT INTO verivaro.memberships(tenant_id,actor_id,role) VALUES($1,$2,'viewer')",[tenant,actor]);
-  await admin.query("INSERT INTO verivaro.project_members(tenant_id,project_id,actor_id,role) VALUES($1,$2,$3,'viewer')",[tenant,project,actor]);
+  await admin.query("INSERT INTO verivaro.memberships(tenant_id,actor_id,role) VALUES($1,$2,'owner')",[tenant,actor]);
+  await admin.query("INSERT INTO verivaro.project_members(tenant_id,project_id,actor_id,role) VALUES($1,$2,$3,'owner')",[tenant,project,actor]);
   await admin.query('SELECT verivaro_identity.provision_binding($1,$2,$3,$4)',[issuer,digestSubject(subject),actor,randomUUID()]);
   await admin.query('DELETE FROM verivaro_private.api_rate_keys');
   await admin.query('UPDATE verivaro_private.api_rate_state SET bucket=-1,requests=0,global_limit=600,peer_limit=120,actor_limit=60');
@@ -43,11 +43,11 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   }});
   await app.listen();
   const ca=await readFile(join(tls,'ca.pem'));
-  function request(path,{method='GET',headers={},trusted=true}={}){
+  function request(path,{method='GET',headers={},trusted=true,body}={}){
    return new Promise((resolve,reject)=>{
-    const req=httpsRequest({host:'127.0.0.1',port:18443,servername:'localhost',path,method,ca:trusted?ca:undefined,headers:{host:'localhost:18443',...headers},agent:false},res=>{
+    const req=httpsRequest({host:'127.0.0.1',port:18443,servername:'localhost',path,method,ca:trusted?ca:undefined,headers:{host:'localhost:18443',...(body===undefined?{}:{'content-length':Buffer.byteLength(body)}),...headers},agent:false},res=>{
      const chunks=[];const protocol=res.socket.getProtocol();res.on('data',b=>chunks.push(b));res.on('error',reject);res.on('end',()=>resolve({status:res.statusCode,headers:res.headers,body:Buffer.concat(chunks).toString('utf8'),protocol}));
-    });req.on('error',reject);req.setTimeout(10000,()=>req.destroy(Error('fixture timeout')));req.end();
+    });req.on('error',reject);req.setTimeout(10000,()=>req.destroy(Error('fixture timeout')));req.end(body);
    });
   }
   const root=await request('/');assert.equal(root.status,200);assert.match(root.protocol,/TLSv1\.[23]/);assert.match(root.body,/Sign in/);assert.equal(root.headers['strict-transport-security'],'max-age=31536000');
@@ -64,6 +64,14 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   assert.equal(cb.status,303);const session=cb.headers['set-cookie'].find(x=>x.startsWith('__Host-vv_session=')).split(';')[0];
   const data=await request(route,{headers:{cookie:session}});assert.equal(data.status,200);assert.deepEqual(JSON.parse(data.body).items.map(x=>x.id),[project]);assert.equal(data.headers['strict-transport-security'],'max-age=31536000');
   assert.equal((await request(route.replace(tenant,'22222222-2222-4222-8222-222222222222'),{headers:{cookie:session}})).status,404);
+  const detail=await request(route+'/'+project,{headers:{cookie:session}});assert.equal(detail.status,200);
+  const revision=JSON.parse(detail.body).project.revision,requestId=randomUUID(),body=JSON.stringify({name:'Runtime verified project',revision});
+  const mutationHeaders={cookie:session,origin,'content-type':'application/json','idempotency-key':requestId};
+  const changed=await request(route+'/'+project,{method:'PATCH',headers:mutationHeaders,body});assert.equal(changed.status,200);assert.equal(JSON.parse(changed.body).project.revision,revision+1);
+  const retry=await request(route+'/'+project,{method:'PATCH',headers:mutationHeaders,body});assert.equal(retry.status,200);assert.equal(retry.body,changed.body);
+  assert.equal((await request(route+'/'+project,{method:'PATCH',headers:{...mutationHeaders,origin:'https://evil.invalid'},body})).status,403);
+  assert.equal((await request(route+'/'+project,{method:'PATCH',headers:{...mutationHeaders,'idempotency-key':randomUUID()},body})).status,409);
+  assert.equal((await admin.query('SELECT count(*)::int AS n FROM verivaro_private.project_mutation_audit WHERE request_id=$1',[requestId])).rows[0].n,1);
   assert.equal((await request('/auth/logout-all',{method:'POST',headers:{origin,cookie:session}})).status,204);
   assert.equal((await request(route,{headers:{cookie:session}})).status,401);
   await app.stop();assert.equal(app.server.listening,false);
