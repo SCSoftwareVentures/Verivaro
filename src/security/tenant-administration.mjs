@@ -1,5 +1,6 @@
 import {assertServiceLogin,validateServiceIdentity} from './service-login.mjs';
 import {signDatabaseContext} from './sign-database-context.mjs';
+import {digestShareToken} from './share-token.mjs';
 import {createHash} from 'node:crypto';
 export class TenantDenied extends Error{}
 export class TenantConflict extends Error{}
@@ -29,10 +30,13 @@ export function createTenantAdministration(pool,{expectedLogin,mode,verifier,con
  if(mode==='operator')return Object.freeze({
   bootstrap:({tenantId,requestId,name,verifiedSubject,caseId})=>run(tenantId,null,'SELECT verivaro_tenant_admin.bootstrap($1,$2,$3,$4,$5,$6) AS result',[tenantId,requestId,name,pinned,subject(verifiedSubject),caseId]),
   enroll:({tenantId,requestId,verifiedSubject,caseId})=>run(tenantId,null,'SELECT verivaro_tenant_admin.approve_enrollment($1,$2,$3,$4,$5) AS result',[tenantId,requestId,pinned,subject(verifiedSubject),caseId]),
+  issueInvitation:({tenantId,requestId,verifiedSubject,code,caseId})=>run(tenantId,null,'SELECT verivaro_tenant_admin.issue_invitation($1,$2,$3,$4,$5,$6) AS result',[tenantId,requestId,pinned,subject(verifiedSubject),digestShareToken(code),caseId]),
   completeTransfer:({tenantId,requestId,caseId})=>run(tenantId,null,'SELECT verivaro_tenant_admin.complete_transfer($1,$2,$3) AS result',[tenantId,requestId,caseId])
  });
  return Object.freeze({
   requestEnrollment:({tenantId,token,requestId,subjectDigest,role})=>{if(typeof subjectDigest!=='string'||! /^[a-f0-9]{64}$/.test(subjectDigest))throw Error('invalid enrollment digest');return run(tenantId,token,'SELECT verivaro_tenant_admin.request_enrollment($1,$2,$3,$4,$5) AS result',[tenantId,requestId,pinned,Buffer.from(subjectDigest,'hex'),role]);},
+  cancelInvitation:({tenantId,token,requestId})=>run(tenantId,token,'SELECT verivaro_tenant_admin.cancel_invitation($1,$2) AS result',[tenantId,requestId]),
+  redeemInvitation:({tenantId,token,requestId,code})=>run(tenantId,token,'SELECT verivaro_tenant_admin.redeem_invitation($1,$2,$3) AS result',[tenantId,requestId,digestShareToken(code)]),
   enrollments:({tenantId,token})=>run(tenantId,token,'SELECT verivaro_tenant_admin.enrollment_requests($1) AS result',[tenantId]),
   directory:({tenantId,token})=>run(tenantId,token,'SELECT verivaro_tenant_admin.directory($1) AS result',[tenantId]),
   access:({tenantId,token,requestId,targetId,role,generation})=>run(tenantId,token,'SELECT verivaro_tenant_admin.change_access($1,$2,$3,$4,$5) AS result',[tenantId,requestId,targetId,role,generation]),

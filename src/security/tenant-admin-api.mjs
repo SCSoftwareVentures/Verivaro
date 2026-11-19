@@ -1,9 +1,10 @@
+import {digestShareToken} from './share-token.mjs';
 import {verifyIdentityToken} from './verify-identity.mjs';
 import {decodeStrictJson} from './provider-identity.mjs';
 import {TenantDenied,TenantConflict} from './tenant-administration.mjs';
-const U='([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})',route=new RegExp('^/api/v1/tenants/'+U+'/administration/(directory|enrollments|transfers|enroll|access|transfer-request|transfer-accept)$'),uuid=new RegExp('^'+U+'$'),v4=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+const U='([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})',route=new RegExp('^/api/v1/tenants/'+U+'/administration/(directory|enrollments|transfers|enroll|access|transfer-request|transfer-accept|invite-redeem|invite-cancel)$'),uuid=new RegExp('^'+U+'$'),v4=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const reads=['directory','enrollments','transfers'];
-const shapes={enroll:['requestId','subjectDigest','role'],access:['requestId','targetId','role','generation'],'transfer-request':['requestId','targetId','generation'],'transfer-accept':['requestId']};
+const shapes={enroll:['requestId','subjectDigest','role'],access:['requestId','targetId','role','generation'],'transfer-request':['requestId','targetId','generation'],'transfer-accept':['requestId'],'invite-redeem':['requestId','code'],'invite-cancel':['requestId']};
 function match(req){return typeof req.url==='string'?route.exec(req.url):null;}
 export function isTenantAdminRequest(req){return !!match(req);}
 export function isTenantAdminMutation(req){const m=match(req);return !!m&&req.method==='POST'&&!reads.includes(m[2]);}
@@ -23,11 +24,12 @@ async function read(req,action){
   if(action==='enroll'&&(!/^[a-f0-9]{64}$/.test(v.subjectDigest)||!['viewer','contributor','reviewer'].includes(v.role)))throw Error('invalid enrollment');
   if(['access','transfer-request'].includes(action)&&(!uuid.test(v.targetId)||!uuid.test(v.generation)))throw Error('invalid member');
   if(action==='access'&&!['viewer','contributor','reviewer','revoke'].includes(v.role))throw Error('invalid member role');
+  if(action==='invite-redeem')digestShareToken(v.code);
   return v;
  }finally{clearTimeout(timer);for(const p of parts)p.fill(0);}
 }
 export function createTenantAdminApi({origin,verifier,admission,resolveSession,administration}){
- const u=new URL(origin);if(u.protocol!=='https:'||u.href!==u.origin+'/'||typeof resolveSession!=='function'||typeof admission?.peer!=='function'||typeof admission?.actor!=='function'||!['directory','enrollments','transfers','requestEnrollment','access','requestTransfer','acceptTransfer'].every(k=>typeof administration?.[k]==='function'))throw Error('invalid tenant administration API');
+ const u=new URL(origin);if(u.protocol!=='https:'||u.href!==u.origin+'/'||typeof resolveSession!=='function'||typeof admission?.peer!=='function'||typeof admission?.actor!=='function'||!['directory','enrollments','transfers','requestEnrollment','access','requestTransfer','acceptTransfer','redeemInvitation','cancelInvitation'].every(k=>typeof administration?.[k]==='function'))throw Error('invalid tenant administration API');
  let active=0;
  return async function handle(req,res){
   const m=match(req);if(!m)return bad(res,404);
@@ -50,6 +52,8 @@ export function createTenantAdminApi({origin,verifier,admission,resolveSession,a
    if(action==='enroll')return send(res,200,{requestId:await administration.requestEnrollment(args)});
    if(action==='access')return send(res,200,{generation:await administration.access(args)});
    if(action==='transfer-request')return send(res,200,{requestId:await administration.requestTransfer(args)});
+   if(action==='invite-redeem')return send(res,200,{generation:await administration.redeemInvitation(args)});
+   if(action==='invite-cancel')return send(res,200,{cancelled:await administration.cancelInvitation(args)});
    const accepted=await administration.acceptTransfer(args);if(!accepted)return bad(res,409);return send(res,200,{accepted});
   }catch(e){return bad(res,e instanceof TenantDenied?404:e instanceof TenantConflict?409:503);}
   finally{active--;}
