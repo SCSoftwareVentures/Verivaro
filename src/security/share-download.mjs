@@ -79,12 +79,12 @@ export function createShareDownloadHandler({resolveShare,resolveRecipientShare,r
   timer.unref?.();
   const disconnect=()=>{if(!res.writableFinished)controller.abort();};
   res.once('close',disconnect);
-  let staged;
+  let staged,source;
   try{
    const first=await authorize();
    controller.signal.throwIfAborted();
    if(!validArtifact(first))throw Error('denied');
-   const source=await openArtifact(first.artifact_id,{signal:controller.signal,maxBytes});
+   source=await openArtifact(first.artifact_id,{signal:controller.signal,maxBytes});
    let body;
    if(spoolDirectory){
     staged=await stageEncryptedArtifact(source,{directory:spoolDirectory,maxBytes,sha256:first.sha256,signal:controller.signal});
@@ -122,6 +122,7 @@ export function createShareDownloadHandler({resolveShare,resolveRecipientShare,r
    });
   }catch{if(res.headersSent){res.destroy();}else{deny(res);}}
   finally{
+   try{source?.destroy?.();}catch{res.destroy();}
    try{if(staged)await staged.close();}catch{res.destroy();}
    clearTimeout(timer);res.removeListener('close',disconnect);inFlight--;
   }

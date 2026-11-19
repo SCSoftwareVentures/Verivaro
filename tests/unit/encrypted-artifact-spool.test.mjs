@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash,randomUUID} from 'node:crypto';
-import {mkdtemp,readdir,rm} from 'node:fs/promises';
+import {mkdtemp,readdir,rm,readlink,open} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createServer} from 'node:http';
@@ -66,4 +66,29 @@ test('encrypted HTTP staging rechecks revocation and refuses plaintext on mismat
    assert.deepEqual(await readdir(root),[]);
   }finally{await new Promise(r=>{server.closeAllConnections();server.close(r);});}
  }
+});
+
+test('encrypted spool rejects modified ciphertext before releasing the affected block',async t=>{
+ const root=await directory(t),data=Buffer.alloc(512*1024,0x45);
+ const staged=await stageEncryptedArtifact(Readable.from([data]),{directory:root,maxBytes:data.length,sha256:sha(data),signal:new AbortController().signal});
+ try{
+  // Linux CI only: examine and tamper with our own anonymous test descriptor.
+  const descriptors=await readdir('/proc/self/fd');
+  let path;
+  for(const id of descriptors){
+   const location=await readlink('/proc/self/fd/'+id).catch(()=>null);
+   if(location?.startsWith(root+'/vv-spool-')&&location.endsWith(' (deleted)')){path='/proc/self/fd/'+id;break;}
+  }
+  assert.ok(path,'anonymous ciphertext descriptor');
+  const fd=await open(path,'r+');
+  try{
+   const block=Buffer.alloc(4096);await fd.read(block,0,block.length,0);
+   assert.notDeepEqual(block,data.subarray(0,block.length));
+   const altered=Buffer.from([block[0]^1]);await fd.write(altered,0,1,0);
+  }finally{await fd.close();}
+  let yielded=0;
+  await assert.rejects(async()=>{for await(const block of staged.read())yielded+=block.length;});
+  assert.equal(yielded,0);
+ }finally{await staged.close();}
+ assert.deepEqual(await readdir(root),[]);
 });
