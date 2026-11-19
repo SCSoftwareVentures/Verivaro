@@ -30,6 +30,9 @@ export function createEvidenceReleaseDatabase(pool,{expectedLogin,verifier,conte
   }finally{c.release(clean?undefined:new Error('discard release connection'));}
  }
  if(mode==='workflow')return Object.freeze({
+  async createProject({token,tenantId,requestId,name}){return (await run(token,tenantId,'SELECT verivaro_mutation.create_project($1,$2,$3) AS id',[tenantId,requestId,name])).id;},
+  async directory({token,tenantId,projectId}){return (await run(token,tenantId,'SELECT verivaro_mutation.project_directory($1,$2) AS data',[tenantId,projectId])).data;},
+  async changeAccess({token,tenantId,projectId,requestId,targetId,role,generation}){return (await run(token,tenantId,'SELECT verivaro_mutation.change_project_access($1,$2,$3,$4,$5,$6) AS generation',[tenantId,projectId,requestId,targetId,role,generation])).generation;},
   async tenants({token}){return (await run(token,'00000000-0000-0000-0000-000000000000','SELECT verivaro_sharing.workspace_tenants() AS data',[])).data;},
   async workspace({token,tenantId,projectId}){return (await run(token,tenantId,'SELECT verivaro_sharing.release_workspace($1,$2) AS data',[tenantId,projectId])).data;},
   async request({token,tenantId,projectId,evidenceId,requestId,sha256}){return (await run(token,tenantId,'SELECT verivaro_sharing.request_evidence_release($1,$2,$3,$4,$5) AS id',[tenantId,projectId,evidenceId,requestId,sha256])).id;},
