@@ -1,3 +1,9 @@
+import {createProjectAdminApi,isProjectAdminRequest,isProjectAdminMutation} from './project-admin-api.mjs';
+import {createShareResolver} from './share-resolver.mjs';
+import {createShareDownloadHandler} from './share-download.mjs';
+import {createPrivateFileStore} from './private-file-store.mjs';
+import {digestShareToken} from './share-token.mjs';
+import {verifyIdentityToken} from './verify-identity.mjs';
 import {lstat} from 'node:fs/promises';
 import {isAbsolute} from 'node:path';
 import {workspacePage,workspaceScript,workspaceCss} from './workspace-assets.mjs';
@@ -28,10 +34,10 @@ function reply(res,status,body='',extra={}){
  res.writeHead(status,{...baseHeaders,'Content-Length':Buffer.byteLength(body),...extra});res.end(body);
 }
 function invalidHeaders(req,host){
- const seen=new Set(),critical=new Set(['host','cookie','origin','authorization','content-length','transfer-encoding','content-encoding','expect','sec-fetch-site','content-type','idempotency-key','x-evidence-sha256']);
+ const seen=new Set(),critical=new Set(['host','cookie','origin','authorization','content-length','transfer-encoding','content-encoding','expect','sec-fetch-site','content-type','idempotency-key','x-evidence-sha256','x-verivaro-share']);
  for(let i=0;i<req.rawHeaders.length;i+=2){const h=req.rawHeaders[i].toLowerCase();if(critical.has(h)&&seen.has(h))return true;seen.add(h);}
  return req.headers.host!==host||req.headers.authorization!==undefined||req.headers['transfer-encoding']!==undefined||req.headers['content-encoding']!==undefined||
- (!isRenameRequest(req)&&!isEvidenceUpload(req)&&!isReleaseWorkspaceMutation(req)&&req.headers['content-length']!==undefined&&req.headers['content-length']!=='0')||req.headers.expect!==undefined;
+ (!isRenameRequest(req)&&!isEvidenceUpload(req)&&!isReleaseWorkspaceMutation(req)&&!isProjectAdminMutation(req)&&req.headers['content-length']!==undefined&&req.headers['content-length']!=='0')||req.headers.expect!==undefined;
 }
 // Only file paths and bounded deployment settings; no environment fallbacks.
 export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,report=()=>{}}){
@@ -39,7 +45,7 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
  const cfg=JSON.parse(await readText(configPath,16384));
  const enabled=Object.hasOwn(cfg,'ingestion'),releaseEnabled=Object.hasOwn(cfg,'release');
  if(releaseEnabled&&!enabled)throw Error('release requires ingestion');
- const serviceRoles={...roles,...(enabled?{ingestion:'verivaro_evidence_ingestor',evidenceReader:'verivaro_evidence_reader'}:{}),...(releaseEnabled?{release:'verivaro_release_service'}:{})};
+ const serviceRoles={...roles,...(enabled?{ingestion:'verivaro_evidence_ingestor',evidenceReader:'verivaro_evidence_reader'}:{}),...(releaseEnabled?{release:'verivaro_release_service',recipient:'verivaro_recipient_gateway'}:{})};
  exact(cfg,['origin','listenHost','listenPort','tlsKeyFile','tlsCertFile','database','logins','provider','local','secrets',...(enabled?['ingestion']:[]),...(releaseEnabled?['release']:[])]);
  if(releaseEnabled){exact(cfg.release,['root']);if(typeof cfg.release.root!=='string'||!isAbsolute(cfg.release.root))throw Error('invalid release root');const s=await lstat(cfg.release.root);if(!s.isDirectory()||(s.mode&0o077)!==0||(typeof process.getuid==='function'&&s.uid!==process.getuid()))throw Error('unsafe release root');}
  if(enabled)exact(cfg.ingestion,['keyId','keyFile','scannerSocket',...(Object.hasOwn(cfg.ingestion,'retiredKeys')?['retiredKeys']:[])]);
@@ -101,6 +107,8 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
    download=createEvidenceDownloadHandler({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,retrieve});
   }
   const workspace=createReleaseWorkspaceApi({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,workflow,publish,uploadsEnabled:enabled});
+  const administration=createProjectAdminApi({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,workflow,sharingEnabled:releaseEnabled});
+  const recipientDownload=releaseEnabled?createShareDownloadHandler({resolveShare:async()=>null,resolveRecipientShare:createShareResolver(pools.recipient,{expectedLogin:cfg.logins.recipient.user,recipientBound:true}),recipientVerifier:verifier,openArtifact:createPrivateFileStore(cfg.release.root),maxBytes:262144}):null;
   const tlsKey=await readPrivate(cfg.tlsKeyFile,65536),cert=await readPrivate(cfg.tlsCertFile,65536);rawKeys.push(tlsKey);
   const leaf=new X509Certificate(cert);
   if(!leaf.checkHost(origin.hostname,{subject:'never'})||Date.parse(leaf.validFrom)>Date.now()||Date.parse(leaf.validTo)<=Date.now()||!leaf.checkPrivateKey(createPrivateKey(tlsKey)))throw Error('invalid listener certificate');
@@ -117,6 +125,18 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
    if(active>=24)return reply(res,429,'Temporarily unavailable',{'Retry-After':'5'});
    active++;
    try{
+    if(req.url==='/api/v1/recipient-download'){
+     if(!recipientDownload)return reply(res,404,'Not found');
+     if(req.method!=='POST'||req.headers.origin!==origin.origin||['same-site','cross-site'].includes(req.headers['sec-fetch-site'])||req.headers.range!==undefined||req.headers['x-verivaro-recipient']!==undefined)return reply(res,403,'Request denied');
+     if(!await admission.peer(req.socket.remoteAddress))return reply(res,429,'Temporarily unavailable');
+     const token=await browser.resolveSession(req);if(!token)return reply(res,401,'Sign in required');
+     const p=verifyIdentityToken(token,verifier);if(!await admission.actor(p.actorId))return reply(res,429,'Temporarily unavailable');
+     const code=req.headers['x-verivaro-share'];try{digestShareToken(code);}catch{return reply(res,404,'Not found');}
+     if(res.destroyed)return;
+     // Trusted internal request projection; never copy caller authorization headers.
+     return await recipientDownload({method:'POST',url:'/public/share/recipient-download',socket:req.socket,headers:{authorization:'Bearer '+code,'x-verivaro-recipient':token},rawHeaders:['Authorization','Bearer '+code,'X-Verivaro-Recipient',token]},res);
+    }
+    if(isProjectAdminRequest(req))return await administration(req,res);
     if(isReleaseWorkspaceRequest(req))return await workspace(req,res);
     if(isEvidenceDownload(req))return download?await download(req,res):reply(res,404,'Not found');
     if(isEvidenceUpload(req))return upload?await upload(req,res):reply(res,404,'Not found',{'Connection':'close'});
