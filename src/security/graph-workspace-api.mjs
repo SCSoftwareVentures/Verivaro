@@ -6,7 +6,7 @@ import {EvidenceAccessDenied} from './evidence-retrieval.mjs';
 import {verifyIdentityToken} from './verify-identity.mjs';
 import {decodeStrictJson} from './provider-identity.mjs';
 import {ReleaseDenied,ReleaseConflict} from './evidence-release.mjs';
-const U='([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})',route=new RegExp('^/api/v1/tenants/'+U+'/projects/'+U+'/verification(?:/(requirement|rule-review|link|link-review|dependency-propose|dependency-review|extract|import-source|submission-list|submission-inspect|submission-impact|submission-prepare|submission-review|submission-authorize|submission-download))?$'),id=new RegExp('^'+U+'$'),v4=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/,hash=/^[a-f0-9]{64}$/;
+const U='([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})',route=new RegExp('^/api/v1/tenants/'+U+'/projects/'+U+'/verification(?:/(requirement|rule-review|link|link-review|dependency-propose|dependency-review|dependency-removal-propose|dependency-removal-review|extract|import-source|submission-list|submission-inspect|submission-impact|submission-prepare|submission-review|submission-authorize|submission-download))?$'),id=new RegExp('^'+U+'$'),v4=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/,hash=/^[a-f0-9]{64}$/;
 export function isGraphWorkspaceRequest(req){return typeof req.url==='string'&&route.test(req.url);}
 export function isGraphWorkspaceMutation(req){return req.method==='POST'&&typeof req.url==='string'&&!!route.exec(req.url)?.[3]&&route.exec(req.url)[3]!=='submission-list';}
 function response(res,status,data){
@@ -21,7 +21,7 @@ async function read(req,action){
   for await(const c of req){n+=c.length;if(n>8192||n>Number(req.headers['content-length']))throw Error('invalid body');chunks.push(c);}
   if(n!==Number(req.headers['content-length']))throw Error('invalid body');
   const v=decodeStrictJson(Buffer.concat(chunks).toString('base64url'));
-  const shapes={'submission-inspect':['submissionId'],'submission-impact':['submissionId'],'submission-prepare':['submissionId'],'submission-review':['submissionId','sha256','decision','reason'],'submission-authorize':['submissionId','sha256'],'submission-download':['submissionId','sha256'],extract:['evidenceId','sha256'],'import-source':['evidenceId','sha256','line','quoteSha256','requirementId','versionId','applicability'],requirement:['requirementId','versionId','expectedRevision','title','criterion','applicability'],'rule-review':['versionId','decision','reason'],link:['versionId','linkId','evidenceId','sha256'],'link-review':['linkId','decision','reason'],'dependency-propose':['versionId','edgeId','prerequisiteId'],'dependency-review':['edgeId','decision','reason']},keys=shapes[action];
+  const shapes={'submission-inspect':['submissionId'],'submission-impact':['submissionId'],'submission-prepare':['submissionId'],'submission-review':['submissionId','sha256','decision','reason'],'submission-authorize':['submissionId','sha256'],'submission-download':['submissionId','sha256'],extract:['evidenceId','sha256'],'import-source':['evidenceId','sha256','line','quoteSha256','requirementId','versionId','applicability'],requirement:['requirementId','versionId','expectedRevision','title','criterion','applicability'],'rule-review':['versionId','decision','reason'],link:['versionId','linkId','evidenceId','sha256'],'link-review':['linkId','decision','reason'],'dependency-propose':['versionId','edgeId','prerequisiteId'],'dependency-review':['edgeId','decision','reason'],'dependency-removal-propose':['versionId','removalId','prerequisiteId','reason'],'dependency-removal-review':['removalId','decision','reason']},keys=shapes[action];
   if(!v||typeof v!=='object'||Array.isArray(v)||Object.keys(v).length!==keys.length||keys.some(k=>!Object.hasOwn(v,k)))throw Error('invalid fields');
   const isId=k=>typeof v[k]==='string'&&v[k].length===36&&id.test(v[k]),isV4=k=>typeof v[k]==='string'&&v[k].length===36&&v4.test(v[k]);
   const text=(x,n)=>typeof x==='string'&&[...x].length>=1&&[...x].length<=n&&Buffer.byteLength(x)<=4*n&&x===x.trim()&&!/[\x00-\x1f\x7f-\x9f\ud800-\udfff]/u.test(x);
@@ -34,6 +34,10 @@ async function read(req,action){
    if(action==='import-source'&&(!isV4('requirementId')||!isV4('versionId')||!Number.isInteger(v.line)||v.line<1||v.line>262144||typeof v.quoteSha256!=='string'||v.quoteSha256.length!==64||!hash.test(v.quoteSha256)||!['required','optional','not_applicable','unknown'].includes(v.applicability)))throw Error('invalid source line');
   }else if(action==='requirement'){
    if(!isV4('requirementId')||!isV4('versionId')||!Number.isInteger(v.expectedRevision)||v.expectedRevision<0||v.expectedRevision>15||!text(v.title,128)||!text(v.criterion,1024)||!['required','optional','not_applicable','unknown'].includes(v.applicability))throw Error('invalid requirement');
+  }else if(action==='dependency-removal-propose'){
+   if(!isId('versionId')||!isV4('removalId')||!isId('prerequisiteId')||!text(v.reason,512))throw Error('invalid removal');
+  }else if(action==='dependency-removal-review'){
+   if(!isId('removalId')||!['approved','rejected'].includes(v.decision)||!text(v.reason,512))throw Error('invalid removal review');
   }else if(action==='dependency-propose'){
    if(!isId('versionId')||!isV4('edgeId')||!isId('prerequisiteId'))throw Error('invalid dependency');
   }else if(action==='dependency-review'){
@@ -67,7 +71,7 @@ export function createGraphWorkspaceApi({origin,verifier,admission,resolveSessio
    if(res.destroyed)return;
    const [,tenantId,projectId]=m,scope={token,tenantId,projectId};
    if(action==='submission-list')return response(res,200,{items:await workflow.listSubmissions(scope),downloadEnabled:typeof assembleSubmission==='function'});
-   if(!mutation){const assessment=await workflow.assessment(scope);return response(res,200,{...assessment,preflight:buildRejectionPreflight(assessment),extractionEnabled:typeof extract==='function',dependencyManagementEnabled:typeof workflow.proposeDependency==='function'&&typeof workflow.reviewDependency==='function'});}
+   if(!mutation){const assessment=await workflow.assessment(scope),removalEnabled=['proposeDependencyRemoval','reviewDependencyRemoval','dependencyRemovalCandidates'].every(k=>typeof workflow[k]==='function'),removalCandidates=removalEnabled&&assessment.canWrite?await workflow.dependencyRemovalCandidates(scope):[];return response(res,200,{...assessment,preflight:buildRejectionPreflight(assessment),extractionEnabled:typeof extract==='function',dependencyManagementEnabled:typeof workflow.proposeDependency==='function'&&typeof workflow.reviewDependency==='function',dependencyRemovalEnabled:removalEnabled,removalCandidates});}
    let input;try{input=await read(req,action);}catch{return denied(res,400);}
    controller.signal.throwIfAborted();
    const args={...input,...scope};
@@ -94,6 +98,10 @@ export function createGraphWorkspaceApi({origin,verifier,admission,resolveSessio
    if(action==='extract'||action==='import-source'){
     if(typeof extract!=='function')return denied(res,404);
     return response(res,200,await extract(args,{importLine:action==='import-source',signal:controller.signal}));
+   }
+   if(action==='dependency-removal-propose'||action==='dependency-removal-review'){
+    if(!['proposeDependencyRemoval','reviewDependencyRemoval','dependencyRemovalCandidates'].every(k=>typeof workflow[k]==='function'))return denied(res,404);
+    return response(res,200,action==='dependency-removal-propose'?{removalId:await workflow.proposeDependencyRemoval(args)}:{reviewed:await workflow.reviewDependencyRemoval(args)});
    }
    if(action==='dependency-propose'||action==='dependency-review'){
     if(typeof workflow.proposeDependency!=='function'||typeof workflow.reviewDependency!=='function')return denied(res,404);

@@ -79,7 +79,7 @@ function graphChoice(options,selected){const s=node('select');for(const [v,t] of
 const graphApplicability=[['unknown','Unknown'],['required','Required'],['optional','Optional'],['not_applicable','Not applicable']];
 function graphReview(row,action,idKey,idValue,choices){
  const s=graphChoice(choices),reason=node('textarea'),a=node('div',undefined,'graph-controls');reason.rows=2;reason.maxLength=512;
- a.append(graphField('Decision',s),graphField('Review reason',reason),button('Record '+(action==='rule-review'?'rule review':action==='dependency-review'?'dependency review':'evidence assessment'),async()=>{
+ a.append(graphField('Decision',s),graphField('Review reason',reason),button('Record '+(action==='rule-review'?'rule review':action==='dependency-review'?'dependency review':action==='dependency-removal-review'?'dependency removal review':'evidence assessment'),async()=>{
   const why=reason.value.trim();if(!why)throw Error('Provide a review reason.');if(!confirm('Record this immutable review decision?'))return;
   await graphPost(action,{[idKey]:idValue,decision:s.value,reason:why});await loadProject();
  }));row.append(a);
@@ -157,7 +157,25 @@ async function loadGraph(){
    if(g.dependencyManagementEnabled&&!g.archived&&data.tenantRole==='reviewer'&&data.projectRole==='reviewer'&&pin.decision==='pending')graphReview(box,'dependency-review','edgeId',pin.edgeId,[['rejected','Reject'],['approved','Approve']]);
    row.append(box);
   }
-  const prerequisites=g.requirements.filter(x=>x.requirementId!==q.requirementId&&x.state==='satisfied'&&!pins.some(p=>p.prerequisiteId===x.requirementId));
+  const removals=q.dependencyRemovals??[];
+  for(const rm of removals){
+   const parent=g.requirements.find(x=>x.requirementId===rm.prerequisiteId),box=node('div',undefined,'graph-link');
+   box.append(node('strong','Dependency removal: '+(parent?.title??rm.prerequisiteId)),node('p',rm.proposalReason),node('p','Decision: '+rm.decision,'state'));
+   if(rm.reviewReason)box.append(node('p',rm.reviewReason));
+   if(g.dependencyRemovalEnabled&&!g.archived&&data.tenantRole==='reviewer'&&data.projectRole==='reviewer'&&rm.decision==='pending')graphReview(box,'dependency-removal-review','removalId',rm.removalId,[['rejected','Reject'],['approved','Approve']]);
+   row.append(box);
+  }
+  const removable=(g.removalCandidates??[]).filter(x=>x.versionId===q.versionId);
+  if(g.dependencyRemovalEnabled&&g.canWrite&&q.ruleDecision==='pending'&&removable.length){
+   const select=graphChoice(removable.map(x=>[x.prerequisiteId,(g.requirements.find(y=>y.requirementId===x.prerequisiteId)?.title??'Prior dependency')+' · '+x.prerequisiteId.slice(-8)])),reason=node('textarea'),box=node('div',undefined,'graph-controls');reason.rows=2;reason.maxLength=512;
+   box.append(graphField('Historical prerequisite to remove',select),graphField('Justification for removal',reason),button('Propose dependency removal',async()=>{
+    const why=reason.value.trim();if(!why)throw Error('Provide a removal justification.');
+    if(!confirm('Request removal for this exact revision? Independent review is required and historical decisions will remain.'))return;
+    const key=base+':remove:'+q.versionId+':'+select.value+':'+why;
+    await graphPost('dependency-removal-propose',{versionId:q.versionId,removalId:retryId(key),prerequisiteId:select.value,reason:why});attempts.delete(key);await loadProject();say('Dependency removal proposed.');
+   }));row.append(box);
+  }
+  const prerequisites=g.requirements.filter(x=>x.requirementId!==q.requirementId&&x.state==='satisfied'&&!pins.some(p=>p.prerequisiteId===x.requirementId)&&!removals.some(r=>r.prerequisiteId===x.requirementId));
   if(g.dependencyManagementEnabled&&g.canWrite&&q.ruleDecision==='pending'&&['required','optional'].includes(q.applicability)&&pins.length<8&&prerequisites.length){
    const choice=graphChoice(prerequisites.map(x=>[x.requirementId,x.title+' · '+x.requirementId.slice(-8)])),box=node('div',undefined,'graph-controls');
    box.append(graphField('Satisfied prerequisite',choice),button('Propose dependency',async()=>{

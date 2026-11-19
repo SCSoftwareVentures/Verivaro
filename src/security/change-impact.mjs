@@ -18,7 +18,7 @@ function inventory(g){
    links.add(l.linkId);
    return {linkId:l.linkId,evidenceId:l.evidenceId,sha256:l.sha256,decision:l.decision,reason:l.reason,integrity:l.integrity};
   }).sort((a,b)=>a.linkId.localeCompare(b.linkId));
-  result.set(q.requirementId,{versionId:q.versionId,revision:q.revision,title:q.title,criterion:q.criterion,applicability:q.applicability,provenance:q.provenance,source:q.source,ruleDecision:q.ruleDecision,ruleReason:q.ruleReason,state:q.state,evidence,dependencyPins:q.dependencyPins??[]});
+  result.set(q.requirementId,{versionId:q.versionId,revision:q.revision,title:q.title,criterion:q.criterion,applicability:q.applicability,provenance:q.provenance,source:q.source,ruleDecision:q.ruleDecision,ruleReason:q.ruleReason,state:q.state,evidence,dependencyPins:q.dependencyPins??[],dependencyRemovals:q.dependencyRemovals??[]});
  }
  return result;
 }
@@ -46,7 +46,7 @@ export function compareSubmissionGraph(baseline,current,scope){
    const prior=new Map(old.evidence.map(x=>[x.linkId,x]));
    if(now.evidence.some(x=>prior.has(x.linkId)&&!equal([x.decision,x.reason],[prior.get(x.linkId).decision,prior.get(x.linkId).reason])))reasons.push('evidence_review_changed');
    if(now.evidence.some(x=>prior.has(x.linkId)&&x.integrity!==prior.get(x.linkId).integrity))reasons.push('evidence_integrity_changed');
-   if(!equal(old.dependencyPins,now.dependencyPins))reasons.push('dependencies_changed');
+   if(!equal(old.dependencyPins,now.dependencyPins)||!equal(old.dependencyRemovals,now.dependencyRemovals))reasons.push('dependencies_changed');
    if(old.state!==now.state)reasons.push('readiness_state_changed');
   }
   if(reasons.length)changes.push({requirementId,previousVersionId:old?.versionId??null,currentVersionId:now?.versionId??null,previousState:old?.state??null,currentState:now?.state??null,reasons,
