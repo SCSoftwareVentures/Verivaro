@@ -64,3 +64,6 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f db/tests/project_access_gate.sql
           VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-pool.test.mjs
           psql -X -v ON_ERROR_STOP=1 -f db/tests/identity_lifecycle_gate.sql
+          # Test the preceding lifecycle migration before applying its stricter successor.
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0007_dual_recovery.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/dual_recovery_gate.sql
