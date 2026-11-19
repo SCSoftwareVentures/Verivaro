@@ -13,7 +13,7 @@ function reply(res,status,payload,extra={}){
 }
 const failure=(res,status,extra)=>reply(res,status,{error:status===401?'authentication_required':status===404?'not_found':status===409?'conflict':status===422?'evidence_rejected':status===507?'storage_quota_exhausted':status===429?'rate_limited':status===503?'temporarily_unavailable':'request_denied'},extra);
 function safeHeaders(req,origin){
- const h=req.headers,seen=new Set(),critical=new Set(['host','origin','cookie','authorization','content-length','transfer-encoding','content-encoding','content-type','idempotency-key','x-evidence-sha256','expect','sec-fetch-site']);
+ const h=req.headers,seen=new Set(),critical=new Set(['host','origin','cookie','authorization','content-length','transfer-encoding','content-encoding','content-type','idempotency-key','x-evidence-sha256','x-capture-actor','expect','sec-fetch-site']);
  for(let i=0;i<req.rawHeaders.length;i+=2){const k=req.rawHeaders[i].toLowerCase();if(critical.has(k)&&seen.has(k))return false;seen.add(k);}
  return h.host===origin.host&&h.authorization===undefined&&h['transfer-encoding']===undefined&&h['content-encoding']===undefined&&h.expect===undefined&&TYPES.includes(h['content-type'])&&
  /^[1-9][0-9]{0,5}$/.test(h['content-length']??'')&&Number(h['content-length'])<=MAX_EVIDENCE_UPLOAD&&uuid.test(h['idempotency-key']??'')&&/^[a-f0-9]{64}$/.test(h['x-evidence-sha256']??'');
@@ -25,6 +25,7 @@ export function createEvidenceUploadHandler({origin,verifier,admission,resolveSe
  return async function upload(req,res){
   if(!isEvidenceUpload(req))return failure(res,404);
   if(!safeHeaders(req,u))return failure(res,400);
+  const expectedActor=req.headers['x-capture-actor'];if(expectedActor!==undefined&&(!route.exec(req.url)[3]||!/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(expectedActor)))return failure(res,400);
   if(req.headers.origin!==u.origin||['cross-site','same-site'].includes(req.headers['sec-fetch-site']))return failure(res,403);
   if(active>=maxConcurrent)return failure(res,429,{'Retry-After':'5'});active++;
   const controller=new AbortController(),abort=()=>controller.abort(),chunks=[];let data,timer;
@@ -34,6 +35,7 @@ export function createEvidenceUploadHandler({origin,verifier,admission,resolveSe
    const token=await resolveSession(req);if(!token)return failure(res,401);
    let p;try{p=verifyIdentityToken(token,verifier);}catch{return failure(res,401);}
    if(!await admission.actor(p.actorId))return failure(res,429,{'Retry-After':'60'});
+   if(expectedActor!==undefined&&expectedActor!==p.actorId)return failure(res,404);
    controller.signal.throwIfAborted();
    const expected=Number(req.headers['content-length']);let n=0;
    timer=setTimeout(()=>{controller.abort();req.destroy();},5000);timer.unref();

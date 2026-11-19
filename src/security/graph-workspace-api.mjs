@@ -83,7 +83,7 @@ export function createGraphWorkspaceApi({origin,verifier,admission,resolveSessio
    const proofLockEnabled=['proofLock','writeMilestone','proposeEvidenceWindow','reviewEvidenceWindow'].every(k=>typeof workflow[k]==='function');
    if(action==='prooflock'){
     if(!proofLockEnabled)return denied(res,404);
-    return response(res,200,await workflow.proofLock(scope));
+    return response(res,200,{...await workflow.proofLock(scope),actorId:p.actorId});
    }
    if(action==='submission-list')return response(res,200,{items:await workflow.listSubmissions(scope),downloadEnabled:typeof assembleSubmission==='function'});
    if(!mutation){const assessment=await workflow.assessment(scope),removalEnabled=['proposeDependencyRemoval','reviewDependencyRemoval','dependencyRemovalCandidates'].every(k=>typeof workflow[k]==='function'),removalCandidates=removalEnabled&&assessment.canWrite?await workflow.dependencyRemovalCandidates(scope):[];return response(res,200,{...assessment,preflight:buildRejectionPreflight(assessment),extractionEnabled:typeof extract==='function',dependencyManagementEnabled:typeof workflow.proposeDependency==='function'&&typeof workflow.reviewDependency==='function',dependencyRemovalEnabled:removalEnabled,removalCandidates,proofLockEnabled});}

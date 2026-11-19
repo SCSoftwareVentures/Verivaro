@@ -411,7 +411,9 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   assert.equal((await sendCapture(capturePath,{...captureHeaders,cookie:contributor})).status,404);
   assert.equal((await sendCapture(capturePath,{...captureHeaders,origin:'https://evil.invalid'})).status,403);
   scanner.setVerdict('infected');assert.equal((await sendCapture()).status,422);scanner.setVerdict('clean');
-  const captured=await sendCapture();assert.equal(captured.status,200);const savedCapture=JSON.parse(captured.body);assert.equal(savedCapture.linkId,captureRequest);
+  assert.equal((await sendCapture(capturePath,{...captureHeaders,'x-capture-actor':randomUUID()})).status,404);
+  assert.equal((await getProof()).actorId,actor);
+  const captured=await sendCapture(capturePath,{...captureHeaders,'x-capture-actor':actor});assert.equal(captured.status,200);const savedCapture=JSON.parse(captured.body);assert.equal(savedCapture.linkId,captureRequest);
   assert.equal((await sendCapture()).body,captured.body);
   const capturedGraph=(await getGraph()).requirements.find(x=>x.versionId===w.versionId);assert.equal(capturedGraph.state,'unresolved_evidence');assert.ok(capturedGraph.links.some(x=>x.linkId===captureRequest&&x.evidenceId===savedCapture.evidence.id&&x.decision==='pending'));
   assert.equal((await admin.query('SELECT count(*)::int AS n FROM verivaro_private.prooflock_capture_receipts WHERE request_id=$1',[captureRequest])).rows[0].n,1);

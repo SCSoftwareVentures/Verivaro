@@ -115,6 +115,86 @@ async function cameraDerivative(file){
   throw Error('Unable to create an acceptable photo derivative. Choose an original supported file.');
  }finally{bitmap?.close();canvas.width=0;canvas.height=0;}
 }
+const queueName='verivaro-capture-v1',queueMax=8,queueLimit=262144;
+const queueAvailable=()=>window.isSecureContext&&typeof indexedDB!=='undefined'&&!!crypto.subtle;
+function queueOpen(){
+ return new Promise((resolve,reject)=>{
+  if(!queueAvailable())return reject(Error('Encrypted local queue unavailable; use online capture.'));
+  const req=indexedDB.open(queueName,1);
+  req.onupgradeneeded=()=>{req.result.createObjectStore('entries',{keyPath:'id'});};
+  req.onerror=()=>reject(Error('Local queue storage unavailable.'));
+  req.onblocked=()=>reject(Error('Close other workspace tabs before opening the local queue.'));
+  req.onsuccess=()=>{const db=req.result;db.onversionchange=()=>db.close();resolve(db);};
+ });
+}
+async function queueTx(mode,fn){
+ const db=await queueOpen();
+ try{return await new Promise((resolve,reject)=>{
+  const tx=db.transaction('entries',mode),store=tx.objectStore('entries');let value,reason;
+  tx.oncomplete=()=>resolve(value);tx.onabort=()=>reject(reason??Error('Local queue transaction failed.'));
+  tx.onerror=()=>{};const finish=v=>{value=v;},fail=e=>{reason=e;tx.abort();};
+  try{fn(store,finish,fail);}catch(e){fail(e);}
+ });}finally{db.close();}
+}
+const queueKeys=()=>queueTx('readonly',(s,done)=>{const r=s.getAllKeys();r.onsuccess=()=>done(r.result);});
+const queueGet=id=>queueTx('readonly',(s,done)=>{const r=s.get(id);r.onsuccess=()=>done(r.result);});
+const queueDrop=id=>queueTx('readwrite',(s,done)=>{const r=s.delete(id);r.onsuccess=()=>done(true);});
+const queueAdd=record=>queueTx('readwrite',(s,done,fail)=>{const count=s.count();count.onsuccess=()=>{if(count.result>=queueMax)return fail(Error('Local queue full. Sync or discard an entry first.'));const req=s.add(record);req.onsuccess=()=>done(record.id);};});
+const utf8=new TextEncoder(),decodeUtf8=new TextDecoder('utf-8',{fatal:true});
+const queueAAD=id=>utf8.encode(queueName+':'+id);
+async function queueKey(pass,salt){
+ if(typeof pass!=='string'||pass.length<16||pass.length>128)throw Error('Use a unique passphrase of 16–128 characters.');
+ const bytes=utf8.encode(pass);try{const base=await crypto.subtle.importKey('raw',bytes,'PBKDF2',false,['deriveKey']);return await crypto.subtle.deriveKey({name:'PBKDF2',hash:'SHA-256',salt,iterations:600000},base,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);}finally{bytes.fill(0);}
+}
+function captureMetaValid(m,id,n){
+ return m&&Object.keys(m).length===9&&m.requestId===id&&[m.actorId,m.tenantId,m.projectId,m.windowId,m.versionId,m.revisionId,m.requestId].every(x=>typeof x==='string'&&uuid.test(x))&&['image/png','application/pdf','text/plain; charset=utf-8'].includes(m.media)&&typeof m.digest==='string'&&/^[a-f0-9]{64}$/.test(m.digest)&&Number.isInteger(n)&&n>=1&&n<=queueLimit;
+}
+async function digestBytes(bytes){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');}
+async function queueSeal(meta,bytes,pass){
+ const id=meta.requestId;if(!captureMetaValid(meta,id,bytes.byteLength)||await digestBytes(bytes)!==meta.digest)throw Error('Invalid offline capture.');
+ const header=utf8.encode(JSON.stringify(meta)),plain=new Uint8Array(4+header.length+bytes.byteLength),salt=crypto.getRandomValues(new Uint8Array(16)),iv=crypto.getRandomValues(new Uint8Array(12));
+ new DataView(plain.buffer).setUint32(0,header.length);plain.set(header,4);plain.set(new Uint8Array(bytes),4+header.length);
+ try{const key=await queueKey(pass,salt),cipher=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:queueAAD(id),tagLength:128},key,plain);return await queueAdd({id,version:1,salt,iv,cipher});}
+ finally{plain.fill(0);header.fill(0);}
+}
+async function queueUnseal(id,pass){
+ const r=await queueGet(id);
+ if(!r||r.id!==id||r.version!==1||!(r.salt instanceof Uint8Array)||r.salt.length!==16||!(r.iv instanceof Uint8Array)||r.iv.length!==12||!(r.cipher instanceof ArrayBuffer)||r.cipher.byteLength<32||r.cipher.byteLength>queueLimit+2048)throw Error('Invalid or missing local capture.');
+ let plain;try{
+  const key=await queueKey(pass,r.salt);
+  try{plain=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:r.iv,additionalData:queueAAD(id),tagLength:128},key,r.cipher));}catch{throw Error('Incorrect passphrase or damaged local capture.');}
+  if(plain.length<5)throw Error('Damaged local capture.');
+  const n=new DataView(plain.buffer).getUint32(0);if(n<1||n>1024||4+n>=plain.length)throw Error('Damaged local capture.');
+  const meta=JSON.parse(decodeUtf8.decode(plain.subarray(4,4+n))),bytes=plain.slice(4+n).buffer;
+  if(!captureMetaValid(meta,id,bytes.byteLength)||await digestBytes(bytes)!==meta.digest){new Uint8Array(bytes).fill(0);throw Error('Damaged local capture.');}
+  return {meta,bytes};
+ }finally{plain?.fill(0);}
+}
+async function populateQueue(select){
+ const previous=select.value,ids=await queueKeys();select.replaceChildren();option(select,'','Choose encrypted local entry');
+ for(const id of ids)if(typeof id==='string'&&uuid.test(id))namedOption(select,id,id);
+ if(ids.includes(previous))select.value=previous;
+}
+function queueControls(root,ctx,onQueue){
+ const box=node('details'),pass=node('input'),entries=node('select');pass.type='password';pass.autocomplete='off';pass.maxLength=128;
+ const readPass=()=>{const value=pass.value;pass.value='';return value;};
+ box.append(node('summary','Encrypted offline capture'),node('p','Only on a trusted personal device. Save with a unique passphrase; the browser retains encrypted bytes and an opaque ID. No recovery if you lose the passphrase or browser storage. Keep this page open to capture offline. Nothing is verified until accepted by the server.','meta'),graphField('Offline capture passphrase',pass),
+ button('Save selected file offline',()=>onQueue(false,readPass())),button('Save selected photo offline',()=>onQueue(true,readPass())),graphField('Encrypted local entry',entries),button('List encrypted entries',async()=>{await populateQueue(entries);say('Local encrypted entries listed.');}),
+ button('Synchronise selected entry',async()=>{
+  const id=entries.value,secret=readPass();if(!uuid.test(id))throw Error('Select an encrypted entry.');
+  const {meta,bytes}=await queueUnseal(id,secret);
+  try{
+   if(Object.keys(ctx).some(k=>meta[k]!==ctx[k]))throw Error('Entry belongs to another actor or capture context. It has not been uploaded.');
+   if(!confirm('Synchronise this exact encrypted capture for independent review?'))return;
+   const endpoint='/api/v1/tenants/'+meta.tenantId+'/projects/'+meta.projectId+'/evidence/capture/'+meta.windowId+'/'+meta.versionId+'/'+meta.revisionId;
+   const receipt=await api(endpoint,{method:'POST',headers:{'Content-Type':meta.media,'Idempotency-Key':id,'X-Evidence-SHA256':meta.digest,'X-Capture-Actor':meta.actorId},body:bytes});
+   if(receipt?.linkId!==id||receipt?.evidence?.sha256!==meta.digest||receipt?.evidence?.bytes!==bytes.byteLength)throw Error('Receipt mismatch. Local entry retained.');
+   await queueDrop(id);await loadProject();say('Local capture synchronised; independent review required.');
+  }finally{new Uint8Array(bytes).fill(0);}
+ }),
+ button('Discard selected local entry',async()=>{const id=entries.value;pass.value='';if(!uuid.test(id))throw Error('Select an encrypted entry.');if(!confirm('Permanently discard the selected encrypted local entry? This cannot be undone and does not delete server evidence.'))return;await queueDrop(id);await populateQueue(entries);say('Local encrypted entry discarded.');}));
+ root.append(box);
+}
 function captureFragment(tenantId,projectId,windowId,versionId,revisionId){
  const identifiers=[tenantId,projectId,windowId,versionId,revisionId];if(!identifiers.every(x=>typeof x==='string'&&uuid.test(x)))throw Error('Invalid capture context.');return '#capture/'+identifiers.join('/');
 }
@@ -153,6 +233,7 @@ async function loadProofLock(){
  el('proofLockPanel').hidden=false;
  el('proofLockSummary').textContent=plan.summary.total+' evidence tasks · '+plan.summary.critical+' critical · '+plan.summary.overdue+' overdue · '+plan.summary.clarification+' need clarification';
  el('proofLockLimits').textContent=plan.limitations.join(' ');
+ if(queueAvailable()&&uuid.test(p.actorId??'')){const manage=node('details'),entries=node('select');manage.append(node('summary','Manage encrypted local entries'),node('p','Opaque IDs only; entries may belong to another workspace. Discard only entries you recognise.','meta'),graphField('Stored encrypted entry',entries),button('List locally stored entries',async()=>{await populateQueue(entries);say('Local encrypted entries listed.');}),button('Discard stored entry',async()=>{if(!uuid.test(entries.value))throw Error('Select an encrypted entry.');if(!confirm('Permanently discard this local encrypted entry?'))return;await queueDrop(entries.value);await populateQueue(entries);say('Local encrypted entry discarded.');}));rules.append(manage);}
  if(!plan.tasks.length)tasks.append(node('p','No capture rules defined. Add a milestone and propose a capture rule against an approved criterion.'));
  for(const t of plan.tasks){
   const q=byReq.get(t.requirementId),stage=latest.get(t.milestoneId),row=node('article',undefined,'item'),a=node('a',q?.title??'Requirement');
@@ -166,7 +247,8 @@ async function loadProofLock(){
    box.id='capture-'+[t.windowId,t.versionId,stage.revisionId].join('-');
    captureLink.href=captureFragment(tenant.value,project.value,t.windowId,t.versionId,stage.revisionId);
    file.type='file';file.accept='.txt,.png,.pdf';camera.type='file';camera.accept='image/jpeg,image/png,image/heic,image/heif';camera.setAttribute('capture','environment');
-   async function submitCapture(f,photo){
+   const captureContext={actorId:p.actorId,tenantId:tenant.value,projectId:project.value,windowId:t.windowId,versionId:t.versionId,revisionId:stage.revisionId};
+   async function submitCapture(f,photo,offlinePass=null){
     if(!f||f.size<1)throw Error('Choose a file first.');
     let bytes,media;
     try{
@@ -180,11 +262,13 @@ async function loadProofLock(){
       if(!media)throw Error('Unsupported evidence format. Use a supported PNG, text or canonical PDF file.');
       if(!confirm('Upload and link this original file for independent review?'))return;bytes=await f.arrayBuffer();
      }
-     const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join(''),endpoint=base+'/evidence/capture/'+t.windowId+'/'+t.versionId+'/'+stage.revisionId,key=endpoint+':'+media+':'+digest;
+     const digest=await digestBytes(bytes),endpoint=base+'/evidence/capture/'+t.windowId+'/'+t.versionId+'/'+stage.revisionId,key=endpoint+':'+media+':'+digest;
+     if(offlinePass!==null){if(!confirm('Save encrypted evidence in this browser on this device? Unsynchronised evidence is not verified.'))return;const id=crypto.randomUUID();await queueSeal({...captureContext,requestId:id,media,digest},bytes,offlinePass);file.value='';camera.value='';say('Encrypted local capture saved; not yet synchronised.');return;}
      await api(endpoint,{method:'POST',headers:{'Content-Type':media,'Idempotency-Key':retryId(key),'X-Evidence-SHA256':digest},body:bytes});attempts.delete(key);file.value='';camera.value='';await loadProject();say('Captured evidence submitted for independent review.');
     }finally{if(bytes)new Uint8Array(bytes).fill(0);}
    }
-   box.append(node('summary','Capture evidence'),captureLink,node('p','Upload original supported files or explicitly approve a derived camera PNG. Server receipt time is not original capture time. Keep originals where required.','meta'),graphField('Capture evidence file',file),button('Submit captured evidence',()=>submitCapture(file.files[0],false)),graphField('Take or choose photo',camera),button('Submit photo derivative',()=>submitCapture(camera.files[0],true)));row.append(box);
+   box.append(node('summary','Capture evidence'),captureLink,node('p','Upload original supported files or explicitly approve a derived camera PNG. Server receipt time is not original capture time. Keep originals where required.','meta'),graphField('Capture evidence file',file),button('Submit captured evidence',()=>submitCapture(file.files[0],false)),graphField('Take or choose photo',camera),button('Submit photo derivative',()=>submitCapture(camera.files[0],true)));
+   if(queueAvailable()&&uuid.test(p.actorId??''))queueControls(box,captureContext,(photo,pass)=>submitCapture(photo?camera.files[0]:file.files[0],photo,pass));else box.append(node('p','Encrypted offline storage unavailable in this browser; use online capture.','meta'));row.append(box);
   }
   tasks.append(row);
  }
