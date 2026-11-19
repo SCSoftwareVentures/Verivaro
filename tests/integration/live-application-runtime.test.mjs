@@ -351,7 +351,8 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   const candidateGraph=await getGraph();
   assert.equal(candidateGraph.dependencyRemovalEnabled,true);
   assert.ok(candidateGraph.removalCandidates.some(x=>x.versionId===childRev.versionId&&x.prerequisiteId===rule.requirementId));
-  assert.deepEqual((await getGraph(reviewer)).removalCandidates,[]);
+  // Reviewers can draft under the existing graph role policy; they cannot review their own proposal or criterion.
+  assert.ok((await getGraph(reviewer)).removalCandidates.some(x=>x.versionId===childRev.versionId&&x.prerequisiteId===rule.requirementId));
   const removal={versionId:childRev.versionId,removalId:randomUUID(),prerequisiteId:rule.requirementId,reason:'Criterion now uses separate proof'};
   assert.equal((await g('dependency-removal-propose',{...removal,actorId:actor})).status,400);
   assert.equal((await g('dependency-removal-propose',{...removal,reason:' '})).status,400);
