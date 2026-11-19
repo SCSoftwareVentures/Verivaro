@@ -29,7 +29,7 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   scanner=await scannerFixture(dir);
   const cfg={origin,ingestion:{keyId:'runtime-fixture',keyFile:await put('evidence-key',randomBytes(32).toString('base64url')),scannerSocket:scanner.socketPath},listenHost:'127.0.0.1',listenPort:18443,tlsKeyFile:join(tls,'server.key'),tlsCertFile:join(tls,'server.crt'),
    database:{host:'localhost',port:Number(process.env.PGPORT),name:'verivaro_test',caFile:join(tls,'ca.pem')},
-   logins:{ingestion:{user:'vv_ci_ingest',passwordFile:await put('ingestion',process.env.VV_INGEST_PASSWORD)},identity:{user:'vv_ci_identity',passwordFile:await put('identity',process.env.VV_IDENTITY_PASSWORD)},runtime:{user:'vv_ci_runtime',passwordFile:await put('runtime',process.env.VV_RUNTIME_PASSWORD)},admission:{user:'vv_ci_api_a',passwordFile:await put('admission',process.env.VV_API_A_PASSWORD)}},
+   logins:{evidenceReader:{user:'vv_ci_evidence_reader',passwordFile:await put('reader',process.env.VV_EVIDENCE_READER_PASSWORD)},ingestion:{user:'vv_ci_ingest',passwordFile:await put('ingestion',process.env.VV_INGEST_PASSWORD)},identity:{user:'vv_ci_identity',passwordFile:await put('identity',process.env.VV_IDENTITY_PASSWORD)},runtime:{user:'vv_ci_runtime',passwordFile:await put('runtime',process.env.VV_RUNTIME_PASSWORD)},admission:{user:'vv_ci_api_a',passwordFile:await put('admission',process.env.VV_API_A_PASSWORD)}},
    provider:{issuer,audience,authorizationEndpoint:issuer+'/authorize',tokenEndpoint:issuer+'/token',requiredAcr:'fixture:mfa',requiredAmr:['mfa'],authorityFile:await put('authority',authority.publicKey.export({type:'spki',format:'pem'})),checkpointFile:await put('checkpoint',JSON.stringify({sequence:1,digest:createHash('sha256').update(catalogue).digest('hex')})),catalogueFile:await put('catalogue',catalogue),signatureFile:await put('sig',sign(null,catalogue,authority.privateKey)),clientSecretFile:await put('client-secret',secret)},
    local:{issuer:'urn:verivaro:runtime-fixture',audience:'api',signingKeyFile:await put('signing',local.privateKey.export({type:'pkcs8',format:'pem'}))},
    secrets:{admissionKeyFile:await put('admission-key',randomBytes(32).toString('base64url')),contextKeyFile:await put('context-key',context.toString('base64url')),browserKeyFile:await put('browser-key',randomBytes(32).toString('base64url'))}};
@@ -80,6 +80,11 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   const repeat=await request(route+'/'+project+'/evidence',{method:'POST',headers:evidenceHeaders,body:evidenceBody});assert.equal(repeat.status,200);assert.equal(JSON.parse(repeat.body).evidence.id,uploadedId);
   scanner.setVerdict('infected');
   assert.equal((await request(route+'/'+project+'/evidence',{method:'POST',headers:{...evidenceHeaders,'idempotency-key':randomUUID()},body:evidenceBody})).status,422);
+  const download=await request(route+'/'+project+'/evidence/'+uploadedId+'/download',{headers:{cookie:session}});
+  assert.equal(download.status,200);assert.equal(download.body,evidenceBody);assert.equal(download.headers['content-type'],'application/octet-stream');assert.match(download.headers['content-disposition'],/^attachment;/);
+  assert.equal((await request(route+'/'+project+'/evidence/'+uploadedId+'/download',{headers:{cookie:session,range:'bytes=0-5'}})).status,400);
+  assert.equal((await request(route.replace(tenant,'22222222-2222-4222-8222-222222222222')+'/'+project+'/evidence/'+uploadedId+'/download',{headers:{cookie:session}})).status,404);
+  assert.equal((await admin.query('SELECT count(*)::int AS n FROM verivaro_private.evidence_access_events WHERE evidence_id=$1',[uploadedId])).rows[0].n,1);
   const listed=await request(route+'/'+project+'/evidence',{headers:{cookie:session}});assert.equal(listed.status,200);assert.ok(JSON.parse(listed.body).items.some(x=>x.id===uploadedId));
   assert.equal((await request('/auth/logout-all',{method:'POST',headers:{origin,cookie:session}})).status,204);
   assert.equal((await request(route,{headers:{cookie:session}})).status,401);

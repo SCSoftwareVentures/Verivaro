@@ -8,6 +8,7 @@ import {createAuthenticationGateway} from './authentication-gateway.mjs';
 import {createBrowserAuthentication} from './browser-authentication.mjs';
 import {createScopedDatabase} from './scoped-database.mjs';
 import {createApiAdmission,apiPeer} from './api-admission.mjs';
+import {createEvidenceReader,createEvidenceDownloadHandler,isEvidenceDownload} from './evidence-retrieval.mjs';
 import {createEvidenceUploadHandler,isEvidenceUpload} from './evidence-upload-api.mjs';
 import {createIngestionDatabase,createEvidenceIngestion} from './evidence-ingestion.mjs';
 import {createClamdScanner} from './clamd-scanner.mjs';
@@ -32,7 +33,7 @@ const page='<!doctype html><html lang="en"><meta charset="utf-8"><meta name="vie
 export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,report=()=>{}}){
  if(typeof Pool!=='function')throw Error('missing database driver');
  const cfg=JSON.parse(await readText(configPath,16384));
- const enabled=Object.hasOwn(cfg,'ingestion'),serviceRoles=enabled?{...roles,ingestion:'verivaro_evidence_ingestor'}:roles;
+ const enabled=Object.hasOwn(cfg,'ingestion'),serviceRoles=enabled?{...roles,ingestion:'verivaro_evidence_ingestor',evidenceReader:'verivaro_evidence_reader'}:roles;
  exact(cfg,['origin','listenHost','listenPort','tlsKeyFile','tlsCertFile','database','logins','provider','local','secrets',...(enabled?['ingestion']:[])]);
  if(enabled)exact(cfg.ingestion,['keyId','keyFile','scannerSocket']);
  const origin=new URL(cfg.origin);
@@ -67,13 +68,15 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
   const browser=createBrowserAuthentication({db,gateway,provider,localVerifier:verifier,origin:origin.origin,authorizationEndpoint:p.authorizationEndpoint,tokenEndpoint:p.tokenEndpoint,clientSecret:(await readText(p.clientSecretFile,1024)).trim(),key:browserKey,requiredAcr:p.requiredAcr,fetcher});
   const scoped=createScopedDatabase(pools.runtime,{verifier,key:contextKey,expectedLogin:cfg.logins.runtime.user});
   const api=createApplicationApi({resolveSession:browser.resolveSession,scoped,admission,verifier,origin:origin.origin});
-  let upload;
+  let upload,download;
   if(enabled){
    const evidenceKey=await readKey(cfg.ingestion.keyFile);rawKeys.push(evidenceKey);
    if(rawKeys.slice(0,-1).some(k=>k.equals(evidenceKey)))throw Error('duplicate evidence key');
    const ingestDb=createIngestionDatabase(pools.ingestion,{verifier,contextKey,expectedLogin:cfg.logins.ingestion.user});
    const ingest=createEvidenceIngestion({db:ingestDb,scan:createClamdScanner({socketPath:cfg.ingestion.scannerSocket}),key:evidenceKey,keyId:cfg.ingestion.keyId});
+   const evidenceReadKey=Buffer.from(evidenceKey),retrieve=createEvidenceReader(pools.evidenceReader,{verifier,contextKey,expectedLogin:cfg.logins.evidenceReader.user,readKey:async id=>{if(id!==cfg.ingestion.keyId)throw Error('evidence key unavailable');return evidenceReadKey;}});
    upload=createEvidenceUploadHandler({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,ingest});
+   download=createEvidenceDownloadHandler({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,retrieve});
   }
   const tlsKey=await readPrivate(cfg.tlsKeyFile,65536),cert=await readPrivate(cfg.tlsCertFile,65536);rawKeys.push(tlsKey);
   const leaf=new X509Certificate(cert);
@@ -89,6 +92,7 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
    if(active>=24)return reply(res,429,'Temporarily unavailable',{'Retry-After':'5'});
    active++;
    try{
+    if(isEvidenceDownload(req))return download?await download(req,res):reply(res,404,'Not found');
     if(isEvidenceUpload(req))return upload?await upload(req,res):reply(res,404,'Not found',{'Connection':'close'});
     if(req.url.startsWith('/api/'))return await api(req,res);
     if(req.url.startsWith('/auth/')){
