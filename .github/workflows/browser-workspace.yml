@@ -10,7 +10,7 @@ permissions:
 jobs:
   browser:
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ matrix.engine == 'webkit' && 45 || 15 }}
+    timeout-minutes: ${{ matrix.engine == 'webkit' && 55 || 35 }}
     strategy:
       fail-fast: false
       matrix:
@@ -27,20 +27,19 @@ jobs:
         run: |
           set -euo pipefail
           npm install --prefix "$RUNNER_TEMP/vv-browser" --ignore-scripts --no-audit --no-fund --save-exact playwright@1.56.1
-      - name: Configure reliable WebKit system package downloads
-        if: matrix.engine == 'webkit'
+      - name: Configure reliable browser system package downloads
         timeout-minutes: 2
         run: |
           set -euo pipefail
           # The runner's EC2 package mirror timed out downloading WebKit's
-          # dependency set. Use Ubuntu's official HTTPS archive when its
+          # dependency set for both engines. Use Ubuntu's official HTTPS archive when its
           # runner-provided mirror list is present. Preserve apt signatures.
           if test -f /etc/apt/apt-mirrors.txt; then
             printf '%s\n' 'https://archive.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
           fi
           printf '%s\n' 'Acquire::Retries "3";' 'Acquire::http::Timeout "60";' 'Acquire::https::Timeout "60";' | sudo tee /etc/apt/apt.conf.d/80-verivaro-ci >/dev/null
       - name: Install browser system dependencies
-        timeout-minutes: ${{ matrix.engine == 'webkit' && 32 || 6 }}
+        timeout-minutes: ${{ matrix.engine == 'webkit' && 32 || 18 }}
         run: |
           set -euo pipefail
           node "$RUNNER_TEMP/vv-browser/node_modules/playwright/cli.js" install-deps ${{ matrix.engine }}
