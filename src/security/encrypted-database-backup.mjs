@@ -63,7 +63,7 @@ export async function createEncryptedBackup(source,{root,key,installationId,data
   const dir=await open(stage,constants.O_RDONLY|constants.O_DIRECTORY);try{await dir.sync();}finally{await dir.close();}
   signal.throwIfAborted();const destination=join(root,'backup-'+m.backupId);await rename(stage,destination);published=true;
   const parent=await open(root,constants.O_RDONLY|constants.O_DIRECTORY);try{await parent.sync();}finally{await parent.close();}
-  return Object.freeze({path:destination,backupId:m.backupId,bytes});
+  return Object.freeze({path:destination,backupId:m.backupId,bytes,sha256:m.sha256,createdAt:m.createdAt});
  }finally{
   enc.fill(0);auth.fill(0);
   try{await file?.close();await manifest?.close();}finally{if(stage&&!published)await rm(stage,{recursive:true,force:true});}
@@ -92,6 +92,6 @@ export async function verifyAndStageBackup({path,spoolDirectory,key,installation
    const last=decipher.final();if(last.length)yield last;
   })());
   const staged=await stageEncryptedArtifact(source,{directory:spoolDirectory,maxBytes:m.bytes,sha256:m.sha256,signal});
-  return Object.freeze({backupId:m.backupId,createdAt:m.createdAt,length:staged.length,read:staged.read,close:staged.close});
+  return Object.freeze({backupId:m.backupId,createdAt:m.createdAt,sha256:m.sha256,length:staged.length,read:staged.read,close:staged.close});
  }finally{enc.fill(0);auth.fill(0);await file?.close();}
 }
