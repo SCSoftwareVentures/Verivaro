@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {resolve} from 'node:path';
 import {randomUUID,randomBytes,sign} from 'node:crypto';
-import {createServer} from 'node:http';
+import {createServer,request as httpRequest} from 'node:http';
 import {local} from '../fixtures/provider-fixture.mjs';
 import {createScopedDatabase} from '../../src/security/scoped-database.mjs';
 import {createApiAdmission} from '../../src/security/api-admission.mjs';
@@ -30,7 +30,16 @@ test('two live API replicas share peer/actor quotas and enforce tenant/project R
    const handler=createApplicationApi({origin,admission,verifier,resolveSession,scoped:{execute:async x=>{calls++;return scoped.execute(x);}}});
    const s=createServer(handler);servers.push(s);await new Promise(r=>s.listen(0,'127.0.0.1',r));
   }
-  const request=(i,path,opts={})=>fetch('http://127.0.0.1:'+servers[i].address().port+path,{...opts,headers:{host:'api.example.invalid',cookie:'fixture='+handle,...opts.headers}});
+  // Node fetch normalizes Host to the transport URL. Raw HTTP deliberately
+  // connects to loopback while retaining the configured virtual host.
+  const request=(i,path,opts={})=>new Promise((resolve,reject)=>{
+   const headers={host:'api.example.invalid',cookie:'fixture='+handle,...opts.headers};
+   if(opts.body!==undefined)headers['content-length']=Buffer.byteLength(opts.body);
+   const req=httpRequest({hostname:'127.0.0.1',port:servers[i].address().port,path,method:opts.method??'GET',headers},res=>{
+    const chunks=[];res.on('data',x=>chunks.push(x));res.on('error',reject);
+    res.on('end',()=>resolve({status:res.statusCode,headers:{get:k=>res.headers[k.toLowerCase()]??null},json:async()=>JSON.parse(Buffer.concat(chunks).toString('utf8'))}));
+   });req.on('error',reject);req.setTimeout(10000,()=>req.destroy(Error('fixture timeout')));req.end(opts.body);
+  });
   const reset=async(peer=120,actor=60)=>{await admin.query('DELETE FROM verivaro_private.api_rate_keys');await admin.query('UPDATE verivaro_private.api_rate_state SET bucket=-1,requests=0,global_limit=600,peer_limit=$1,actor_limit=$2',[peer,actor]);};
   await reset();
   const good=await request(0,route);assert.equal(good.status,200);assert.equal(good.headers.get('cache-control'),'no-store, private');assert.deepEqual((await good.json()).items.map(x=>x.id),[project]);
@@ -44,6 +53,8 @@ test('two live API replicas share peer/actor quotas and enforce tenant/project R
   assert.equal((await request(0,route,{method:'DELETE'})).status,405);
   assert.equal((await request(0,route,{headers:{origin:'https://evil.invalid'}})).status,403);
   assert.equal((await request(0,route,{headers:{authorization:'Bearer forged'}})).status,400);
+  assert.equal((await request(0,route,{headers:{host:'wrong.invalid'}})).status,400);
+  assert.equal((await request(0,route,{headers:{origin:['https://api.example.invalid','https://evil.invalid']}})).status,400);
   assert.equal((await request(0,route,{headers:{cookie:'fixture=wrong'}})).status,401);
   assert.equal(calls,before);
   await reset(120,3);
