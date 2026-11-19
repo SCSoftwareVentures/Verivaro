@@ -76,3 +76,9 @@ jobs:
           export VV_SHARE_PASSWORD
           psql -X -v ON_ERROR_STOP=1 -f db/tests/share_gateway_login.sql
           VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-share-download.test.mjs
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0010_recipient_shares.sql
+          VV_RECIPIENT_PASSWORD="$(openssl rand -hex 32)"
+          echo "::add-mask::$VV_RECIPIENT_PASSWORD"
+          export VV_RECIPIENT_PASSWORD
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/recipient_gateway_login.sql
+          VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-recipient-download.test.mjs

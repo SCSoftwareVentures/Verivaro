@@ -1,4 +1,5 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { verifyIdentityToken } from './verify-identity.mjs';
 import { digestShareToken } from './share-token.mjs';
 import { isArtifactId } from './private-file-store.mjs';
 const hashPattern=/^[0-9a-f]{64}$/;
@@ -22,7 +23,10 @@ function validArtifact(item){
 // No public object URLs, ranges, inline display, or caller-selected filenames.
 // Verify full buffered content before sending any bytes. Bound process memory by
 // maxBytes * maxConcurrent (plus fixed overhead); large exports need another design.
-export function createShareDownloadHandler({resolveShare,openArtifact,maxBytes=8*1024*1024,maxConcurrent=4,requestsPerMinute=120,perPeerPerMinute=20,maxPeers=2048,timeoutMs=10000}){
+export function createShareDownloadHandler({resolveShare,resolveRecipientShare,recipientVerifier,openArtifact,maxBytes=8*1024*1024,maxConcurrent=4,requestsPerMinute=120,perPeerPerMinute=20,maxPeers=2048,timeoutMs=10000}){
+ if((resolveRecipientShare!==undefined||recipientVerifier!==undefined)&&
+ (typeof resolveRecipientShare!=='function'||!recipientVerifier?.publicKey||!recipientVerifier?.issuer||!recipientVerifier?.audience))throw Error('invalid recipient configuration');
+ const verifier=recipientVerifier?Object.freeze({...recipientVerifier}):null;
  if(typeof resolveShare!=='function'||typeof openArtifact!=='function'||
  ![maxBytes,maxConcurrent,requestsPerMinute,perPeerPerMinute,maxPeers,timeoutMs].every(x=>Number.isSafeInteger(x)&&x>0)||
  maxBytes>32*1024*1024||maxConcurrent>16||maxPeers>10000||timeoutMs>30000)throw Error('invalid gateway settings');
@@ -41,7 +45,8 @@ export function createShareDownloadHandler({resolveShare,openArtifact,maxBytes=8
   // Deliberately ignore forwarded headers: peer identity is transport-derived.
   const peer=req.socket.remoteAddress??'unknown';
   if(!admit(peer)||inFlight>=maxConcurrent){send(res,429,Buffer.from('Not available\n'),{'Content-Type':'text/plain; charset=utf-8','Retry-After':'60','Connection':'close'});return;}
-  if(req.method!=='POST'||req.url!=='/public/share/download'||req.headers['transfer-encoding']!==undefined||
+  const recipientRoute=req.url==='/public/share/recipient-download';
+  if(req.method!=='POST'||(!recipientRoute&&req.url!=='/public/share/download')||req.headers['transfer-encoding']!==undefined||
     (req.headers['content-length']!==undefined&&req.headers['content-length']!=='0')||req.headers.range!==undefined){
    deny(res);return;
   }
@@ -50,6 +55,15 @@ export function createShareDownloadHandler({resolveShare,openArtifact,maxBytes=8
   if(typeof auth!=='string'||!/^Bearer [A-Za-z0-9_-]{43}$/.test(auth)){deny(res);return;}
   let digest;
   try{digest=digestShareToken(auth.slice(7));}catch{deny(res);return;}
+  const identityHeaders=req.rawHeaders.filter((v,i)=>i%2===0&&v.toLowerCase()==='x-verivaro-recipient').length;
+  const identity=req.headers['x-verivaro-recipient'];
+  if(recipientRoute){
+   if(!verifier||identityHeaders!==1||typeof identity!=='string'){deny(res);return;}
+  }else if(identityHeaders!==0){deny(res);return;}
+  // Re-validate signature/lifetime before BOTH authorization checks.
+  const authorize=recipientRoute
+   ?()=>resolveRecipientShare(digest,verifyIdentityToken(identity,{...verifier,now:Math.floor(Date.now()/1000)}))
+   :()=>resolveShare(digest);
   inFlight++;
   const controller=new AbortController();
   const timer=setTimeout(()=>{
@@ -60,7 +74,7 @@ export function createShareDownloadHandler({resolveShare,openArtifact,maxBytes=8
   const disconnect=()=>{if(!res.writableFinished)controller.abort();};
   res.once('close',disconnect);
   try{
-   const first=await resolveShare(digest);
+   const first=await authorize();
    controller.signal.throwIfAborted();
    if(!validArtifact(first))throw Error('denied');
    const source=await openArtifact(first.artifact_id,{signal:controller.signal,maxBytes});
@@ -77,7 +91,7 @@ export function createShareDownloadHandler({resolveShare,openArtifact,maxBytes=8
    const body=buffer.subarray(0,length);
    if(!timingSafeEqual(createHash('sha256').update(body).digest(),Buffer.from(first.sha256,'hex')))throw Error('integrity mismatch');
    // Recheck AFTER reading and hashing, immediately before sending.
-   const final=await resolveShare(digest);
+   const final=await authorize();
    controller.signal.throwIfAborted();
    if(!validArtifact(final)||final.artifact_id!==first.artifact_id||final.sha256!==first.sha256)throw Error('denied');
    // Keep the concurrency slot until bytes are flushed or the peer disconnects.
