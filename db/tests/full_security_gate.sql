@@ -25,7 +25,7 @@ BEGIN
    AND NOT(t.relrowsecurity AND t.relforcerowsecurity) THEN RAISE EXCEPTION 'missing forced RLS: %',t.relname; END IF;
   END LOOP;
  END LOOP;
- IF role_count<17 THEN RAISE EXCEPTION 'incomplete role coverage'; END IF;
+ IF role_count<18 THEN RAISE EXCEPTION 'incomplete role coverage'; END IF;
  FOR p IN SELECT pr.oid,pr.proname,pr.proconfig,pr.proacl,pr.proowner,n.nspname FROM pg_proc pr JOIN pg_namespace n ON n.oid=pr.pronamespace
  WHERE n.nspname LIKE 'verivaro%' AND pr.prosecdef LOOP
   IF NOT EXISTS(SELECT 1 FROM unnest(p.proconfig) v WHERE v LIKE 'search_path=pg_catalog%')
@@ -35,8 +35,9 @@ BEGIN
  -- Audit sensitive functions across every service role including future roles.
  FOR r IN SELECT oid,rolname FROM pg_roles WHERE rolname LIKE 'verivaro_%' LOOP
   FOR p IN SELECT pr.oid,pr.proname,n.nspname FROM pg_proc pr JOIN pg_namespace n ON n.oid=pr.pronamespace
-   WHERE n.nspname IN ('verivaro_identity','verivaro_sharing','verivaro_admission','verivaro_monitor','verivaro_alerting','verivaro_recovery','verivaro_mutation') LOOP
+   WHERE n.nspname IN ('verivaro_identity','verivaro_sharing','verivaro_admission','verivaro_monitor','verivaro_alerting','verivaro_recovery','verivaro_mutation','verivaro_ingestion') LOOP
    IF has_function_privilege(r.oid,p.oid,'EXECUTE') AND NOT (
+    (r.rolname='verivaro_evidence_ingestor' AND p.nspname='verivaro_ingestion' AND p.proname IN ('authorize_upload','commit_upload')) OR
     (r.rolname='verivaro_runtime' AND p.nspname='verivaro_mutation' AND p.proname='rename_project') OR
     (r.rolname='verivaro_runtime' AND p.nspname='verivaro_sharing' AND p.proname IN ('issue_share','issue_recipient_share','revoke_share')) OR
     (r.rolname='verivaro_identity_service' AND p.nspname='verivaro_identity' AND p.proname IN ('begin_login','redeem_login','revoke_session','store_browser_flow','take_browser_flow','store_browser_session','read_browser_session','logout_browser','logout_all_browser','record_auth')) OR

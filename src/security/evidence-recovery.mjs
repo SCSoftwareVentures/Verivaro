@@ -37,12 +37,13 @@ function checkDb(db){if(!db||!isArtifactId(db.backupId)||!hash(db.sha256)||!vali
 function canonical(m){return Buffer.from(JSON.stringify(m));}
 // Caller must derive inventory from the exact quiesced database snapshot and
 // provide the corresponding authenticated database archive identity.
-export async function createEvidenceBackup({root,sourceRoot,inventory,databaseBackup,sequence,previousDigest,signingKey,...cfg}){
+export async function createEvidenceBackup({root,sourceRoot,inventory,databaseBackup,sequence,previousDigest,signingKey,objectSource,...cfg}){
  scope(cfg);checkDb(databaseBackup);
  if(!Number.isSafeInteger(sequence)||sequence<1||!(sequence===1?previousDigest===null:hash(previousDigest)))throw Error('invalid catalog sequence');
  const signer=signingKey?.type==='private'?signingKey:createPrivateKey(signingKey);if(signer.asymmetricKeyType!=='ed25519')throw Error('invalid signer');
  await privateDir(root);await privateDir(sourceRoot);
- const rows=normalizeRecoveryInventory(inventory),openObject=createPrivateFileStore(sourceRoot);
+ if(objectSource!==undefined&&typeof objectSource!=='function')throw Error('invalid recovery source');
+ const rows=normalizeRecoveryInventory(inventory),openObject=objectSource??createPrivateFileStore(sourceRoot);
  const stage=await mkdtemp(join(root,'.evidence-'));let published=false,total=0;
  try{
   const objects=[];
