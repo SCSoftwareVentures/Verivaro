@@ -6,7 +6,7 @@ const {privateKey,publicKey}=generateKeyPairSync('rsa',{modulusLength:2048});
 const tenant='11111111-1111-4111-8111-111111111111', project='33333333-3333-4333-8333-333333333333';
 const actor='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const key=randomBytes(32);
-const options={key,verifier:{publicKey,issuer:'fixture',audience:'db-api'}};
+const options={expectedLogin:'vv_ci_runtime',key,verifier:{publicKey,issuer:'fixture',audience:'db-api'}};
 const token=()=>{
  const now=Math.floor(Date.now()/1000);
  const b64=obj=>Buffer.from(JSON.stringify(obj)).toString('base64url');
@@ -20,7 +20,7 @@ function fixture({failAt, deny=false, privileged=false, rollbackFails=false}={})
   async query(sql,values){
    calls.push({sql,values});
    if(sql===failAt || (rollbackFails && sql==='ROLLBACK')) throw Error('driver error');
-   if(sql.includes('pg_catalog.pg_roles')) return {rows:[{privileged}]};
+   if(sql.includes('pg_catalog.pg_roles')) return {rows:[{privileged,login_name:'vv_ci_runtime'}]};
    if(sql.includes('pg_backend_pid')) return {rows:[{pid:2345,xid:'123456'}]};
    if(sql.includes('verivaro.authorized')) return {rows:[{allowed:!deny}]};
    if(sql.startsWith('SELECT id,'))return {rows:[{id:project}]};

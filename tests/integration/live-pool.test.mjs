@@ -28,7 +28,7 @@ const input=(f,operation='listProjects',args={})=>({token:token(f.actor,f.sid),t
 
 test('real PostgreSQL pool: reused lease, tenant isolation, revocation, cancellation', {timeout:45000},async t=>{
  const admin=new Pool({...config,user:process.env.PGUSER,password:process.env.PGPASSWORD,max:2});
- const runtime=new Pool({...config,user:'verivaro_runtime',password:process.env.VV_RUNTIME_PASSWORD});
+ const runtime=new Pool({...config,user:'vv_ci_runtime',password:process.env.VV_RUNTIME_PASSWORD});
  const pids=[], releases=[];
  let businessStarted;
  // Transparent observation around the actual driver; no mock result.
@@ -51,7 +51,7 @@ test('real PostgreSQL pool: reused lease, tenant isolation, revocation, cancella
    await admin.query("INSERT INTO verivaro.memberships(tenant_id,actor_id,role) VALUES($1,$2,'viewer')",[f.tenant,f.actor]);
    await admin.query("INSERT INTO verivaro.project_members(tenant_id,project_id,actor_id,role) VALUES($1,$2,$3,'viewer')",[f.tenant,f.project,f.actor]);
   }
-  const db=createScopedDatabase(observed,{key,verifier:{publicKey,issuer:'ci',audience:'api'}});
+  const db=createScopedDatabase(observed,{expectedLogin:'vv_ci_runtime',key,verifier:{publicKey,issuer:'ci',audience:'api'}});
   await t.test('same physical connection reused safely across tenants',async()=>{
    assert.deepEqual((await db.execute(input(a))).map(r=>r.id),[a.project]);
    assert.deepEqual((await db.execute(input(b))).map(r=>r.id),[b.project]);
@@ -59,6 +59,7 @@ test('real PostgreSQL pool: reused lease, tenant isolation, revocation, cancella
    assert.deepEqual(releases.slice(0,2),[false,false]);
    const lease=await runtime.connect();
    try{
+    await lease.query('SET ROLE verivaro_runtime');
     assert.equal((await lease.query('SELECT count(*)::int AS n FROM verivaro.projects')).rows[0].n,0);
     await lease.query("SELECT set_config('verivaro.tenant_id',$1,false)",[b.tenant]);
     await lease.query("SELECT set_config('verivaro.actor_id',$1,false)",[b.actor]);
@@ -121,6 +122,7 @@ test('real PostgreSQL pool: reused lease, tenant isolation, revocation, cancella
    // Verify revocation against the same still-open runtime transaction.
    const live=await runtime.connect();
    try{
+    await live.query('SET ROLE verivaro_runtime');
     await live.query('BEGIN ISOLATION LEVEL READ COMMITTED');
     const challenge=(await live.query('SELECT pg_backend_pid() AS pid, pg_current_xact_id()::text AS xid')).rows[0];
     const ctx=signDatabaseContext({token:token(a.actor,a.sid),tenantId:a.tenant,challenge},{key,verifier:{publicKey,issuer:'ci',audience:'api'}});

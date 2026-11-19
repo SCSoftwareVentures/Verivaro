@@ -11,7 +11,7 @@ const config={host:process.env.PGHOST,port:Number(process.env.PGPORT),database:p
 test('durable alert claims, fenced retries, terminal failures and controlled incident resolution',{timeout:30000},async()=>{
  const admin=new Pool({...config,user:process.env.PGUSER,password:process.env.PGPASSWORD});
  const pa=new Pool({...config,user:'vv_ci_alert_a',password:process.env.VV_ALERT_A_PASSWORD}),pb=new Pool({...config,user:'vv_ci_alert_b',password:process.env.VV_ALERT_B_PASSWORD});
- const a=createAlertDatabase(pa),b=createAlertDatabase(pb);
+ const a=createAlertDatabase(pa,{expectedLogin:'vv_ci_alert_a'}),b=createAlertDatabase(pb,{expectedLogin:'vv_ci_alert_b'});
  const i=randomUUID();
  try{
   await admin.query("INSERT INTO verivaro_private.security_incidents(id,kind,severity,closed_at) VALUES($1,'delivery_failures','warning',clock_timestamp())",[i]);

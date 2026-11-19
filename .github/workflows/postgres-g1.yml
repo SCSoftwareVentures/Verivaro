@@ -64,6 +64,7 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f db/tests/identity_spoof_gate.sql
           psql -X -v ON_ERROR_STOP=1 -f db/tests/signed_context_gate.sql
           psql -X -v ON_ERROR_STOP=1 -f db/tests/project_access_gate.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/runtime_dedicated_login.sql
           VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-pool.test.mjs
           psql -X -v ON_ERROR_STOP=1 -f db/tests/identity_lifecycle_gate.sql
           # Test the preceding lifecycle migration before applying its stricter successor.

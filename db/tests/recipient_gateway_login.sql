@@ -1,3 +1,4 @@
 \getenv recipient_password VV_RECIPIENT_PASSWORD
-ALTER ROLE verivaro_recipient_gateway LOGIN PASSWORD :'recipient_password';
+CREATE ROLE vv_ci_recipient LOGIN NOINHERIT PASSWORD :'recipient_password';
+GRANT verivaro_recipient_gateway TO vv_ci_recipient;
 \unset recipient_password

@@ -12,9 +12,9 @@ const {Pool}=createRequire(resolve(process.env.VV_TEST_DRIVER_DIR,'package.json'
 const config={host:process.env.PGHOST,port:Number(process.env.PGPORT),database:process.env.PGDATABASE,max:2,connectionTimeoutMillis:3000,idleTimeoutMillis:5000};
 test('live monitor worker, read-only dashboard, stable alert IDs and stale health', {timeout:30000},async()=>{
  const admin=new Pool({...config,user:process.env.PGUSER,password:process.env.PGPASSWORD});
- const wp=new Pool({...config,user:'verivaro_monitor_worker',password:process.env.VV_MONITOR_WORKER_PASSWORD});
- const rp=new Pool({...config,user:'verivaro_monitor_reader',password:process.env.VV_MONITOR_READER_PASSWORD});
- const worker=createMonitorDatabase(wp,{mode:'worker'}),reader=createMonitorDatabase(rp,{mode:'reader'});
+ const wp=new Pool({...config,user:'vv_ci_monitor_worker',password:process.env.VV_MONITOR_WORKER_PASSWORD});
+ const rp=new Pool({...config,user:'vv_ci_monitor_reader',password:process.env.VV_MONITOR_READER_PASSWORD});
+ const worker=createMonitorDatabase(wp,{mode:'worker',expectedLogin:'vv_ci_monitor_worker'}),reader=createMonitorDatabase(rp,{mode:'reader',expectedLogin:'vv_ci_monitor_reader'});
  let server;
  try{
   const ctrl=new AbortController(),reports=[];

@@ -23,14 +23,14 @@ function jwt(actor=recipient,session=sid,overrides={}){
 }
 test('recipient-bound sensitive delivery through real HTTP, PostgreSQL and files', {timeout:45000},async t=>{
  const admin=new Pool({...config,user:process.env.PGUSER,password:process.env.PGPASSWORD});
- const bearer=new Pool({...config,user:'verivaro_share_gateway',password:process.env.VV_SHARE_PASSWORD});
- const gateway=new Pool({...config,user:'verivaro_recipient_gateway',password:process.env.VV_RECIPIENT_PASSWORD});
+ const bearer=new Pool({...config,user:'vv_ci_share',password:process.env.VV_SHARE_PASSWORD});
+ const gateway=new Pool({...config,user:'vv_ci_recipient',password:process.env.VV_RECIPIENT_PASSWORD});
  const directory=await mkdtemp(join(tmpdir(),'vv-recipient-'));
  const artifact=randomUUID(),exportId=randomUUID(),shareId=randomUUID();
  const owner='81000000-0000-4000-8000-000000000001',tenant='11111111-1111-4111-8111-111111111111',project='33333333-3333-4333-8333-333333333333';
  const bytes=Buffer.from('synthetic sensitive export'),hash=createHash('sha256').update(bytes).digest('hex');
  const {token,digest}=generateShareToken();
- const resolver=createShareResolver(gateway,{recipientBound:true});
+ const resolver=createShareResolver(gateway,{recipientBound:true,expectedLogin:'vv_ci_recipient'});
  let server;
  try{
   for(const [a,s] of [[recipient,sid],[other,otherSid],[recipient,replacement]])
@@ -46,7 +46,7 @@ test('recipient-bound sensitive delivery through real HTTP, PostgreSQL and files
    await client.query('COMMIT');
   }finally{client.release(true);}
   await writeFile(join(directory,artifact),bytes);
-  server=createServer(createShareDownloadHandler({resolveShare:createShareResolver(bearer),resolveRecipientShare:resolver,recipientVerifier:{publicKey,issuer:'fixture',audience:'recipient-download'},openArtifact:createPrivateFileStore(directory),maxBytes:1024,perPeerPerMinute:100}));
+  server=createServer(createShareDownloadHandler({resolveShare:createShareResolver(bearer,{expectedLogin:'vv_ci_share'}),resolveRecipientShare:resolver,recipientVerifier:{publicKey,issuer:'fixture',audience:'recipient-download'},openArtifact:createPrivateFileStore(directory),maxBytes:1024,perPeerPerMinute:100}));
   await new Promise((r,j)=>{server.once('error',j);server.listen(0,'127.0.0.1',r);});
   const request=(identity,route='/public/share/recipient-download',credential=token)=>fetch('http://127.0.0.1:'+server.address().port+route,{method:'POST',headers:{Authorization:'Bearer '+credential,...(identity?{'X-Verivaro-Recipient':identity}:{})}});
   const valid=await request(jwt());assert.equal(valid.status,200);assert.deepEqual(Buffer.from(await valid.arrayBuffer()),bytes);

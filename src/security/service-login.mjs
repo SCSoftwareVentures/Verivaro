@@ -3,7 +3,7 @@
 const roles=new Set(['verivaro_runtime','verivaro_share_gateway','verivaro_recipient_gateway','verivaro_admission_service','verivaro_monitor_worker','verivaro_monitor_reader','verivaro_alert_sender']);
 const name=/^[a-z][a-z0-9_]{0,62}$/;
 export function validateServiceIdentity(role,expectedLogin){
- if(!roles.has(role)||expectedLogin!==undefined&&(!name.test(expectedLogin)||expectedLogin===role||expectedLogin.startsWith('pg_')||expectedLogin.startsWith('verivaro_')))throw Error('invalid service identity configuration');
+ if(!roles.has(role)||(typeof expectedLogin!=='string'||!name.test(expectedLogin)||expectedLogin===role||expectedLogin.startsWith('pg_')||expectedLogin.startsWith('verivaro_')))throw Error('invalid service identity configuration');
 }
 const CHECK=String.raw`SELECT
  l.rolname::text AS login_name,
@@ -28,7 +28,7 @@ const CHECK=String.raw`SELECT
     CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
     WHERE n.nspname LIKE 'verivaro%' AND (p.proowner=l.oid OR a.grantee=l.oid))
  ))
- OR ($2::text IS NOT NULL AND (l.rolname::text<>$2 OR l.oid=g.oid OR g.rolcanlogin))
+ OR (l.rolname::text<>$2 OR l.oid=g.oid OR g.rolcanlogin)
  ) AS privileged
  FROM pg_catalog.pg_roles l CROSS JOIN pg_catalog.pg_roles g
  WHERE l.rolname=session_user AND g.rolname::text=$1`;
@@ -36,6 +36,6 @@ export async function assertServiceLogin(client,role,expectedLogin){
  validateServiceIdentity(role,expectedLogin);
  // Discarded session may still have unsafe role/database default search_path.
  await client.query('SET search_path TO pg_catalog');
- const r=await client.query(CHECK,[role,expectedLogin??null]);
- if(r.rows.length!==1||r.rows[0].privileged!==false||expectedLogin!==undefined&&r.rows[0].login_name!==expectedLogin)throw Error('unsafe service login');
+ const r=await client.query(CHECK,[role,expectedLogin]);
+ if(r.rows.length!==1||r.rows[0].privileged!==false||r.rows[0].login_name!==expectedLogin)throw Error('unsafe service login');
 }

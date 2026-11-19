@@ -18,7 +18,7 @@ test('real multi-login admission: quota, rate, crash reconciliation and HTTP pre
  const admin=new Pool({...config,user:process.env.PGUSER,password:process.env.PGPASSWORD});
  const pa=new Pool({...config,user:'vv_ci_admission_a',password:process.env.VV_ADMISSION_PASSWORD});
  const pb=new Pool({...config,user:'vv_ci_admission_b',password:process.env.VV_ADMISSION_B_PASSWORD});
- const key=randomBytes(32),a=createDistributedAdmission(pa,{peerKey:key}),b=createDistributedAdmission(pb,{peerKey:key});
+ const key=randomBytes(32),a=createDistributedAdmission(pa,{peerKey:key,expectedLogin:'vv_ci_admission_a'}),b=createDistributedAdmission(pb,{peerKey:key,expectedLogin:'vv_ci_admission_b'});
  async function configure(capacity,active,global,peer){
   await admin.query('DELETE FROM verivaro_private.download_leases');
   await admin.query('DELETE FROM verivaro_private.download_peer_buckets');

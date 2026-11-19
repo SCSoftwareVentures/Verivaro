@@ -15,14 +15,14 @@ const {Pool}=createRequire(resolve(process.env.VV_TEST_DRIVER_DIR,'package.json'
 const config={host:process.env.PGHOST,port:Number(process.env.PGPORT),database:process.env.PGDATABASE,max:1,connectionTimeoutMillis:3000,idleTimeoutMillis:5000};
 test('real HTTP + dedicated PostgreSQL gateway + private file delivery', {timeout:30000},async t=>{
  const admin=new Pool({...config,user:process.env.PGUSER,password:process.env.PGPASSWORD});
- const gateway=new Pool({...config,user:'verivaro_share_gateway',password:process.env.VV_SHARE_PASSWORD});
+ const gateway=new Pool({...config,user:'vv_ci_share',password:process.env.VV_SHARE_PASSWORD});
  const folder=await mkdtemp(join(tmpdir(),'vv-live-download-'));
  const artifact=randomUUID(),exportId=randomUUID(),shareId=randomUUID();
  const actor='81000000-0000-4000-8000-000000000001',tenant='11111111-1111-4111-8111-111111111111',project='33333333-3333-4333-8333-333333333333';
  const bytes=Buffer.from('synthetic isolated released export');
  const hash=createHash('sha256').update(bytes).digest('hex');
  const {token,digest}=generateShareToken();
- const resolver=createShareResolver(gateway);
+ const resolver=createShareResolver(gateway,{expectedLogin:'vv_ci_share'});
  let server;
  try{
   await admin.query('SELECT verivaro_sharing.register_export($1,$2,$3,$4,$5,true)',[exportId,tenant,project,artifact,hash]);
