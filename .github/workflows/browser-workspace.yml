@@ -1,0 +1,32 @@
+name: G1 browser workspace usability
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [chromium, webkit]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.16.0'
+      - name: Install pinned browser test tooling
+        run: |
+          npm install --prefix "$RUNNER_TEMP/vv-browser" --ignore-scripts --no-audit --no-fund --save-exact playwright@1.56.1
+          node "$RUNNER_TEMP/vv-browser/node_modules/playwright/cli.js" install --with-deps ${{ matrix.engine }}
+      - name: Exercise workspace in real browser engine
+        env:
+          VV_BROWSER_ENGINE: ${{ matrix.engine }}
+        run: |
+          VV_BROWSER_DIR="$RUNNER_TEMP/vv-browser" node --test tests/browser/workspace-browser.test.mjs
