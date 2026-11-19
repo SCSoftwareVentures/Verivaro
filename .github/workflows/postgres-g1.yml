@@ -111,6 +111,7 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f db/tests/alert_logins.sql
           VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-alert-outbox.test.mjs
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/0015_restore_review.sql
+          VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-service-login.test.mjs
           psql -X -v ON_ERROR_STOP=1 -f db/tests/full_security_gate.sql
           # Real encrypted logical backup and isolated recovery; no artifacts uploaded.
           backup_root="$(mktemp -d)"
