@@ -278,8 +278,8 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   assert.equal((await g('link-review',{linkId:edge.linkId,decision:'pass',reason:'Matched identifier'},session)).status,404);
   assert.equal((await g('link-review',{linkId:edge.linkId,decision:'pass',reason:'Matched identifier'},reviewer)).status,200);
   const satisfied=await getGraph();assert.equal(satisfied.summary.status,'criteria_satisfied');assert.equal(satisfied.summary.verifiedRequired,1);
-  const revision={...rule,versionId:randomUUID(),expectedRevision:1,criterion:'Updated register'};
-  assert.equal((await g('requirement',revision)).status,200);assert.equal((await getGraph()).summary.status,'blocked');
+  const graphRevision={...rule,versionId:randomUUID(),expectedRevision:1,criterion:'Updated register'};
+  assert.equal((await g('requirement',graphRevision)).status,200);assert.equal((await getGraph()).summary.status,'blocked');
   assert.equal((await g('link',{...edge,linkId:randomUUID()})).status,409);
   console.log('https_requirement_graph_workspace_gate_passed');
   assert.equal((await request('/auth/logout-all',{method:'POST',headers:{origin,cookie:session}})).status,204);

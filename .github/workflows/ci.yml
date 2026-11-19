@@ -24,6 +24,10 @@ jobs:
           node-version: '22.16.0'
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
+      - name: Check integration and browser fixture syntax
+        run: |
+          set -euo pipefail
+          for f in tests/integration/*.mjs tests/browser/*.mjs; do node --check "$f"; done
       - run: npm run demo
       - name: Independent PDF rendering and ZIP verification
         run: |
