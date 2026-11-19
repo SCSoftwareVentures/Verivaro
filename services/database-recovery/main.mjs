@@ -25,8 +25,17 @@ async function query(db,sql){
  let text='';for await(const chunk of p.stdout){text+=chunk;if(text.length>8192){p.kill();throw Error('unexpected database response');}}
  await done;return text.trim();
 }
+async function checkToolVersion(command,db){
+ const {p,done}=child(command,['--version'],{output:true});
+ let version='';for await(const c of p.stdout){version+=c;if(version.length>1024){p.kill();throw Error('invalid utility version');}}
+ await done;
+ const m=/PostgreSQL\) (\d+)/.exec(version);
+ const server=Number(await query(db,'SHOW server_version_num'));
+ if(!m||!Number.isSafeInteger(server)||Number(m[1])!==Math.floor(server/10000))throw Error('PostgreSQL major version mismatch');
+}
 try{
  if(mode==='backup'){
+  await checkToolVersion('pg_dump',database);
   if(target)throw Error('unexpected backup parameter');
   const {p,done}=child('pg_dump',['--format=custom','--no-password','--dbname='+database],{output:true});
   try{
@@ -35,6 +44,7 @@ try{
   }finally{if(p.exitCode===null)p.kill();}
  }else{
   if(process.env.VV_RESTORE_APPROVED!=='1'||!/^verivaro_restore_[a-z0-9_]{1,40}$/.test(target??'')||target===database)throw Error('isolated restore approval required');
+  await checkToolVersion('pg_restore','postgres');
   const staged=await verifyAndStageBackup({path,spoolDirectory:process.env.VV_RESTORE_SPOOL,key,installationId,database,signal});
   try{
    // Never reuse or overwrite a database. The newly-created target remains

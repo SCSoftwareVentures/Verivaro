@@ -42,6 +42,8 @@ jobs:
           cp tests/integration/driver/package-lock.json "$RUNNER_TEMP/vv-live-driver/"
           npm ci --prefix "$RUNNER_TEMP/vv-live-driver" --ignore-scripts --no-audit --no-fund
       - name: Apply schema and adversarial checks
+        env:
+          VV_CI_PG_CONTAINER: ${{ job.services.postgres.id }}
         run: |
           set -euo pipefail
           VV_RUNTIME_PASSWORD="$(openssl rand -hex 32)"
@@ -111,7 +113,15 @@ jobs:
           # Real encrypted logical backup and isolated recovery; no artifacts uploaded.
           backup_root="$(mktemp -d)"
           trap 'rm -rf "$backup_root"' EXIT
-          mkdir -m 700 "$backup_root/spool"
+          mkdir -m 700 "$backup_root/spool" "$backup_root/bin"
+          # The runner's default PostgreSQL client may be newer than the server.
+          # Use the exact major version shipped in the disposable service container.
+          test -n "$VV_CI_PG_CONTAINER"
+          for tool in pg_dump pg_restore; do
+            printf '#!/bin/sh\nexec docker exec -i -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -e PGCONNECT_TIMEOUT %s %s "$@"\n' "$VV_CI_PG_CONTAINER" "$tool" > "$backup_root/bin/$tool"
+            chmod 700 "$backup_root/bin/$tool"
+          done
+          export PATH="$backup_root/bin:$PATH"
           VV_BACKUP_KEY="$(node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64url'))")"
           echo "::add-mask::$VV_BACKUP_KEY"
           VV_INSTALLATION_ID="$(node -e "process.stdout.write(require('node:crypto').randomUUID())")"
