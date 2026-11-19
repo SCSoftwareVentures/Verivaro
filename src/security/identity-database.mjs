@@ -20,6 +20,11 @@ export function createIdentityDatabase(pool,{expectedLogin}={}){
    const r=await run('SELECT verivaro_identity.redeem_login($1,$2,$3,$4,$5,$6,$7,$8) AS actor_id',[nonce,binding,issuer,audience,subjectDigest,sessionId,new Date(authenticatedAt*1000),new Date(expiresAt*1000)]);
    return r.actor_id;
   },
+  async storeFlow(s,c,e){return (await run('SELECT verivaro_identity.store_browser_flow($1,$2,$3) AS ok',[s,c,e])).ok===true;},
+  async takeFlow(s,c){return (await run('SELECT verivaro_identity.take_browser_flow($1,$2) AS envelope',[s,c])).envelope;},
+  async storeBrowserSession(h,s,e){return (await run('SELECT verivaro_identity.store_browser_session($1,$2,$3) AS ok',[h,s,e])).ok===true;},
+  async readBrowserSession(h){return (await run('SELECT verivaro_identity.read_browser_session($1) AS envelope',[h])).envelope;},
+  async logoutBrowser(h){return (await run('SELECT verivaro_identity.logout_browser($1) AS ok',[h])).ok===true;},
   async revoke(actor,session){return (await run('SELECT verivaro_identity.revoke_session($1,$2) AS ok',[actor,session])).ok===true;}
  });
 }

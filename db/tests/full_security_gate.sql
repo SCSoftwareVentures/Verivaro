@@ -38,7 +38,7 @@ BEGIN
    WHERE n.nspname IN ('verivaro_identity','verivaro_sharing','verivaro_admission','verivaro_monitor','verivaro_alerting','verivaro_recovery') LOOP
    IF has_function_privilege(r.oid,p.oid,'EXECUTE') AND NOT (
     (r.rolname='verivaro_runtime' AND p.nspname='verivaro_sharing' AND p.proname IN ('issue_share','issue_recipient_share','revoke_share')) OR
-    (r.rolname='verivaro_identity_service' AND p.nspname='verivaro_identity' AND p.proname IN ('begin_login','redeem_login','revoke_session')) OR
+    (r.rolname='verivaro_identity_service' AND p.nspname='verivaro_identity' AND p.proname IN ('begin_login','redeem_login','revoke_session','store_browser_flow','take_browser_flow','store_browser_session','read_browser_session','logout_browser')) OR
     (r.rolname='verivaro_identity_provisioner' AND p.nspname='verivaro_identity' AND p.proname IN ('provision_binding','disable_binding')) OR
     (r.rolname='verivaro_recovery_service' AND p.nspname='verivaro_identity' AND p.proname IN ('disable_actor','request_recovery','recover_actor')) OR
     (r.rolname='verivaro_recovery_approver' AND p.nspname='verivaro_identity' AND p.proname='approve_recovery') OR
