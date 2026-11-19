@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import {zip} from './verification-report-export.mjs';
-import {buildHandoverDerivatives,HANDOVER_PROFILES} from './handover-templates.mjs';
+import {buildHandoverDerivatives,HANDOVER_PROFILES,normalizeHandoverConfig} from './handover-templates.mjs';
 import {ReleaseConflict} from './evidence-release.mjs';
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const types={'text/plain; charset=utf-8':'txt','application/pdf':'pdf','image/png':'png'};
@@ -9,7 +9,7 @@ export function createSubmissionPackage({workflow,retrieve}){
  if(typeof workflow?.readSubmission!=='function'||typeof retrieve!=='function')throw Error('invalid submission packager');
  let active=0;
  return async function assemble(input,{signal,profile=null}){
-  if(profile!==null&&!HANDOVER_PROFILES.includes(profile))throw Error('invalid handover profile');
+  const custom=profile!==null&&typeof profile==='object';if(custom)profile=normalizeHandoverConfig(profile);else if(profile!==null&&!HANDOVER_PROFILES.includes(profile))throw Error('invalid handover profile');
   if(active>=2)throw Error('submission capacity');active++;
   const files=[];let out;
   try{
@@ -34,7 +34,7 @@ export function createSubmissionPackage({workflow,retrieve}){
    }
    if(profile!==null)files.push(...buildHandoverDerivatives(m,input.sha256,profile));
    const {manifest:ignored,...authorization}=receipt;
-   const index=Buffer.from(JSON.stringify({version:profile===null?1:2,...(profile===null?{}:{profile}),authorization,files:files.map(([name,data])=>({name,bytes:data.length,sha256:hash(data)}))},null,2)+'\n');
+   const index=Buffer.from(JSON.stringify({version:custom?3:profile===null?1:2,...(custom?{configuration:profile}:profile===null?{}:{profile}),authorization,files:files.map(([name,data])=>({name,bytes:data.length,sha256:hash(data)}))},null,2)+'\n');
    files.push(['package-index.json',index]);out=zip(files);if(out.length>20*1024*1024)throw Error('submission capacity');
    signal.throwIfAborted();
    // A second DB transaction checks exact graph, current actor generations

@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import {zip} from './verification-report-export.mjs';
-import {buildHandoverDerivatives,HANDOVER_PROFILES} from './handover-templates.mjs';
+import {buildHandoverDerivatives,HANDOVER_PROFILES,normalizeHandoverConfig} from './handover-templates.mjs';
 
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const digest=s=>typeof s==='string'&&s.length===64&&/^[a-f0-9]{64}$/.test(s);
@@ -40,8 +40,10 @@ export function verifySubmissionPackage(archive,{expectedPackageSha256,expectedM
  const m=json(manifestBytes),index=json(files.at(-1)[1]);
  if(m?.version!==1||!uuid(m.tenantId)||!uuid(m.projectId)||m.summary?.status!=='criteria_satisfied'||
  !Array.isArray(m.evidence)||m.evidence.length<1||m.evidence.length>64)fail();
- const extended=index?.version===2,extra=extended?(index.profile==='workbook-v1'?4:3):0;
- if(files.length!==m.evidence.length+2+extra||!(extended?keys(index,['version','profile','authorization','files'])&&HANDOVER_PROFILES.includes(index.profile):keys(index,['version','authorization','files'])&&index.version===1)||
+ const custom=index?.version===3,extended=index?.version===2||custom;let profile=index?.profile;
+ if(custom){try{profile=normalizeHandoverConfig(index.configuration);}catch{fail();}}
+ const extra=extended?(custom?profile.includeWorkbook?4:3:profile==='workbook-v1'?4:3):0;
+ if(files.length!==m.evidence.length+2+extra||!(custom?keys(index,['version','configuration','authorization','files']):extended?keys(index,['version','profile','authorization','files'])&&HANDOVER_PROFILES.includes(index.profile):keys(index,['version','authorization','files'])&&index.version===1)||
  !uuid(index.authorization?.submissionId)||index.authorization.sha256!==expectedManifestSha256||
  index.authorization.authorization!=='internal owner-authorized download only'||
  !Array.isArray(index.files)||index.files.length!==files.length-1)fail();
@@ -54,7 +56,7 @@ export function verifySubmissionPackage(archive,{expectedPackageSha256,expectedM
   ids.add(e.id);total+=e.bytes;
  }
  if(total>16777216)fail();
- if(extended){let derived;try{derived=buildHandoverDerivatives(m,expectedManifestSha256,index.profile);for(let i=0;i<derived.length;i++){const actual=files[m.evidence.length+1+i];if(actual[0]!==derived[i][0]||!actual[1].equals(derived[i][1]))fail();}}catch{fail();}finally{for(const [,b] of derived??[])b.fill(0);}}
+ if(extended){let derived;try{derived=buildHandoverDerivatives(m,expectedManifestSha256,profile);for(let i=0;i<derived.length;i++){const actual=files[m.evidence.length+1+i];if(actual[0]!==derived[i][0]||!actual[1].equals(derived[i][1]))fail();}}catch{fail();}finally{for(const [,b] of derived??[])b.fill(0);}}
  for(let i=0;i<index.files.length;i++){
   const e=index.files[i],entry=files[i];
   if(!keys(e,['name','bytes','sha256'])||e.name!==entry[0]||e.bytes!==entry[1].length||e.sha256!==hash(entry[1]))fail();

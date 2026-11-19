@@ -1,6 +1,10 @@
 // Deterministic derived files. Original attachments are never rewritten.
 import {createRegisterXlsx} from './xlsx-register.mjs';
 export const HANDOVER_PROFILES=Object.freeze(['handover-v1','register-v1','workbook-v1']);
+export function normalizeHandoverConfig(c){
+ if(!c||typeof c!=='object'||Array.isArray(c)||Object.keys(c).sort().join(',')!=='heading,includeWorkbook,order,version'||c.version!==1||typeof c.heading!=='string'||c.heading.trim()!==c.heading||[...c.heading].length<1||[...c.heading].length>80||/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069\ud800-\udfff]/u.test(c.heading)||!['requirements_first','evidence_first'].includes(c.order)||typeof c.includeWorkbook!=='boolean')throw Error('invalid custom handover configuration');
+ return {version:1,heading:c.heading,order:c.order,includeWorkbook:c.includeWorkbook};
+}
 const uuid=x=>typeof x==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(x);
 const sha=x=>typeof x==='string'&&/^[a-f0-9]{64}$/.test(x);
 const ext={'text/plain; charset=utf-8':'txt','application/pdf':'pdf','image/png':'png'};
@@ -34,7 +38,8 @@ function pdf(lines,profile){
  const result=Buffer.from(out,'ascii');if(result.length>1048576)invalid();return result;
 }
 export function buildHandoverDerivatives(m,manifestSha256,profile){
- if(!HANDOVER_PROFILES.includes(profile)||!sha(manifestSha256)||m?.version!==1||!uuid(m.tenantId)||!uuid(m.projectId)||!text(m.projectName,128)||m.summary?.status!=='criteria_satisfied'||!Array.isArray(m.requirements)||m.requirements.length<1||m.requirements.length>128||!Array.isArray(m.evidence)||m.evidence.length<1||m.evidence.length>64)invalid();
+ const custom=typeof profile==='object'&&profile!==null?normalizeHandoverConfig(profile):null;
+ if(!custom&&!HANDOVER_PROFILES.includes(profile)||!sha(manifestSha256)||m?.version!==1||!uuid(m.tenantId)||!uuid(m.projectId)||!text(m.projectName,128)||m.summary?.status!=='criteria_satisfied'||!Array.isArray(m.requirements)||m.requirements.length<1||m.requirements.length>128||!Array.isArray(m.evidence)||m.evidence.length<1||m.evidence.length>64)invalid();
  const objects=new Map(),requirements=new Set(),links=new Map();
  for(const e of m.evidence){if(!uuid(e.id)||objects.has(e.id)||!sha(e.sha256)||!Object.hasOwn(ext,e.mediaType)||!Number.isInteger(e.bytes)||e.bytes<1||e.bytes>262144)invalid();objects.set(e.id,e);links.set(e.id,[]);}
  const rows=[['requirement_id','version_id','title','applicability','state','evidence_ids','source_id']];
@@ -51,11 +56,11 @@ export function buildHandoverDerivatives(m,manifestSha256,profile){
  if([...links.values()].some(x=>!x.length))invalid();
  const ordered=[...objects.values()].sort((a,b)=>a.id.localeCompare(b.id)),inventory=[['evidence_id','attachment','bytes','sha256','media_type','requirement_ids']];
  for(const e of ordered)inventory.push([e.id,'evidence-'+e.id+'.'+ext[e.mediaType],e.bytes,e.sha256,e.mediaType,links.get(e.id).sort().join(';')]);
- const intro=['Project: '+m.projectName,'Project ID: '+m.projectId,'Manifest SHA-256: '+manifestSha256,'Reviewed documentary snapshot only. Not legal certification.','Originals are separate unmodified attachments.','See CSV registers and submission.json for exact Unicode and references.','Requirements: '+requirements.size+' | Evidence files: '+objects.size,''];
+ const intro=[...(custom?['Presentation heading: '+custom.heading]:[]),'Project: '+m.projectName,'Project ID: '+m.projectId,'Manifest SHA-256: '+manifestSha256,'Reviewed documentary snapshot only. Not legal certification.','Originals are separate unmodified attachments.','See CSV registers and submission.json for exact Unicode and references.','Requirements: '+requirements.size+' | Evidence files: '+objects.size,''];
  const reqLines=['REQUIREMENT INDEX',...rows.slice(1).flatMap(r=>[r[2]+' | '+r[4],r[0]+' version '+r[1]])];
  const evidenceLines=['EVIDENCE INDEX',...inventory.slice(1).flatMap(r=>[r[1]+' | '+r[2]+' bytes','SHA-256: '+r[3]])];
- const generated=[['handover-cover.pdf',pdf([...intro,...(profile==='handover-v1'?[...reqLines,'',...evidenceLines]:[...evidenceLines,'',...reqLines])],profile)],['requirement-register.csv',csv(rows)],['evidence-register.csv',csv(inventory)]];
- if(profile==='workbook-v1')generated.push(['evidence-register.xlsx',createRegisterXlsx(rows,inventory)]);
+ const generated=[['handover-cover.pdf',pdf([...intro,...((custom?custom.order==='requirements_first':profile==='handover-v1')?[...reqLines,'',...evidenceLines]:[...evidenceLines,'',...reqLines])],custom?'custom-v1':profile)],['requirement-register.csv',csv(rows)],['evidence-register.csv',csv(inventory)]];
+ if(profile==='workbook-v1'||custom?.includeWorkbook)generated.push(['evidence-register.xlsx',createRegisterXlsx(rows,inventory)]);
  if(generated.some(([,b])=>b.length>1048576))invalid();return generated;
 }
 

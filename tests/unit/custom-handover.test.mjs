@@ -1,0 +1,10 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createHash,randomUUID} from 'node:crypto';
+import {normalizeHandoverConfig} from '../../src/security/handover-templates.mjs';
+import {createSubmissionPackage} from '../../src/security/submission-package.mjs';
+import {verifySubmissionPackage} from '../../src/security/submission-verifier.mjs';
+const hash=x=>createHash('sha256').update(x).digest('hex'),config={version:1,heading:'Configured cover',order:'evidence_first',includeWorkbook:true};
+test('configuration allowlist rejects omission and paths or unsupported version',()=>{for(const v of [{...config,omitEvidence:true},{...config,outputPath:'../x'},{...config,version:2},{...config,heading:'bad\ntext'}])assert.throws(()=>normalizeHandoverConfig(v));});
+test('custom profile reproduces derivatives, retains source and verifies',async()=>{const tenantId=randomUUID(),projectId=randomUUID(),submissionId=randomUUID(),id=randomUUID(),bytes=Buffer.from('source'),mediaType='text/plain; charset=utf-8',manifest=JSON.stringify({version:1,tenantId,projectId,projectName:'Project',summary:{status:'criteria_satisfied'},requirements:[{requirementId:randomUUID(),versionId:randomUUID(),title:'Criterion',applicability:'required',state:'satisfied',ruleDecision:'approved',links:[{evidenceId:id,sha256:hash(bytes)}]}],evidence:[{id,sha256:hash(bytes),bytes:bytes.length,mediaType}]}),sha256=hash(manifest),receipt={submissionId,sha256,manifest,authorization:'internal owner-authorized download only'};
+const assemble=createSubmissionPackage({workflow:{readSubmission:async()=>receipt},retrieve:async()=>({data:Buffer.from(bytes),sha256:hash(bytes),mediaType})});for(const includeWorkbook of [true,false]){const archive=await assemble({tenantId,projectId,submissionId,sha256},{signal:new AbortController().signal,profile:{...config,includeWorkbook}});assert.ok(archive.includes(Buffer.from('Configured cover')));assert.equal(archive.includes(Buffer.from('evidence-register.xlsx')),includeWorkbook);assert.equal(verifySubmissionPackage(archive,{expectedPackageSha256:hash(archive),expectedManifestSha256:sha256}).evidenceCount,1);}});
