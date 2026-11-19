@@ -165,6 +165,7 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/0027_project_administration.sql
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/0028_recipient_workspace.sql
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/0029_project_lifecycle_report.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0030_bounded_evidence_listing.sql
           psql -X -v ON_ERROR_STOP=1 -f db/tests/full_security_gate.sql
           # Real encrypted logical backup and isolated recovery; no artifacts uploaded.
           backup_root="$(mktemp -d)"

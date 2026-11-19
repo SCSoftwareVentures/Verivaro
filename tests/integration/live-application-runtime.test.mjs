@@ -208,6 +208,15 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   assert.equal((await request(route+'/'+project+'/evidence/'+uploadedId+'/download',{headers:{cookie:session}})).status,200);
   await assert.rejects(admin.query('DELETE FROM verivaro_private.project_archive_receipts WHERE project_id=$1',[project]),e=>e.code==='42501');
   console.log('project_archive_report_gate_passed');
+  // Bounded listing under the actual HTTPS runtime, with 240 seeded metadata
+  // rows. No artificial relaxation of service timeouts or rate gates.
+  await admin.query("INSERT INTO verivaro.evidence(id,tenant_id,project_id,sha256,storage_ref,created_by) SELECT gen_random_uuid(),$1,$2,repeat('b',64),'private://fixture', $3 FROM generate_series(1,240)",[tenant,newId,actor]);
+  const want=(await admin.query('SELECT id FROM verivaro.evidence WHERE tenant_id=$1 AND project_id=$2 ORDER BY id LIMIT 200',[tenant,newId])).rows.map(x=>x.id);
+  const started=Date.now(),bounded=await request(newBase+'/evidence',{headers:{cookie:session}});
+  assert.equal(bounded.status,200);assert.deepEqual(JSON.parse(bounded.body).items.map(x=>x.id),want);
+  assert.deepEqual(JSON.parse((await request(newBase+'/evidence',{headers:{cookie:contributor}})).body).items,[]);
+  assert.deepEqual(JSON.parse((await request(newBase+'/evidence',{headers:{cookie:viewer}})).body).items,[]);
+  console.log('bounded_evidence_listing_240_rows_ms='+String(Date.now()-started));
   assert.equal((await request('/auth/logout-all',{method:'POST',headers:{origin,cookie:session}})).status,204);
   assert.equal((await request(route,{headers:{cookie:session}})).status,401);
   await app.stop();assert.equal(app.server.listening,false);

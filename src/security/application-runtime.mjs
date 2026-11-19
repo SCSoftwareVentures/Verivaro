@@ -79,7 +79,7 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
   const db=createIdentityDatabase(pools.identity,{expectedLogin:cfg.logins.identity.user}),gateway=createAuthenticationGateway({db,provider,localIssuer:verifier.issuer,localAudience:verifier.audience,privateKey});
   const admission=createApiAdmission(pools.admission,{key:admissionKey,expectedLogin:cfg.logins.admission.user});
   const browser=createBrowserAuthentication({db,gateway,provider,localVerifier:verifier,origin:origin.origin,authorizationEndpoint:p.authorizationEndpoint,tokenEndpoint:p.tokenEndpoint,clientSecret:(await readText(p.clientSecretFile,1024)).trim(),key:browserKey,requiredAcr:p.requiredAcr,fetcher});
-  const scoped=createScopedDatabase(pools.runtime,{verifier,key:contextKey,expectedLogin:cfg.logins.runtime.user,report});
+  const scoped=createScopedDatabase(pools.runtime,{verifier,key:contextKey,expectedLogin:cfg.logins.runtime.user,report,indexedEvidence:true});
   const api=createApplicationApi({resolveSession:browser.resolveSession,scoped,admission,verifier,origin:origin.origin});
   const workflow=createEvidenceReleaseDatabase(pools.runtime,{expectedLogin:cfg.logins.runtime.user,verifier,contextKey,mode:'workflow'});
   let upload,download,publish;

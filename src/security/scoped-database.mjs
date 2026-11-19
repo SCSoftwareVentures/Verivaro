@@ -21,7 +21,7 @@ const operations = Object.freeze({
  * Dedicated nonprivileged login, exclusive lease, no named prepared statements.
  * No caller-supplied SQL; this adapter is a candidate, not yet a live driver integration.
  */
-export function createScopedDatabase(pool, { verifier, key, expectedLogin, report=()=>{} }) {
+export function createScopedDatabase(pool, { verifier, key, expectedLogin, report=()=>{}, indexedEvidence=false }) {
  if(!pool || typeof pool.connect!=='function' || !Buffer.isBuffer(key) || key.length!==32 || !verifier)
   throw new TypeError('invalid database configuration');
  validateServiceIdentity('verivaro_runtime',expectedLogin);
@@ -32,43 +32,45 @@ export function createScopedDatabase(pool, { verifier, key, expectedLogin, repor
    if(typeof operation!=='string' || !Object.hasOwn(operations,operation)) throw new TypeError('unknown database operation');
    const tenant=requireId(tenantId);
    const spec=operations[operation];
+   const sql=operation==='listEvidence'&&indexedEvidence?'SELECT * FROM verivaro_ingestion.list_evidence_metadata($1::uuid,$2::uuid)':spec.sql;
    const values=[tenant,...spec.values(args)];
    const client=await pool.connect();
-   let transaction=false, clean=false;
+   let transaction=false, clean=false,stage='checkout';
    try {
     // Clear session-level settings and cached database state before every lease.
-    await client.query('DISCARD ALL');
+    stage='cleanup';await client.query('DISCARD ALL');
     // Fail closed for a login endowed with cluster-level administration privileges.
-    await assertServiceLogin(client,'verivaro_runtime',expectedLogin);
+    stage='login';await assertServiceLogin(client,'verivaro_runtime',expectedLogin);
     await client.query('SET ROLE verivaro_runtime');
-    await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
+    stage='transaction';await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
     transaction=true;
-    await client.query("SET LOCAL statement_timeout = '10s'");
-    await client.query("SET LOCAL lock_timeout = '3s'");
-    await client.query("SET LOCAL idle_in_transaction_session_timeout = '15s'");
-    const challenge=await client.query('SELECT pg_backend_pid() AS pid, pg_current_xact_id()::text AS xid');
+    await client.query("SET LOCAL statement_timeout = '5s'");
+    await client.query("SET LOCAL lock_timeout = '2s'");
+    await client.query("SET LOCAL idle_in_transaction_session_timeout = '10s'");
+    stage='context';const challenge=await client.query('SELECT pg_backend_pid() AS pid, pg_current_xact_id()::text AS xid');
     if(challenge.rows.length!==1) throw new Error('invalid database challenge');
     const context=signDatabaseContext({token,tenantId:tenant,challenge:challenge.rows[0]},{verifier:tokenVerifier,key:signingKey});
     // never interpolate or log token/context/key
     await client.query("SELECT set_config('verivaro.signed_context', $1, true)",[context]);
-    const authorized=await client.query('SELECT verivaro.authorized($1::uuid) AS allowed',[tenant]);
+    stage='authorize';const authorized=await client.query('SELECT verivaro.authorized($1::uuid) AS allowed',[tenant]);
     if(authorized.rows.length!==1 || authorized.rows[0].allowed!==true) throw new ScopedAccessDenied();
-    const result=await client.query(spec.sql,values);
+    stage='operation';const result=await client.query(sql,values);
     const rows=result.rows;
-    await client.query('COMMIT');
+    stage='commit';await client.query('COMMIT');
     transaction=false;
     await client.query('DISCARD ALL');
     clean=true;
     return rows;
    } catch (error) {
-    if(transaction) {
+    const timedOut=error?.message==='Query read timeout';
+    if(transaction&&!timedOut) {
      try { await client.query('ROLLBACK'); } catch { /* discard the connection below */ }
     }
     // Never return an uncertain or errored connection to the pool.
     if(error instanceof ScopedAccessDenied||operation==='renameProject'&&error.code==='42501')throw new ScopedAccessDenied();
     if(operation==='renameProject'&&error.code==='23505')throw new ScopedConflict();
     // Never emit query text, error messages, bind parameters or credentials.
-    try{report('scoped_database_failure:'+operation+':'+(/^[0-9A-Z]{5}$/.test(error?.code??'')?error.code:'unclassified'));}catch{}
+    try{report('scoped_database_failure:'+operation+':'+stage+':'+(timedOut?'driver_timeout':/^[0-9A-Z]{5}$/.test(error?.code??'')?error.code:'unclassified'));}catch{}
     throw new Error('scoped database operation failed');
    } finally {
     client.release(clean ? undefined : new Error('discard unsafe database lease'));

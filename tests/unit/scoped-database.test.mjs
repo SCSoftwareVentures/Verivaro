@@ -81,3 +81,18 @@ test('commit failure is treated as unknown outcome and discards lease',async()=>
  await assert.rejects(db.execute({token:token(),tenantId:tenant,operation:'listProjects'}));
  assert.ok(f.releases[0] instanceof Error);
 });
+
+test('indexed evidence listing uses fixed scope query without changing historical adapter default',async()=>{
+ const f=fixture(),db=createScopedDatabase(f.pool,{...options,indexedEvidence:true});
+ await db.execute({token:token(),tenantId:tenant,operation:'listEvidence',args:{projectId:project}});
+ const q=f.calls.find(x=>x.sql.includes('list_evidence_metadata'));
+ assert.deepEqual(q.values,[tenant,project]);
+ assert.ok(!f.calls.some(x=>x.sql.startsWith('SELECT id, project_id')));
+});
+test('driver timeout destroys lease without queuing a second rollback on uncertain connection',async()=>{
+ const f=fixture(),orig=f.pool.connect,events=[];
+ f.pool.connect=async()=>{const c=await orig();const query=c.query;c.query=async(sql,values)=>{if(sql.startsWith('SELECT id,'))throw Error('Query read timeout');return query(sql,values);};return c;};
+ await assert.rejects(createScopedDatabase(f.pool,{...options,report:x=>events.push(x)}).execute({token:token(),tenantId:tenant,operation:'listProjects'}));
+ assert.ok(!f.calls.some(x=>x.sql==='ROLLBACK'));assert.ok(f.releases[0] instanceof Error);
+ assert.deepEqual(events,['scoped_database_failure:listProjects:operation:driver_timeout']);
+});
