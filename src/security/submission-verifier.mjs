@@ -1,6 +1,7 @@
 import {createHash} from 'node:crypto';
 import {zip} from './verification-report-export.mjs';
 import {buildHandoverDerivatives,HANDOVER_PROFILES,normalizeHandoverConfig} from './handover-templates.mjs';
+import {normalizeTemplateReference} from './template-reference.mjs';
 
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const digest=s=>typeof s==='string'&&s.length===64&&/^[a-f0-9]{64}$/.test(s);
@@ -40,10 +41,10 @@ export function verifySubmissionPackage(archive,{expectedPackageSha256,expectedM
  const m=json(manifestBytes),index=json(files.at(-1)[1]);
  if(m?.version!==1||!uuid(m.tenantId)||!uuid(m.projectId)||m.summary?.status!=='criteria_satisfied'||
  !Array.isArray(m.evidence)||m.evidence.length<1||m.evidence.length>64)fail();
- const custom=index?.version===3,extended=index?.version===2||custom;let profile=index?.profile;
- if(custom){try{profile=normalizeHandoverConfig(index.configuration);}catch{fail();}}
+ const saved=index?.version===4,custom=index?.version===3||saved,extended=index?.version===2||custom;let profile=index?.profile;
+ if(custom){try{profile=normalizeHandoverConfig(index.configuration);if(saved)normalizeTemplateReference(index.template);}catch{fail();}}
  const extra=extended?(custom?profile.includeWorkbook?4:3:profile==='workbook-v1'?4:3):0;
- if(files.length!==m.evidence.length+2+extra||!(custom?keys(index,['version','configuration','authorization','files']):extended?keys(index,['version','profile','authorization','files'])&&HANDOVER_PROFILES.includes(index.profile):keys(index,['version','authorization','files'])&&index.version===1)||
+ if(files.length!==m.evidence.length+2+extra||!(saved?keys(index,['version','template','configuration','authorization','files']):custom?keys(index,['version','configuration','authorization','files']):extended?keys(index,['version','profile','authorization','files'])&&HANDOVER_PROFILES.includes(index.profile):keys(index,['version','authorization','files'])&&index.version===1)||
  !uuid(index.authorization?.submissionId)||index.authorization.sha256!==expectedManifestSha256||
  !(index.authorization.authorization==='internal owner-authorized download only'||index.authorization.authorization==='authenticated scoped recipient download only'&&uuid(index.authorization.grantId)&&typeof index.authorization.expiresAt==='string')||
  !Array.isArray(index.files)||index.files.length!==files.length-1)fail();

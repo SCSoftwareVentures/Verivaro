@@ -9,6 +9,7 @@ import {buildProofLockPlan,resolveLocalMilestone} from './prooflock-planner.mjs'
 import {buildFinancialSummary} from './financial-intelligence.mjs';
 import {buildProjectIntelligence} from './project-intelligence.mjs';
 import {verifyTrustProofPage} from './trustproof.mjs';
+import {normalizeHandoverConfig} from './handover-templates.mjs';
 import {buildProofLockInsights,validateAlertPolicy} from './prooflock-insights.mjs';
 const hash=/^[a-f0-9]{64}$/;
 export class ReleaseDenied extends Error{}
@@ -38,6 +39,9 @@ export function createEvidenceReleaseDatabase(pool,{expectedLogin,verifier,conte
   async prepareSubmission({token,tenantId,projectId,submissionId}){return (await run(token,tenantId,'SELECT verivaro_verification.prepare_submission($1,$2,$3) AS data',[tenantId,projectId,submissionId])).data;},
   async reviewSubmission({token,tenantId,projectId,submissionId,sha256,decision,reason}){return (await run(token,tenantId,'SELECT verivaro_verification.review_submission($1,$2,$3,$4,$5,$6) AS ok',[tenantId,projectId,submissionId,sha256,decision,reason])).ok===true;},
   async authorizeSubmission({token,tenantId,projectId,submissionId,sha256}){return (await run(token,tenantId,'SELECT verivaro_verification.authorize_submission($1,$2,$3,$4) AS ok',[tenantId,projectId,submissionId,sha256])).ok===true;},
+  async writeExportTemplate({token,tenantId,projectId,templateId,templateVersionId,expectedRevision,reference,configuration,active}){const c=normalizeHandoverConfig(configuration);return (await run(token,tenantId,'SELECT verivaro_verification.write_export_template($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) AS data',[tenantId,projectId,templateId,templateVersionId,expectedRevision,reference,c.heading,c.order,c.includeWorkbook,active])).data;},
+  async listExportTemplates({token,tenantId,projectId}){return (await run(token,tenantId,'SELECT verivaro_verification.export_template_list($1,$2) AS data',[tenantId,projectId])).data;},
+  async readExportTemplate({token,tenantId,projectId,templateId,templateVersionId}){return (await run(token,tenantId,'SELECT verivaro_verification.read_export_template($1,$2,$3,$4) AS data',[tenantId,projectId,templateId,templateVersionId])).data;},
   async trustproofPage({token,tenantId,projectId,afterSequence,pageSize}){const page=(await run(token,tenantId,'SELECT verivaro_verification.trustproof_page($1,$2,$3,$4) AS data',[tenantId,projectId,afterSequence,pageSize])).data;let verified;try{verified=verifyTrustProofPage(page,page);}catch{throw new ReleaseConflict('audit integrity conflict');}return {...page,verification:verified};},
   async grantCustomerPackage({token,tenantId,projectId,grantId,submissionId,sha256,recipientId,minutes}){return (await run(token,tenantId,'SELECT verivaro_verification.grant_customer_package($1,$2,$3,$4,$5,$6,$7) AS id',[tenantId,projectId,grantId,submissionId,sha256,recipientId,minutes])).id;},
   async revokeCustomerPackage({token,tenantId,projectId,grantId}){return (await run(token,tenantId,'SELECT verivaro_verification.revoke_customer_package($1,$2,$3) AS ok',[tenantId,projectId,grantId])).ok;},

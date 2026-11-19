@@ -385,9 +385,27 @@ async function previewCustomerPackage(){
  }));say('Shared package preview ready.');
 }
 el('customerPackageForm').addEventListener('submit',event=>{event.preventDefault();perform(previewCustomerPackage);});
+function renderTemplateLibrary(root,library){
+ const box=node('details');box.append(node('summary','Reusable export templates'),node('p','Project-scoped immutable presentation revisions. Retiring a template prevents new exports, not access to previous packages. Mandatory evidence is always retained.','meta'));
+ function editor(prior){
+  const ref=node('input'),heading=node('input'),order=graphChoice([['requirements_first','Requirements first'],['evidence_first','Evidence first']],prior?.configuration.order),workbook=node('input'),status=graphChoice([['active','Active'],['retired','Retired']],prior?.active===false?'retired':'active');
+  ref.maxLength=64;ref.value=prior?.reference??'';ref.readOnly=!!prior;heading.maxLength=80;heading.value=prior?.configuration.heading??'Project handover';workbook.type='checkbox';workbook.checked=prior?.configuration.includeWorkbook??true;
+  const form=node('div',undefined,'item');form.append(graphField('Template reference',ref),graphField('Presentation heading',heading),graphField('Index ordering',order),graphField('Include workbook',workbook));if(prior)form.append(graphField('Template status',status));
+  form.append(button(prior?'Save new template revision':'Create reusable template',async()=>{
+   const reference=ref.value.trim().toLowerCase(),configuration={version:1,heading:heading.value.trim(),order:order.value,includeWorkbook:workbook.checked},active=prior?status.value==='active':true;
+   if(!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(reference)||!configuration.heading)throw Error('Enter a valid reference and presentation heading.');
+   if(!confirm('Record this immutable template revision?'))return;
+   const fields={expectedRevision:prior?.revision??0,reference,configuration,active},key=current.base+':template:'+JSON.stringify([prior?.templateId??null,fields]);
+   await graphPost('export-template-write',{...fields,templateId:prior?.templateId??retryId(key+':template'),templateVersionId:retryId(key+':version')});attempts.delete(key+':template');attempts.delete(key+':version');await loadProject();say('Template version saved.');
+  }));return form;
+ }
+ for(const t of library.items){const row=node('article',undefined,'item');row.append(node('h4',t.reference),node('p','Revision '+t.revision+' · '+(t.active?'Active':'Retired'),'state'),node('p',t.configuration.heading+' · '+t.configuration.order.replaceAll('_',' ')+(t.configuration.includeWorkbook?' · XLSX':'')));const h=node('details');h.append(node('summary','Immutable history'));for(const r of t.history)h.append(node('p','r'+r.revision+' · '+(r.active?'Active':'Retired')+' · '+r.configuration.heading+' · '+r.recordedAt,'meta'));row.append(h);if(library.canWrite&&t.revision<16)row.append(editor(t));box.append(row);}
+ if(library.canWrite&&library.items.length<32)box.append(editor(null));root.append(box);
+}
 async function loadSubmissions(g){
  const {base}=current,root=el('submissionItems'),listing=await api(base+'/verification/submission-list');
- root.replaceChildren();el('prepareSubmission').hidden=!(g.canWrite&&g.summary.status==='criteria_satisfied'&&g.requirements.every(x=>['satisfied','not_applicable'].includes(x.state)));
+ const library=g.templateLibraryEnabled&&((current.data.tenantRole==='owner'&&current.data.projectRole==='owner')||(current.data.tenantRole==='reviewer'&&current.data.projectRole==='reviewer'))?await api(base+'/verification/export-template-list'):null;
+ root.replaceChildren();if(library)renderTemplateLibrary(root,library);el('prepareSubmission').hidden=!(g.canWrite&&g.summary.status==='criteria_satisfied'&&g.requirements.every(x=>['satisfied','not_applicable'].includes(x.state)));
  for(const s of listing.items){
   const row=node('article',undefined,'item'),panel=node('div');row.append(node('p','Submission '+s.id,'meta'),node('p',s.authorizedAt?'Authorized (freshness checked on download)':s.decision??'Awaiting independent review','state'),node('p','Snapshot SHA-256: '+s.sha256,'meta'));
   if(s.reason)row.append(node('p',s.reason));
@@ -424,6 +442,16 @@ async function loadSubmissions(g){
     if(!response.ok)throw Error(messages[response.status]||'Package unavailable.');const blob=await response.blob();if(blob.size<1||blob.size>20*1024*1024||blob.type!=='application/zip')throw Error('Invalid package.');
     const url=URL.createObjectURL(blob),a=node('a');a.href=url;a.download='submission-custom-'+s.id+'.zip';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);say('Configured handover downloaded.');
    }));row.append(custom);
+  }
+  if(library&&s.canDownload&&listing.downloadEnabled&&library.items.some(x=>x.active)){
+   const select=node('select'),active=library.items.filter(x=>x.active);
+   for(const x of active)namedOption(select,x.versionId,x.reference+' (r'+x.revision+')');
+   row.append(graphField('Saved export template',select),button('Download using saved template',async()=>{
+    const x=active.find(v=>v.versionId===select.value);if(!x||!confirm('Use this exact saved template revision and approved snapshot?'))return;
+    const response=await fetch(base+'/verification/submission-template',{method:'POST',credentials:'same-origin',cache:'no-store',redirect:'error',headers:{'Content-Type':'application/json'},body:JSON.stringify({submissionId:s.id,sha256:s.sha256,templateId:x.templateId,templateVersionId:x.versionId})});
+    if(!response.ok)throw Error(messages[response.status]||'Saved template unavailable.');const blob=await response.blob();if(blob.type!=='application/zip'||blob.size<1||blob.size>20*1024*1024)throw Error('Invalid package.');
+    const url=URL.createObjectURL(blob),a=node('a');a.href=url;a.download='saved-template-'+s.id+'.zip';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);say('Saved-template package downloaded.');
+   }));
   }
   row.append(panel);root.append(row);
  }
