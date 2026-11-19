@@ -1,5 +1,6 @@
 import {createHash} from 'node:crypto';
 import {zip} from './verification-report-export.mjs';
+import {buildHandoverDerivatives,HANDOVER_PROFILES} from './handover-templates.mjs';
 import {ReleaseConflict} from './evidence-release.mjs';
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const types={'text/plain; charset=utf-8':'txt','application/pdf':'pdf','image/png':'png'};
@@ -7,7 +8,8 @@ const id=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 export function createSubmissionPackage({workflow,retrieve}){
  if(typeof workflow?.readSubmission!=='function'||typeof retrieve!=='function')throw Error('invalid submission packager');
  let active=0;
- return async function assemble(input,{signal}){
+ return async function assemble(input,{signal,profile=null}){
+  if(profile!==null&&!HANDOVER_PROFILES.includes(profile))throw Error('invalid handover profile');
   if(active>=2)throw Error('submission capacity');active++;
   const files=[];let out;
   try{
@@ -30,9 +32,10 @@ export function createSubmissionPackage({workflow,retrieve}){
     files.push(['evidence-'+e.id+'.'+types[e.mediaType],object.data]);
     if(object.data.length!==e.bytes||object.sha256!==e.sha256||object.mediaType!==e.mediaType||hash(object.data)!==e.sha256)throw new ReleaseConflict('evidence mismatch');
    }
+   if(profile!==null)files.push(...buildHandoverDerivatives(m,input.sha256,profile));
    const {manifest:ignored,...authorization}=receipt;
-   const index=Buffer.from(JSON.stringify({version:1,authorization,files:files.map(([name,data])=>({name,bytes:data.length,sha256:hash(data)}))},null,2)+'\n');
-   files.push(['package-index.json',index]);out=zip(files);
+   const index=Buffer.from(JSON.stringify({version:profile===null?1:2,...(profile===null?{}:{profile}),authorization,files:files.map(([name,data])=>({name,bytes:data.length,sha256:hash(data)}))},null,2)+'\n');
+   files.push(['package-index.json',index]);out=zip(files);if(out.length>20*1024*1024)throw Error('submission capacity');
    signal.throwIfAborted();
    // A second DB transaction checks exact graph, current actor generations
    // and expiry after all plaintext retrieval and assembly.

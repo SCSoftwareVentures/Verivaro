@@ -393,11 +393,11 @@ async function loadSubmissions(g){
    for(const change of diff.changes){const a=node('a',change.requirementId);a.href='#requirement-'+change.requirementId;panel.append(a,node('p',change.reasons.map(x=>x.replaceAll('_',' ')).join(' · ')));}
    panel.append(node('p',diff.scope,'meta'));
   }));
-  if(s.canDownload&&listing.downloadEnabled)row.append(button('Download authorized package',async()=>{
-   const response=await fetch(base+'/verification/submission-download',{method:'POST',credentials:'same-origin',cache:'no-store',redirect:'error',headers:{'Content-Type':'application/json'},body:JSON.stringify({submissionId:s.id,sha256:s.sha256})});
+  if(s.canDownload&&listing.downloadEnabled)for(const [label,action] of [['Download authorized package','submission-download'],['Download indexed handover','submission-handover'],['Download evidence-first register','submission-register']])row.append(button(label,async()=>{
+   const response=await fetch(base+'/verification/'+action,{method:'POST',credentials:'same-origin',cache:'no-store',redirect:'error',headers:{'Content-Type':'application/json'},body:JSON.stringify({submissionId:s.id,sha256:s.sha256})});
    if(!response.ok)throw Error(messages[response.status]||'Package unavailable.');
    const blob=await response.blob();if(blob.size<1||blob.size>20*1024*1024||blob.type!=='application/zip')throw Error('Invalid package.');
-   const url=URL.createObjectURL(blob),a=node('a');a.href=url;a.download='submission-'+s.id+'.zip';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);say('Authorized package downloaded.');
+   const url=URL.createObjectURL(blob),a=node('a');a.href=url;a.download=action+'-'+s.id+'.zip';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);say('Authorized package downloaded.');
   }));
   row.append(panel);root.append(row);
  }

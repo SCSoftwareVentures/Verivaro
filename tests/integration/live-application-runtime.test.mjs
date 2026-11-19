@@ -290,6 +290,7 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   assert.equal((await g('submission-download',packageArgs,contributor)).status,404);
   const packageDownload=await g('submission-download',packageArgs);assert.equal(packageDownload.status,200);assert.equal(packageDownload.headers['content-type'],'application/zip');assert.ok(packageDownload.raw.subarray(0,2).equals(Buffer.from('PK')));
   assert.equal(packageDownload.headers['x-package-sha256'],createHash('sha256').update(packageDownload.raw).digest('hex'));
+  for(const action of ['submission-handover','submission-register']){const handover=await g(action,packageArgs);assert.equal(handover.status,200);assert.equal(handover.headers['x-package-sha256'],createHash('sha256').update(handover.raw).digest('hex'));assert.ok(handover.raw.includes(Buffer.from('handover-cover.pdf')));assert.ok(handover.raw.includes(Buffer.from('evidence-register.csv')));assert.equal((await g(action,packageArgs,contributor)).status,404);}
   assert.ok(JSON.parse((await request(graphBase+'/submission-list',{headers:{cookie:session}})).body).items.some(x=>x.id===packageId&&x.canDownload));
   const grantRow=JSON.parse((await request(newBase+'/directory',{headers:{cookie:session}})).body).items.find(x=>x.actorId===contributorId);
   assert.equal((await adminPost(newBase+'/access',{requestId:randomUUID(),targetId:contributorId,role:'revoke',generation:grantRow.generation})).status,200);
