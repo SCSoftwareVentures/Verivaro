@@ -30,6 +30,7 @@ export function createEvidenceReleaseDatabase(pool,{expectedLogin,verifier,conte
   }finally{c.release(clean?undefined:new Error('discard release connection'));}
  }
  if(mode==='workflow')return Object.freeze({
+  async importSourceLine({token,tenantId,projectId,requirementId,versionId,evidenceId,sha256,line,page,quote,quoteSha256,applicability}){return (await run(token,tenantId,'SELECT verivaro_verification.import_source_line($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) AS data',[tenantId,projectId,requirementId,versionId,evidenceId,sha256,line,page,quote,quoteSha256,applicability])).data;},
   async writeRequirement({token,tenantId,projectId,requirementId,versionId,expectedRevision,title,criterion,applicability}){return (await run(token,tenantId,'SELECT verivaro_verification.write_requirement($1,$2,$3,$4,$5,$6,$7,$8) AS data',[tenantId,projectId,requirementId,versionId,expectedRevision,title,criterion,applicability])).data;},
   async reviewRequirement({token,tenantId,projectId,versionId,decision,reason}){return (await run(token,tenantId,'SELECT verivaro_verification.review_requirement($1,$2,$3,$4,$5) AS ok',[tenantId,projectId,versionId,decision,reason])).ok===true;},
   async linkEvidence({token,tenantId,projectId,versionId,linkId,evidenceId,sha256}){return (await run(token,tenantId,'SELECT verivaro_verification.link_evidence($1,$2,$3,$4,$5,$6) AS id',[tenantId,projectId,versionId,linkId,evidenceId,sha256])).id;},

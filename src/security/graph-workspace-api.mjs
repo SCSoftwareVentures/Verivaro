@@ -1,7 +1,9 @@
+import {UnsupportedExtraction} from './contractiq-extraction.mjs';
+import {EvidenceAccessDenied} from './evidence-retrieval.mjs';
 import {verifyIdentityToken} from './verify-identity.mjs';
 import {decodeStrictJson} from './provider-identity.mjs';
 import {ReleaseDenied,ReleaseConflict} from './evidence-release.mjs';
-const U='([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})',route=new RegExp('^/api/v1/tenants/'+U+'/projects/'+U+'/verification(?:/(requirement|rule-review|link|link-review))?$'),id=new RegExp('^'+U+'$'),v4=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/,hash=/^[a-f0-9]{64}$/;
+const U='([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})',route=new RegExp('^/api/v1/tenants/'+U+'/projects/'+U+'/verification(?:/(requirement|rule-review|link|link-review|extract|import-source))?$'),id=new RegExp('^'+U+'$'),v4=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/,hash=/^[a-f0-9]{64}$/;
 export function isGraphWorkspaceRequest(req){return typeof req.url==='string'&&route.test(req.url);}
 export function isGraphWorkspaceMutation(req){return req.method==='POST'&&typeof req.url==='string'&&!!route.exec(req.url)?.[3];}
 function response(res,status,data){
@@ -16,11 +18,14 @@ async function read(req,action){
   for await(const c of req){n+=c.length;if(n>8192||n>Number(req.headers['content-length']))throw Error('invalid body');chunks.push(c);}
   if(n!==Number(req.headers['content-length']))throw Error('invalid body');
   const v=decodeStrictJson(Buffer.concat(chunks).toString('base64url'));
-  const shapes={requirement:['requirementId','versionId','expectedRevision','title','criterion','applicability'],'rule-review':['versionId','decision','reason'],link:['versionId','linkId','evidenceId','sha256'],'link-review':['linkId','decision','reason']},keys=shapes[action];
+  const shapes={extract:['evidenceId','sha256'],'import-source':['evidenceId','sha256','line','quoteSha256','requirementId','versionId','applicability'],requirement:['requirementId','versionId','expectedRevision','title','criterion','applicability'],'rule-review':['versionId','decision','reason'],link:['versionId','linkId','evidenceId','sha256'],'link-review':['linkId','decision','reason']},keys=shapes[action];
   if(!v||typeof v!=='object'||Array.isArray(v)||Object.keys(v).length!==keys.length||keys.some(k=>!Object.hasOwn(v,k)))throw Error('invalid fields');
   const isId=k=>typeof v[k]==='string'&&id.test(v[k]),isV4=k=>typeof v[k]==='string'&&v4.test(v[k]);
   const text=(x,n)=>typeof x==='string'&&[...x].length>=1&&[...x].length<=n&&Buffer.byteLength(x)<=4*n&&x===x.trim()&&!/[\x00-\x1f\x7f-\x9f\ud800-\udfff]/u.test(x);
-  if(action==='requirement'){
+  if(action==='extract'||action==='import-source'){
+   if(!isId('evidenceId')||typeof v.sha256!=='string'||!hash.test(v.sha256))throw Error('invalid source');
+   if(action==='import-source'&&(!isV4('requirementId')||!isV4('versionId')||!Number.isInteger(v.line)||v.line<1||v.line>262144||typeof v.quoteSha256!=='string'||!hash.test(v.quoteSha256)||!['required','optional','not_applicable','unknown'].includes(v.applicability)))throw Error('invalid source line');
+  }else if(action==='requirement'){
    if(!isV4('requirementId')||!isV4('versionId')||!Number.isInteger(v.expectedRevision)||v.expectedRevision<0||v.expectedRevision>15||!text(v.title,128)||!text(v.criterion,1024)||!['required','optional','not_applicable','unknown'].includes(v.applicability))throw Error('invalid requirement');
   }else if(action==='link'){
    if(!isId('versionId')||!isV4('linkId')||!isId('evidenceId')||typeof v.sha256!=='string'||!hash.test(v.sha256))throw Error('invalid link');
@@ -28,7 +33,7 @@ async function read(req,action){
   return v;
  }finally{clearTimeout(timer);for(const b of chunks)b.fill(0);}
 }
-export function createGraphWorkspaceApi({origin,verifier,admission,resolveSession,workflow}){
+export function createGraphWorkspaceApi({origin,verifier,admission,resolveSession,workflow,extract}){
  const u=new URL(origin);
  if(u.protocol!=='https:'||u.href!==u.origin+'/'||typeof resolveSession!=='function'||!['assessment','writeRequirement','reviewRequirement','linkEvidence','reviewLink'].every(k=>typeof workflow?.[k]==='function')||typeof admission?.peer!=='function'||typeof admission?.actor!=='function')throw Error('invalid workspace API');
  let active=0;
@@ -50,15 +55,19 @@ export function createGraphWorkspaceApi({origin,verifier,admission,resolveSessio
    if(!await admission.actor(p.actorId))return denied(res,429);
    if(res.destroyed)return;
    const [,tenantId,projectId]=m,scope={token,tenantId,projectId};
-   if(!mutation)return response(res,200,await workflow.assessment(scope));
+   if(!mutation)return response(res,200,{...await workflow.assessment(scope),extractionEnabled:typeof extract==='function'});
    let input;try{input=await read(req,action);}catch{return denied(res,400);}
    controller.signal.throwIfAborted();
    const args={...input,...scope};
+   if(action==='extract'||action==='import-source'){
+    if(typeof extract!=='function')return denied(res,404);
+    return response(res,200,await extract(args,{importLine:action==='import-source',signal:controller.signal}));
+   }
    if(action==='requirement')return response(res,200,await workflow.writeRequirement(args));
    if(action==='rule-review')return response(res,200,{reviewed:await workflow.reviewRequirement(args)});
    if(action==='link')return response(res,200,{linkId:await workflow.linkEvidence(args)});
    return response(res,200,{reviewed:await workflow.reviewLink(args)});
-  }catch(e){return denied(res,e instanceof ReleaseDenied?404:e instanceof ReleaseConflict?409:503);}
+  }catch(e){return denied(res,e instanceof ReleaseDenied||e instanceof EvidenceAccessDenied?404:e instanceof ReleaseConflict?409:e instanceof UnsupportedExtraction?422:503);}
   finally{res.removeListener('close',abort);active--;}
  };
 }
