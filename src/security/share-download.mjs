@@ -15,7 +15,7 @@ function send(res,status,body,headers={}){
  res.writeHead(status,{...baseHeaders,'Content-Type':'application/octet-stream','Content-Length':body.length,...headers});
  res.end(body);
 }
-function deny(res){send(res,404,Buffer.from('Not available\n'),{'Content-Type':'text/plain; charset=utf-8'});}
+function deny(res){send(res,404,Buffer.from('Not available\n'),{'Content-Type':'text/plain; charset=utf-8','Connection':'close'});}
 function validArtifact(item){
  return item&&isArtifactId(item.artifact_id)&&typeof item.sha256==='string'&&hashPattern.test(item.sha256);
 }
@@ -46,12 +46,16 @@ export function createShareDownloadHandler({resolveShare,openArtifact,maxBytes=8
    deny(res);return;
   }
   const auth=req.headers.authorization;
+  if(req.rawHeaders.filter((v,i)=>i%2===0&&v.toLowerCase()==='authorization').length!==1){deny(res);return;}
   if(typeof auth!=='string'||!/^Bearer [A-Za-z0-9_-]{43}$/.test(auth)){deny(res);return;}
   let digest;
   try{digest=digestShareToken(auth.slice(7));}catch{deny(res);return;}
   inFlight++;
   const controller=new AbortController();
-  const timer=setTimeout(()=>controller.abort(),timeoutMs);
+  const timer=setTimeout(()=>{
+   controller.abort();
+   if(res.headersSent&&!res.writableFinished)res.destroy();
+  },timeoutMs);
   timer.unref?.();
   const disconnect=()=>{if(!res.writableFinished)controller.abort();};
   res.once('close',disconnect);
@@ -76,7 +80,14 @@ export function createShareDownloadHandler({resolveShare,openArtifact,maxBytes=8
    const final=await resolveShare(digest);
    controller.signal.throwIfAborted();
    if(!validArtifact(final)||final.artifact_id!==first.artifact_id||final.sha256!==first.sha256)throw Error('denied');
-   send(res,200,body,{'Content-Disposition':'attachment; filename="verivaro-export.bin"'});
+   // Keep the concurrency slot until bytes are flushed or the peer disconnects.
+   await new Promise((resolve,reject)=>{
+    const done=()=>{res.removeListener('finish',done);res.removeListener('close',done);res.removeListener('error',failed);resolve();};
+    const failed=()=>{done();};
+    if(res.destroyed||res.writableEnded){resolve();return;}
+    res.once('finish',done);res.once('close',done);res.once('error',failed);
+    try{send(res,200,body,{'Content-Disposition':'attachment; filename="verivaro-export.bin"'});}catch(e){done();reject(e);}
+   });
   }catch{deny(res);}
   finally{
    clearTimeout(timer);res.removeListener('close',disconnect);inFlight--;

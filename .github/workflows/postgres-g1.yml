@@ -71,3 +71,8 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f db/tests/scoped_sharing_gate.sql
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/0009_share_generation.sql
           psql -X -v ON_ERROR_STOP=1 -f db/tests/share_generation_gate.sql
+          VV_SHARE_PASSWORD="$(openssl rand -hex 32)"
+          echo "::add-mask::$VV_SHARE_PASSWORD"
+          export VV_SHARE_PASSWORD
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/share_gateway_login.sql
+          VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-share-download.test.mjs
