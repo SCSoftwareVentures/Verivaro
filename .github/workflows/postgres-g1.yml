@@ -52,6 +52,7 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/0003_signed_context.sql
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/0004_project_access.sql
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/0005_identity_sessions.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0006_identity_lifecycle.sql
           psql -X -v ON_ERROR_STOP=1 -f db/tests/context_fixture.sql
           psql -X -v ON_ERROR_STOP=1 -f db/tests/tenant_isolation.sql
           psql -X -v ON_ERROR_STOP=1 -f db/tests/adversarial_permissions.sql
@@ -62,3 +63,4 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f db/tests/signed_context_gate.sql
           psql -X -v ON_ERROR_STOP=1 -f db/tests/project_access_gate.sql
           VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-pool.test.mjs
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/identity_lifecycle_gate.sql
