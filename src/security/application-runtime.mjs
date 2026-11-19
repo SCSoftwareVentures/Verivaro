@@ -9,6 +9,7 @@ import {verifyIdentityToken} from './verify-identity.mjs';
 import {lstat} from 'node:fs/promises';
 import {isAbsolute} from 'node:path';
 import {workspacePage,workspaceScript,workspaceCss} from './workspace-assets.mjs';
+import {createSubmissionPackage} from './submission-package.mjs';
 import {createContractIQ} from './contractiq-extraction.mjs';
 import {createGraphWorkspaceApi,isGraphWorkspaceRequest,isGraphWorkspaceMutation} from './graph-workspace-api.mjs';
 import {createReleaseWorkspaceApi,isReleaseWorkspaceRequest,isReleaseWorkspaceMutation} from './release-workspace-api.mjs';
@@ -86,7 +87,7 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
   const scoped=createScopedDatabase(pools.runtime,{verifier,key:contextKey,expectedLogin:cfg.logins.runtime.user,report,indexedEvidence:true});
   const api=createApplicationApi({resolveSession:browser.resolveSession,scoped,admission,verifier,origin:origin.origin});
   const workflow=createEvidenceReleaseDatabase(pools.runtime,{expectedLogin:cfg.logins.runtime.user,verifier,contextKey,mode:'workflow'});
-  let upload,download,publish,extract;
+  let upload,download,publish,extract,assembleSubmission;
   if(enabled){
    const evidenceKey=await readKey(cfg.ingestion.keyFile);rawKeys.push(evidenceKey);
    if(rawKeys.slice(0,-1).some(k=>k.equals(evidenceKey)))throw Error('duplicate evidence key');
@@ -109,9 +110,10 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
    }
    upload=createEvidenceUploadHandler({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,ingest});
    extract=createContractIQ({retrieve,workflow});
+   assembleSubmission=createSubmissionPackage({workflow,retrieve});
    download=createEvidenceDownloadHandler({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,retrieve});
   }
-  const graph=createGraphWorkspaceApi({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,workflow,extract});
+  const graph=createGraphWorkspaceApi({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,workflow,extract,assembleSubmission});
   const workspace=createReleaseWorkspaceApi({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,workflow,publish,uploadsEnabled:enabled});
   const tenantService=createTenantAdministration(pools.runtime,{expectedLogin:cfg.logins.runtime.user,mode:'workspace',verifier,contextKey,trustedIssuer:p.issuer});
   const tenantAdmin=createTenantAdminApi({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,administration:tenantService});
