@@ -67,3 +67,5 @@ jobs:
           # Test the preceding lifecycle migration before applying its stricter successor.
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/0007_dual_recovery.sql
           psql -X -v ON_ERROR_STOP=1 -f db/tests/dual_recovery_gate.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0008_scoped_sharing.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/scoped_sharing_gate.sql
