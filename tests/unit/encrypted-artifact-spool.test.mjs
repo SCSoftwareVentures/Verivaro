@@ -92,3 +92,29 @@ test('encrypted spool rejects modified ciphertext before releasing the affected 
  }finally{await staged.close();}
  assert.deepEqual(await readdir(root),[]);
 });
+
+test('configured maximum 512 MiB encrypted HTTP transfer with streaming hash verification', {timeout:45000},async t=>{
+ const root=await directory(t);
+ const block=Buffer.alloc(256*1024,0x6d),blocks=2048,length=blocks*block.length,expected=createHash('sha256');
+ for(let i=0;i<blocks;i++)expected.update(block);
+ const hash=expected.digest('hex'),item={artifact_id:randomUUID(),sha256:hash};
+ let calls=0,produced=0;
+ const {token}=generateShareToken();
+ const handler=createShareDownloadHandler({resolveShare:async()=>{calls++;return item;},openArtifact:async()=>Readable.from((async function*(){for(let i=0;i<blocks;i++){produced++;yield block;}})()),spoolDirectory:root,maxBytes:length,maxConcurrent:1,timeoutMs:30000});
+ const server=createServer(handler);
+ await new Promise((r,j)=>{server.once('error',j);server.listen(0,'127.0.0.1',r);});
+ t.after(()=>new Promise(r=>{server.closeAllConnections();server.close(r);}));
+ const start=performance.now();
+ const res=await fetch('http://127.0.0.1:'+server.address().port+'/public/share/download',{method:'POST',headers:{Authorization:'Bearer '+token}});
+ assert.equal(res.status,200);assert.equal(Number(res.headers.get('content-length')),length);
+ assert.equal(produced,blocks);assert.equal(calls,2);
+ const verify=createHash('sha256');let received=0;
+ for await(const chunk of res.body){received+=chunk.length;verify.update(chunk);}
+ assert.equal(received,length);assert.equal(verify.digest('hex'),hash);
+ assert.deepEqual(await readdir(root),[]);
+ const elapsed=Math.round(performance.now()-start),peakRSSKiB=process.resourceUsage().maxRSS;
+ console.log('encrypted_download_512MiB_ms='+elapsed+' process_peak_rss_KiB='+peakRSSKiB);
+ // Linux CI: process-wide RSS is not a precise per-request allocation measure.
+ // Reject regressions that buffer a full 512 MiB artifact in RAM.
+ if(process.platform==='linux')assert.ok(peakRSSKiB<448*1024,'unexpected process memory growth');
+});
