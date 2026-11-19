@@ -38,6 +38,7 @@ export function buildProofLockPlan({scope,asOf,milestones,windows,assessment}={}
   formatter(m.timezone);
   if(!m.confirmed&&(m.localTime!==null||m.offsetMinutes!==null))fail();
   const stage=m.confirmed?resolveLocalMilestone(m.localTime,m.timezone,m.offsetMinutes):null;
+  if(Object.hasOwn(m,'stage')&&m.stage!==stage)fail();
   const group=groups.get(m.milestoneId)??[];
   group.push({revision:m.revision,recordedAt:m.recordedAt,recorded,stage,localTime:m.localTime,timezone:m.timezone,offsetMinutes:m.offsetMinutes});groups.set(m.milestoneId,group);
  }
@@ -49,6 +50,10 @@ export function buildProofLockPlan({scope,asOf,milestones,windows,assessment}={}
  const tasks=[];
  for(const w of windows){
   if(!scopeMatch(w,scope)||!uid(w.windowId)||windowIds.has(w.windowId)||!uid(w.requirementId)||!uid(w.versionId)||!uid(w.milestoneId)||!int(w.leadMinutes,0,525600)||!riskValues.includes(w.irreversibility)||!['approved','pending','rejected'].includes(w.ruleDecision))fail();
+  if(Object.hasOwn(w,'reviewedAt')){
+   const start=instant(w.recordedAt);if(start>now||((w.ruleDecision==='pending')!==(w.reviewedAt===null)))fail();
+   if(w.reviewedAt!==null&&(instant(w.reviewedAt)<start||instant(w.reviewedAt)>now))fail();
+  }
   const pair=w.versionId+':'+w.milestoneId;if(pairs.has(pair))fail();pairs.add(pair);windowIds.add(w.windowId);
   const q=requirements.get(w.requirementId),versions=groups.get(w.milestoneId)??[],latest=versions.at(-1);
   if(!q)fail();
@@ -61,7 +66,7 @@ export function buildProofLockPlan({scope,asOf,milestones,windows,assessment}={}
   // there is no inference that equipment installation or capture occurred.
   const history=approved?versions.map((m,i)=>{
    const until=versions[i+1]?.recorded??now,deadline=m.stage===null?null:iso(instant(m.stage)-w.leadMinutes*60000);
-   return {revision:m.revision,recordedAt:m.recordedAt,stage:m.stage,deadline,timezone:m.timezone,localTime:m.localTime,offsetMinutes:m.offsetMinutes,superseded:i<versions.length-1,deadlineElapsedBeforeSupersessionOrAsOf:deadline===null?null:instant(deadline)<=until};
+   return {revision:m.revision,recordedAt:m.recordedAt,stage:m.stage,deadline,timezone:m.timezone,localTime:m.localTime,offsetMinutes:m.offsetMinutes,superseded:i<versions.length-1,deadlineElapsedBeforeSupersessionOrAsOf:deadline===null?null:instant(deadline)<=until, ...(Object.hasOwn(w,'reviewedAt')?{ruleApprovedDuringOrBeforeRevisionEnd:instant(w.reviewedAt)<=until}: {})};
   }):[];
   const deadline=approved?history.at(-1)?.deadline??null:null,stage=approved?latest?.stage??null:null;
   let status,urgency,action;

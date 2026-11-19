@@ -5,6 +5,7 @@ import {open,link,unlink,lstat} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {join,isAbsolute} from 'node:path';
 import {isArtifactId} from './private-file-store.mjs';
+import {buildProofLockPlan,resolveLocalMilestone} from './prooflock-planner.mjs';
 const hash=/^[a-f0-9]{64}$/;
 export class ReleaseDenied extends Error{}
 export class ReleaseConflict extends Error{}
@@ -46,6 +47,16 @@ export function createEvidenceReleaseDatabase(pool,{expectedLogin,verifier,conte
   async proposeDependencyRemoval({token,tenantId,projectId,versionId,removalId,prerequisiteId,reason}){return (await run(token,tenantId,'SELECT verivaro_verification.propose_dependency_removal($1,$2,$3,$4,$5,$6) AS id',[tenantId,projectId,versionId,removalId,prerequisiteId,reason])).id;},
   async reviewDependencyRemoval({token,tenantId,projectId,removalId,decision,reason}){return (await run(token,tenantId,'SELECT verivaro_verification.review_dependency_removal($1,$2,$3,$4,$5) AS ok',[tenantId,projectId,removalId,decision,reason])).ok===true;},
   async dependencyRemovalCandidates({token,tenantId,projectId}){return (await run(token,tenantId,'SELECT verivaro_verification.dependency_removal_candidates($1,$2) AS data',[tenantId,projectId])).data;},
+  async writeMilestone({token,tenantId,projectId,milestoneId,revisionId,expectedRevision,title,confirmed,localTime,timezone,offsetMinutes}){
+   if(confirmed===true)resolveLocalMilestone(localTime,timezone,offsetMinutes);
+   return (await run(token,tenantId,'SELECT verivaro_verification.write_milestone($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) AS data',[tenantId,projectId,milestoneId,revisionId,expectedRevision,title,confirmed,localTime,timezone,offsetMinutes])).data;
+  },
+  async proposeEvidenceWindow({token,tenantId,projectId,versionId,windowId,milestoneId,leadMinutes,irreversibility,reason}){return (await run(token,tenantId,'SELECT verivaro_verification.propose_evidence_window($1,$2,$3,$4,$5,$6,$7,$8) AS id',[tenantId,projectId,versionId,windowId,milestoneId,leadMinutes,irreversibility,reason])).id;},
+  async reviewEvidenceWindow({token,tenantId,projectId,windowId,decision,reason}){return (await run(token,tenantId,'SELECT verivaro_verification.review_evidence_window($1,$2,$3,$4,$5) AS ok',[tenantId,projectId,windowId,decision,reason])).ok===true;},
+  async proofLock({token,tenantId,projectId}){
+   const data=(await run(token,tenantId,'SELECT verivaro_verification.prooflock_records($1,$2) AS data',[tenantId,projectId])).data;
+   return {...data,plan:buildProofLockPlan(data)};
+  },
   async assessment({token,tenantId,projectId}){return (await run(token,tenantId,'SELECT verivaro_verification.assessment($1,$2) AS data',[tenantId,projectId])).data;},
   async archiveProject({token,tenantId,projectId,requestId,revision}){return (await run(token,tenantId,'SELECT verivaro_mutation.archive_project($1,$2,$3,$4) AS data',[tenantId,projectId,requestId,revision])).data;},
   async report({token,tenantId,projectId}){return (await run(token,tenantId,'SELECT verivaro_mutation.project_report($1,$2) AS data',[tenantId,projectId])).data;},
