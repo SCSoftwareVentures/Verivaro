@@ -217,6 +217,24 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   assert.deepEqual(JSON.parse((await request(newBase+'/evidence',{headers:{cookie:contributor}})).body).items,[]);
   assert.deepEqual(JSON.parse((await request(newBase+'/evidence',{headers:{cookie:viewer}})).body).items,[]);
   console.log('bounded_evidence_listing_240_rows_ms='+String(Date.now()-started));
+  // Separately exercise tenant administration with fresh rate-test state.
+  await admin.query('DELETE FROM verivaro_private.api_rate_keys');await admin.query('UPDATE verivaro_private.api_rate_state SET bucket=-1,requests=0');
+  const tenantBase='/api/v1/tenants/'+tenant+'/administration';
+  const tenantDirectory=await request(tenantBase+'/directory',{headers:{cookie:session}});assert.equal(tenantDirectory.status,200);
+  assert.equal((await request(tenantBase+'/directory',{headers:{cookie:viewer}})).status,404);
+  const tenantMembers=JSON.parse(tenantDirectory.body).items,successor=tenantMembers.find(x=>x.actorId===reviewerId);
+  const enroll={requestId:randomUUID(),subjectDigest:createHash('sha256').update(randomUUID()).digest('hex'),role:'viewer'};
+  assert.equal((await adminPost(tenantBase+'/enroll',enroll,viewer)).status,404);
+  assert.equal((await adminPost(tenantBase+'/enroll',{...enroll,role:'owner'})).status,400);
+  assert.equal((await adminPost(tenantBase+'/enroll',enroll)).status,200);
+  assert.ok(JSON.parse((await request(tenantBase+'/enrollments',{headers:{cookie:session}})).body).items.some(x=>x.id===enroll.requestId&&x.state==='awaiting operator'));
+  const transfer={requestId:randomUUID(),targetId:reviewerId,generation:successor.generation};
+  assert.equal((await adminPost(tenantBase+'/transfer-request',transfer)).status,200);
+  assert.equal((await adminPost(tenantBase+'/transfer-accept',{requestId:transfer.requestId},viewer)).status,404);
+  assert.ok(JSON.parse((await request(tenantBase+'/transfers',{headers:{cookie:reviewer}})).body).items.some(x=>x.id===transfer.requestId&&x.canAccept));
+  assert.equal((await adminPost(tenantBase+'/transfer-accept',{requestId:transfer.requestId},reviewer)).status,200);
+  assert.ok(JSON.parse((await request(tenantBase+'/transfers',{headers:{cookie:session}})).body).items.some(x=>x.id===transfer.requestId&&x.acceptedAt));
+  console.log('browser_tenant_administration_gate_passed');
   assert.equal((await request('/auth/logout-all',{method:'POST',headers:{origin,cookie:session}})).status,204);
   assert.equal((await request(route,{headers:{cookie:session}})).status,401);
   await app.stop();assert.equal(app.server.listening,false);

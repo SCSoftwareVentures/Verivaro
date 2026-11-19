@@ -33,6 +33,7 @@ export function createTenantAdministration(pool,{expectedLogin,mode,verifier,con
  });
  return Object.freeze({
   requestEnrollment:({tenantId,token,requestId,subjectDigest,role})=>{if(typeof subjectDigest!=='string'||! /^[a-f0-9]{64}$/.test(subjectDigest))throw Error('invalid enrollment digest');return run(tenantId,token,'SELECT verivaro_tenant_admin.request_enrollment($1,$2,$3,$4,$5) AS result',[tenantId,requestId,pinned,Buffer.from(subjectDigest,'hex'),role]);},
+  enrollments:({tenantId,token})=>run(tenantId,token,'SELECT verivaro_tenant_admin.enrollment_requests($1) AS result',[tenantId]),
   directory:({tenantId,token})=>run(tenantId,token,'SELECT verivaro_tenant_admin.directory($1) AS result',[tenantId]),
   access:({tenantId,token,requestId,targetId,role,generation})=>run(tenantId,token,'SELECT verivaro_tenant_admin.change_access($1,$2,$3,$4,$5) AS result',[tenantId,requestId,targetId,role,generation]),
   requestTransfer:({tenantId,token,requestId,targetId,generation})=>run(tenantId,token,'SELECT verivaro_tenant_admin.request_transfer($1,$2,$3,$4) AS result',[tenantId,requestId,targetId,generation]),

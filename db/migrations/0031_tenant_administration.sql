@@ -16,8 +16,9 @@ CREATE TABLE verivaro_private.tenant_transfer_acceptances(
 );
 CREATE TABLE verivaro_private.tenant_admin_receipts(
  request_id uuid PRIMARY KEY,tenant_id uuid NOT NULL,actor_id uuid NOT NULL,operator_login name NOT NULL DEFAULT session_user,
- kind text NOT NULL CHECK(kind IN ('bootstrap','enroll','transfer','access')),case_ref uuid UNIQUE,request_digest bytea NOT NULL CHECK(octet_length(request_digest)=32),
- result_generation uuid NOT NULL,occurred_at timestamptz NOT NULL DEFAULT clock_timestamp()
+ kind text NOT NULL CHECK(kind IN ('bootstrap','enroll','transfer','access')),initiated_by uuid,initiating_session uuid,case_ref uuid UNIQUE,request_digest bytea NOT NULL CHECK(octet_length(request_digest)=32),
+ result_generation uuid NOT NULL,occurred_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ CHECK((kind='bootstrap' AND initiated_by IS NULL AND initiating_session IS NULL) OR (kind<>'bootstrap' AND initiated_by IS NOT NULL AND initiating_session IS NOT NULL))
 );
 REVOKE ALL ON verivaro_private.tenant_admin_requests,verivaro_private.tenant_transfer_acceptances,verivaro_private.tenant_admin_receipts FROM PUBLIC;
 CREATE TRIGGER tenant_admin_request_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON verivaro_private.tenant_admin_requests FOR EACH STATEMENT EXECUTE FUNCTION verivaro_private.identity_event_immutable();
@@ -121,7 +122,7 @@ BEGIN
  THEN RAISE EXCEPTION 'enrollment denied' USING ERRCODE='42501';END IF;
  INSERT INTO verivaro.memberships(tenant_id,actor_id,role) VALUES(t,a,q.desired_role) RETURNING share_generation INTO g;
  IF NOT EXISTS(SELECT 1 FROM verivaro_private.provider_bindings WHERE actor_id=a) THEN PERFORM verivaro_identity.provision_binding(iss,h,a,r);END IF;
- INSERT INTO verivaro_private.tenant_admin_receipts(request_id,tenant_id,actor_id,kind,case_ref,request_digest,result_generation) VALUES(r,t,a,'enroll',case_id,d,g);
+ INSERT INTO verivaro_private.tenant_admin_receipts(request_id,tenant_id,actor_id,kind,initiated_by,initiating_session,case_ref,request_digest,result_generation) VALUES(r,t,a,'enroll',q.owner_id,q.owner_session,case_id,d,g);
  RETURN a;
 END $approve$;
 CREATE FUNCTION verivaro_tenant_admin.directory(t uuid) RETURNS jsonb
@@ -152,7 +153,7 @@ BEGIN
  -- Never implicitly resurrect old project grants after a tenant role change.
  UPDATE verivaro.project_members SET revoked_at=clock_timestamp() WHERE tenant_id=t AND actor_id=target AND revoked_at IS NULL;
  UPDATE verivaro.memberships SET role=CASE WHEN desired='revoke' THEN m.role ELSE desired END,revoked_at=CASE WHEN desired='revoke' THEN clock_timestamp() ELSE NULL END WHERE tenant_id=t AND actor_id=target RETURNING share_generation INTO next_g;
- INSERT INTO verivaro_private.tenant_admin_receipts(request_id,tenant_id,actor_id,kind,request_digest,result_generation) VALUES(r,t,target,'access',d,next_g);
+ INSERT INTO verivaro_private.tenant_admin_receipts(request_id,tenant_id,actor_id,kind,initiated_by,initiating_session,request_digest,result_generation) VALUES(r,t,target,'access',c[2]::uuid,c[3]::uuid,d,next_g);
  RETURN next_g;
 END $access$;
 CREATE FUNCTION verivaro_tenant_admin.request_transfer(t uuid,r uuid,target uuid,g uuid) RETURNS uuid
@@ -217,7 +218,7 @@ BEGIN
  ON CONFLICT(tenant_id,project_id,actor_id) DO UPDATE SET role='owner',expires_at=NULL,revoked_at=NULL;
  UPDATE verivaro.project_members SET revoked_at=clock_timestamp() WHERE tenant_id=t AND actor_id=q.owner_id AND revoked_at IS NULL;
  UPDATE verivaro.memberships SET role='viewer',revoked_at=clock_timestamp() WHERE tenant_id=t AND actor_id=q.owner_id;
- INSERT INTO verivaro_private.tenant_admin_receipts(request_id,tenant_id,actor_id,kind,case_ref,request_digest,result_generation) VALUES(r,t,q.target_actor,'transfer',case_id,d,ng);
+ INSERT INTO verivaro_private.tenant_admin_receipts(request_id,tenant_id,actor_id,kind,initiated_by,initiating_session,case_ref,request_digest,result_generation) VALUES(r,t,q.target_actor,'transfer',q.owner_id,q.owner_session,case_id,d,ng);
  RETURN q.target_actor;
 END $transfer$;
 CREATE FUNCTION verivaro_tenant_admin.pending_transfers(t uuid) RETURNS jsonb
@@ -227,11 +228,22 @@ BEGIN
  c:=verivaro.bound_context();
  IF c IS NULL OR c[1]<>t::text OR NOT verivaro.active_identity() OR NOT EXISTS(SELECT 1 FROM verivaro.memberships WHERE tenant_id=t AND actor_id=c[2]::uuid AND revoked_at IS NULL) THEN RAISE EXCEPTION 'transfer denied' USING ERRCODE='42501';END IF;
  RETURN COALESCE((SELECT jsonb_agg(to_jsonb(q) ORDER BY q.id) FROM (
- SELECT r.request_id AS id,r.owner_id AS "fromActor",r.target_actor AS "toActor",r.created_at AS "createdAt",v.accepted_at AS "acceptedAt",z.occurred_at AS "completedAt"
+ SELECT r.request_id AS id,r.owner_id AS "fromActor",r.target_actor AS "toActor",r.created_at AS "createdAt",v.accepted_at AS "acceptedAt",z.occurred_at AS "completedAt", (r.target_actor=c[2]::uuid AND v.request_id IS NULL AND r.created_at>=clock_timestamp()-interval '15 minutes' AND z.request_id IS NULL) AS "canAccept"
  FROM verivaro_private.tenant_admin_requests r LEFT JOIN verivaro_private.tenant_transfer_acceptances v USING(request_id) LEFT JOIN verivaro_private.tenant_admin_receipts z USING(request_id)
  WHERE r.tenant_id=t AND r.kind='transfer' AND (r.owner_id=c[2]::uuid OR r.target_actor=c[2]::uuid) ORDER BY r.created_at DESC LIMIT 200) q),'[]'::jsonb);
 END $pending$;
+CREATE FUNCTION verivaro_tenant_admin.enrollment_requests(t uuid) RETURNS jsonb
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,verivaro_private AS $list$
+BEGIN
+ PERFORM verivaro_private.tenant_admin_bound_owner(t);
+ RETURN COALESCE((SELECT jsonb_agg(to_jsonb(q) ORDER BY q."createdAt" DESC,q.id) FROM (
+ SELECT r.request_id AS id,r.desired_role AS role,r.created_at AS "createdAt",z.actor_id AS "actorId",
+ CASE WHEN z.request_id IS NOT NULL THEN 'enrolled' WHEN r.created_at<clock_timestamp()-interval '15 minutes' THEN 'expired' ELSE 'awaiting operator' END AS state
+ FROM verivaro_private.tenant_admin_requests r LEFT JOIN verivaro_private.tenant_admin_receipts z USING(request_id)
+ WHERE r.tenant_id=t AND r.kind='enroll' ORDER BY r.created_at DESC LIMIT 200) q),'[]'::jsonb);
+END $list$;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA verivaro_tenant_admin FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION verivaro_tenant_admin.enrollment_requests(uuid) TO verivaro_runtime;
 GRANT EXECUTE ON FUNCTION verivaro_tenant_admin.bootstrap(uuid,uuid,text,text,bytea,uuid),verivaro_tenant_admin.approve_enrollment(uuid,uuid,text,bytea,uuid),verivaro_tenant_admin.complete_transfer(uuid,uuid,uuid) TO verivaro_tenant_operator;
 GRANT EXECUTE ON FUNCTION verivaro_tenant_admin.request_enrollment(uuid,uuid,text,bytea,text),verivaro_tenant_admin.directory(uuid),verivaro_tenant_admin.change_access(uuid,uuid,uuid,text,uuid),verivaro_tenant_admin.request_transfer(uuid,uuid,uuid,uuid),verivaro_tenant_admin.accept_transfer(uuid,uuid),verivaro_tenant_admin.pending_transfers(uuid) TO verivaro_runtime;
 COMMIT;

@@ -1,3 +1,5 @@
+import {createTenantAdministration} from './tenant-administration.mjs';
+import {createTenantAdminApi,isTenantAdminRequest,isTenantAdminMutation} from './tenant-admin-api.mjs';
 import {createProjectAdminApi,isProjectAdminRequest,isProjectAdminMutation} from './project-admin-api.mjs';
 import {createShareResolver} from './share-resolver.mjs';
 import {createShareDownloadHandler} from './share-download.mjs';
@@ -37,7 +39,7 @@ function invalidHeaders(req,host){
  const seen=new Set(),critical=new Set(['host','cookie','origin','authorization','content-length','transfer-encoding','content-encoding','expect','sec-fetch-site','content-type','idempotency-key','x-evidence-sha256','x-verivaro-share']);
  for(let i=0;i<req.rawHeaders.length;i+=2){const h=req.rawHeaders[i].toLowerCase();if(critical.has(h)&&seen.has(h))return true;seen.add(h);}
  return req.headers.host!==host||req.headers.authorization!==undefined||req.headers['transfer-encoding']!==undefined||req.headers['content-encoding']!==undefined||
- (!isRenameRequest(req)&&!isEvidenceUpload(req)&&!isReleaseWorkspaceMutation(req)&&!isProjectAdminMutation(req)&&req.headers['content-length']!==undefined&&req.headers['content-length']!=='0')||req.headers.expect!==undefined;
+ (!isRenameRequest(req)&&!isEvidenceUpload(req)&&!isReleaseWorkspaceMutation(req)&&!isProjectAdminMutation(req)&&!isTenantAdminMutation(req)&&req.headers['content-length']!==undefined&&req.headers['content-length']!=='0')||req.headers.expect!==undefined;
 }
 // Only file paths and bounded deployment settings; no environment fallbacks.
 export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,report=()=>{}}){
@@ -107,6 +109,8 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
    download=createEvidenceDownloadHandler({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,retrieve});
   }
   const workspace=createReleaseWorkspaceApi({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,workflow,publish,uploadsEnabled:enabled});
+  const tenantService=createTenantAdministration(pools.runtime,{expectedLogin:cfg.logins.runtime.user,mode:'workspace',verifier,contextKey,trustedIssuer:p.issuer});
+  const tenantAdmin=createTenantAdminApi({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,administration:tenantService});
   const administration=createProjectAdminApi({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,workflow,sharingEnabled:releaseEnabled});
   const recipientDownload=releaseEnabled?createShareDownloadHandler({resolveShare:async()=>null,resolveRecipientShare:createShareResolver(pools.recipient,{expectedLogin:cfg.logins.recipient.user,recipientBound:true}),recipientVerifier:verifier,openArtifact:createPrivateFileStore(cfg.release.root),maxBytes:262144}):null;
   const tlsKey=await readPrivate(cfg.tlsKeyFile,65536),cert=await readPrivate(cfg.tlsCertFile,65536);rawKeys.push(tlsKey);
@@ -137,6 +141,7 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
      // Trusted internal request projection; never copy caller authorization headers.
      return await recipientDownload({method:'POST',url:'/public/share/recipient-download',socket:req.socket,headers:{authorization:'Bearer '+code,'x-verivaro-recipient':token},rawHeaders:['Authorization','Bearer '+code,'X-Verivaro-Recipient',token]},res);
     }
+    if(isTenantAdminRequest(req))return await tenantAdmin(req,res);
     if(isProjectAdminRequest(req))return await administration(req,res);
     if(isReleaseWorkspaceRequest(req))return await workspace(req,res);
     if(isEvidenceDownload(req))return download?await download(req,res):reply(res,404,'Not found');
