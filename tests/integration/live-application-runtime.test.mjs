@@ -377,6 +377,9 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   assert.equal(currentRemoval.dependencyRemovals[0].decision,'approved');assert.equal(currentRemoval.state,'missing_evidence');
   assert.equal((await g('submission-download',packageArgs)).status,409);
   console.log('https_dependency_removal_gate_passed');
+  // Start a separate acceptance phase with the existing finite rate limits.
+  // This admin-only reset is restricted to the disposable integration DB.
+  await admin.query('DELETE FROM verivaro_private.api_rate_keys');await admin.query('UPDATE verivaro_private.api_rate_state SET bucket=-1,requests=0');
   const getProof=async(cookie=session)=>{const r=await request(graphBase+'/prooflock',{headers:{cookie}});assert.equal(r.status,200);assert.match(r.headers['cache-control'],/no-store/);return JSON.parse(r.body);};
   assert.equal((await getGraph()).proofLockEnabled,true);
   assert.equal((await request(graphBase+'/prooflock',{headers:{cookie:contributor}})).status,404);

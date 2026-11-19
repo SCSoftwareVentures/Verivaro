@@ -74,7 +74,7 @@ async function loadProject(){
 async function graphPost(action,body){
  await api(current.base+'/verification/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
 }
-function graphField(label,control){const l=node('label',label);l.append(control);return l;}
+function graphField(label,control){const l=node('label',label);control.setAttribute('aria-label',label);l.append(control);return l;}
 function graphChoice(options,selected){const s=node('select');for(const [v,t] of options)option(s,v,t);if(selected)s.value=selected;return s;}
 const graphApplicability=[['unknown','Unknown'],['required','Required'],['optional','Optional'],['not_applicable','Not applicable']];
 function graphReview(row,action,idKey,idValue,choices){
@@ -85,7 +85,7 @@ function graphReview(row,action,idKey,idValue,choices){
  }));row.append(a);
 }
 function milestoneEditor(root,prior){
- const box=node('details'),title=node('input'),mode=graphChoice([['unknown','Date unknown'],['confirmed','Confirmed local date and time']],prior?.confirmed?'confirmed':'unknown'),local=node('input'),zone=node('input'),offset=node('input');
+ const box=node('details'),title=node('input'),mode=graphChoice([['unknown','Date unknown'],['confirmed','Confirmed date']],prior?.confirmed?'confirmed':'unknown'),local=node('input'),zone=node('input'),offset=node('input');
  title.maxLength=128;title.value=prior?.title??'';local.placeholder='YYYY-MM-DDTHH:MM';local.maxLength=16;local.value=prior?.localTime??'';zone.maxLength=80;zone.value=prior?.timezone??'UTC';offset.type='number';offset.min='-840';offset.max='840';offset.step='1';offset.value=prior?.offsetMinutes??'';
  box.append(node('summary',prior?'Revise milestone schedule':'Create milestone'),graphField('Milestone title',title),graphField('Schedule status',mode),graphField('Local date and time',local),graphField('IANA timezone',zone),graphField('UTC offset minutes',offset),node('p','For a confirmed date, use an explicit offset (Melbourne daylight time: 660, standard time: 600). Unknown schedules must have no date or offset.','meta'),button('Save milestone',async()=>{
   const n=title.value.trim(),tz=zone.value.trim(),confirmed=mode.value==='confirmed',localTime=confirmed?local.value.trim():null,offsetMinutes=confirmed?Number(offset.value):null;
