@@ -32,7 +32,7 @@ AS $$
 DECLARE raw text; parts text[]; payload text; k bytea; expected bytea; now_epoch bigint;
 BEGIN
   raw := current_setting('verivaro.signed_context', true);
-  IF raw IS NULL OR length(raw) > 240 OR raw !~ '^v2[|][0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[|][0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[|][1-9][0-9]{0,9}[|][1-9][0-9]{0,19}[|][1-9][0-9]{0,11}[|][0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[|][0-9a-f]{64} THEN
+  IF raw IS NULL OR length(raw) > 240 OR raw !~ '^v2[|][0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[|][0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[|][1-9][0-9]{0,9}[|][1-9][0-9]{0,19}[|][1-9][0-9]{0,11}[|][0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[|][0-9a-f]{64}$' THEN
     RETURN NULL;
   END IF;
   parts := string_to_array(raw, '|');
@@ -53,23 +53,5 @@ BEGIN
       AND to_timestamp(parts[6]::bigint)<=s.expires_at) THEN RETURN NULL; END IF;
   RETURN ARRAY[parts[2], parts[3], parts[7]];
 END $$;
- THEN
-    RETURN NULL;
-  END IF;
-  parts := string_to_array(raw, '|');
-  IF parts[4] IS DISTINCT FROM pg_backend_pid()::text
-     OR parts[5] IS DISTINCT FROM pg_current_xact_id_if_assigned()::text THEN RETURN NULL; END IF;
-  now_epoch := floor(extract(epoch FROM statement_timestamp()))::bigint;
-  IF parts[6]::bigint <= now_epoch OR parts[6]::bigint > now_epoch + 60 THEN RETURN NULL; END IF;
-  SELECT key_bytes INTO k FROM verivaro_private.context_key WHERE singleton;
-  IF k IS NULL THEN RETURN NULL; END IF;
-  payload := array_to_string(parts[1:6], '|');
-  expected := verivaro_private.hmac(convert_to(payload, 'UTF8'), k, 'sha256');
-  -- Double HMAC prevents a caller from choosing a comparison prefix.
-  IF verivaro_private.hmac(decode(parts[7], 'hex'), k, 'sha256')
-     IS DISTINCT FROM verivaro_private.hmac(expected, k, 'sha256') THEN RETURN NULL; END IF;
-  RETURN ARRAY[parts[2], parts[3]];
-END $$;
-
 REVOKE ALL ON FUNCTION verivaro.bound_context() FROM PUBLIC;
 COMMIT;

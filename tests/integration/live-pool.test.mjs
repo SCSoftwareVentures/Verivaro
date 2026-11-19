@@ -5,6 +5,7 @@ import {createRequire} from 'node:module';
 import {generateKeyPairSync,sign,randomUUID} from 'node:crypto';
 import {resolve} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
+import {signDatabaseContext} from '../../src/security/sign-database-context.mjs';
 import {createScopedDatabase} from '../../src/security/scoped-database.mjs';
 
 if(process.env.PGDATABASE!=='verivaro_test' || process.env.VV_LIVE_TEST!=='1' ||
@@ -117,8 +118,18 @@ test('real PostgreSQL pool: reused lease, tenant isolation, revocation, cancella
    assert.deepEqual((await db.execute(input(alternate))).map(r=>r.id),[a.project]);
    await assert.rejects(db.execute(input({...a,sid:randomUUID()})),/failed/);
    await assert.rejects(db.execute(input({...a,sid:b.sid})),/failed/);
-   // Revoke just the first session between authorization and the next statement.
-   await admin.query('UPDATE verivaro_private.identity_sessions SET revoked_at=clock_timestamp() WHERE session_id=$1',[a.sid]);
+   // Verify revocation against the same still-open runtime transaction.
+   const live=await runtime.connect();
+   try{
+    await live.query('BEGIN ISOLATION LEVEL READ COMMITTED');
+    const challenge=(await live.query('SELECT pg_backend_pid() AS pid, pg_current_xact_id()::text AS xid')).rows[0];
+    const ctx=signDatabaseContext({token:token(a.actor,a.sid),tenantId:a.tenant,challenge},{key,verifier:{publicKey,issuer:'ci',audience:'api'}});
+    await live.query("SELECT set_config('verivaro.signed_context',$1,true)",[ctx]);
+    assert.equal((await live.query('SELECT count(*)::int AS n FROM verivaro.projects')).rows[0].n,1);
+    await admin.query('UPDATE verivaro_private.identity_sessions SET revoked_at=clock_timestamp() WHERE session_id=$1',[a.sid]);
+    assert.equal((await live.query('SELECT count(*)::int AS n FROM verivaro.projects')).rows[0].n,0);
+    await live.query('ROLLBACK');
+   }finally{live.release(true);}
    await assert.rejects(db.execute(input(a)),/failed/);
    assert.deepEqual((await db.execute(input(alternate))).map(r=>r.id),[a.project]);
    await assert.rejects(admin.query('UPDATE verivaro_private.identity_sessions SET revoked_at=NULL WHERE session_id=$1',[a.sid]),e=>e.code==='42501');
