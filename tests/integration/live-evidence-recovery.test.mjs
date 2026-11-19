@@ -8,6 +8,7 @@ import {randomUUID,randomBytes,generateKeyPairSync,createHash} from 'node:crypto
 import {mkdtemp,mkdir,writeFile,readFile,readdir,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {readRecoveryInventory,createEvidenceBackup,restoreEvidenceBackup} from '../../src/security/evidence-recovery.mjs';
+import {sealEvidence,createEvidenceRecoverySource} from '../../src/security/evidence-objects.mjs';
 import {verifyAndStageBackup} from '../../src/security/encrypted-database-backup.mjs';
 if(process.env.VV_LIVE_TEST!=='1'||process.env.PGDATABASE!=='verivaro_test'||!process.env.VV_TEST_DRIVER_DIR||!process.env.VV_CI_BACKUP_PATH)throw Error('disposable CI only');
 const {Pool}=createRequire(resolve(process.env.VV_TEST_DRIVER_DIR,'package.json'))('pg');
@@ -57,7 +58,7 @@ test('complete real PostgreSQL and evidence bundle restore with independent revi
  let target;
  try{
   const tenant=randomUUID(),project=randomUUID(),actor=randomUUID();
-  const items=[Buffer.from('actual evidence fixture'),Buffer.alloc(1024*1024+17,0x53)].map(data=>({id:randomUUID(),data,sha256:sha(data)}));
+  const items=[Buffer.from('actual evidence fixture'),Buffer.alloc(1024*1024+17,0x53),Buffer.from('database encrypted evidence fixture')].map(data=>({id:randomUUID(),data,sha256:sha(data)}));
   await source.query('INSERT INTO verivaro.tenants(id,name) VALUES($1,$2)',[tenant,'Synthetic recovery tenant']);
   await source.query('INSERT INTO verivaro.projects(id,tenant_id,name) VALUES($1,$2,$3)',[project,tenant,'Synthetic project']);
   await source.query("INSERT INTO verivaro.memberships(tenant_id,actor_id,role) VALUES($1,$2,'owner')",[tenant,actor]);
@@ -66,17 +67,23 @@ test('complete real PostgreSQL and evidence bundle restore with independent revi
   await source.query('INSERT INTO verivaro_private.monitor_state(singleton) VALUES(true)');
   await source.query("INSERT INTO verivaro.evidence(id,tenant_id,project_id,sha256,storage_ref,created_by) VALUES($1,$2,$3,$4,$5,$6)",[items[0].id,tenant,project,items[0].sha256,'private://'+items[0].id,actor]);
   await source.query('SELECT verivaro_sharing.register_export($1,$2,$3,$4,$5,false)',[randomUUID(),tenant,project,items[1].id,items[1].sha256]);
-  for(const item of items)await writeFile(join(sourceRoot,item.id),item.data,{mode:0o600});
+  const evidenceKey=randomBytes(32),third=items[2],sealed=sealEvidence(third.data,{id:third.id,tenantId:tenant,projectId:project,key:evidenceKey,keyId:'fixture'});
+  await source.query("INSERT INTO verivaro.evidence(id,tenant_id,project_id,sha256,storage_ref,created_by) VALUES($1,$2,$3,$4,'db-encrypted-v1',$5)",[third.id,tenant,project,third.sha256,actor]);
+  await source.query("INSERT INTO verivaro_private.evidence_objects(evidence_id,tenant_id,project_id,actor_id,session_id,request_id,sha256,bytes,key_id,envelope,cipher_digest,scan_policy) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'clamd-instream-text-v1')",[third.id,tenant,project,actor,randomUUID(),randomUUID(),third.sha256,sealed.bytes,sealed.keyId,sealed.envelope,Buffer.from(sealed.cipherDigest,'hex')]);
+  for(const item of items.slice(0,2))await writeFile(join(sourceRoot,item.id),item.data,{mode:0o600});
   const env={...process.env,PGDATABASE:sourceDb,VV_BACKUP_KEY:key.toString('base64url'),VV_INSTALLATION_ID:installationId};
   const started=performance.now();
   const {stdout}=await exec(process.execPath,['services/database-recovery/main.mjs','backup',root],{env,timeout:30000});
   const databaseBackup=JSON.parse(stdout.trim()),inventory=await readRecoveryInventory(source);
-  assert.equal(inventory.length,2);
-  const b=await createEvidenceBackup({...cfg,inventory,databaseBackup});
+  assert.equal(inventory.length,3);
+  const readKey=async id=>{assert.equal(id,'fixture');return evidenceKey;};
+  const b=await createEvidenceBackup({...cfg,inventory,databaseBackup,objectSource:createEvidenceRecoverySource({client:source,sourceRoot,readKey})});
   await exec(process.execPath,['services/database-recovery/main.mjs','restore',databaseBackup.path,targetDb],{env:{...env,VV_RESTORE_APPROVED:'1',VV_RESTORE_SPOOL:spoolDirectory},timeout:30000});
   target=new Pool({...config,database:targetDb});
   const restoredInventory=await readRecoveryInventory(target);
   assert.deepEqual(restoredInventory,inventory);
+  const recoveredSource=createEvidenceRecoverySource({client:target,sourceRoot,readKey});
+  const restoredObject=await recoveredSource(third.id,{signal:cfg.signal,maxBytes:262144});const pieces=[];for await(const chunk of restoredObject)pieces.push(Buffer.from(chunk));assert.deepEqual(Buffer.concat(pieces),third.data);
   const receipt=await restoreEvidenceBackup({...cfg,inventory:restoredInventory,databaseBackup,path:b.path,checkpoint:b.checkpoint});
   for(const item of items)assert.deepEqual(await readFile(join(receipt.path,item.id)),item.data);
   const c=await target.connect();

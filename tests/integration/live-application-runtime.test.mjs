@@ -7,6 +7,7 @@ import {tmpdir} from 'node:os';
 import {randomUUID,randomBytes,generateKeyPairSync,createHash,sign} from 'node:crypto';
 import {request as httpsRequest} from 'node:https';
 import {issuer,audience,publicKey,local,token} from '../fixtures/provider-fixture.mjs';
+import {scannerFixture} from '../fixtures/clamd-fixture.mjs';
 import {digestSubject} from '../../src/security/provider-identity.mjs';
 import {createApplicationRuntime} from '../../src/security/application-runtime.mjs';
 if(process.env.VV_LIVE_TEST!=='1'||process.env.PGDATABASE!=='verivaro_test'||!process.env.VV_TLS_FIXTURE||!process.env.VV_TEST_DRIVER_DIR)throw Error('disposable CI only');
@@ -15,7 +16,7 @@ const tenant='11111111-1111-4111-8111-111111111111',project='33333333-3333-4333-
 test('HTTPS runtime boots with three TLS-pinned database pools, real browser login and RLS API',{timeout:60000},async()=>{
  const admin=new Pool({host:process.env.PGHOST,port:Number(process.env.PGPORT),user:process.env.PGUSER,password:process.env.PGPASSWORD,database:'verivaro_test',max:2});
  const dir=await mkdtemp(join(tmpdir(),'vv-runtime-')),tls=process.env.VV_TLS_FIXTURE,authority=generateKeyPairSync('ed25519'),actor=randomUUID(),subject='runtime-'+randomUUID(),origin='https://localhost:18443',codes=new Map();
- let app;
+ let app,scanner;
  async function put(name,data){const p=join(dir,name);await writeFile(p,data,{mode:0o600});return p;}
  const now=Math.floor(Date.now()/1000),catalogue=Buffer.from(JSON.stringify({version:1,issuer,audience,sequence:1,issuedAt:now,expiresAt:now+600,keys:[{kid:'fixture',pem:publicKey.export({type:'spki',format:'pem'})}]}));
  try{
@@ -25,9 +26,10 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   await admin.query('DELETE FROM verivaro_private.api_rate_keys');
   await admin.query('UPDATE verivaro_private.api_rate_state SET bucket=-1,requests=0,global_limit=600,peer_limit=120,actor_limit=60');
   const context=(await admin.query('SELECT key_bytes FROM verivaro_private.context_key WHERE singleton')).rows[0].key_bytes,secret=randomBytes(32).toString('base64url');
-  const cfg={origin,listenHost:'127.0.0.1',listenPort:18443,tlsKeyFile:join(tls,'server.key'),tlsCertFile:join(tls,'server.crt'),
+  scanner=await scannerFixture(dir);
+  const cfg={origin,ingestion:{keyId:'runtime-fixture',keyFile:await put('evidence-key',randomBytes(32).toString('base64url')),scannerSocket:scanner.socketPath},listenHost:'127.0.0.1',listenPort:18443,tlsKeyFile:join(tls,'server.key'),tlsCertFile:join(tls,'server.crt'),
    database:{host:'localhost',port:Number(process.env.PGPORT),name:'verivaro_test',caFile:join(tls,'ca.pem')},
-   logins:{identity:{user:'vv_ci_identity',passwordFile:await put('identity',process.env.VV_IDENTITY_PASSWORD)},runtime:{user:'vv_ci_runtime',passwordFile:await put('runtime',process.env.VV_RUNTIME_PASSWORD)},admission:{user:'vv_ci_api_a',passwordFile:await put('admission',process.env.VV_API_A_PASSWORD)}},
+   logins:{ingestion:{user:'vv_ci_ingest',passwordFile:await put('ingestion',process.env.VV_INGEST_PASSWORD)},identity:{user:'vv_ci_identity',passwordFile:await put('identity',process.env.VV_IDENTITY_PASSWORD)},runtime:{user:'vv_ci_runtime',passwordFile:await put('runtime',process.env.VV_RUNTIME_PASSWORD)},admission:{user:'vv_ci_api_a',passwordFile:await put('admission',process.env.VV_API_A_PASSWORD)}},
    provider:{issuer,audience,authorizationEndpoint:issuer+'/authorize',tokenEndpoint:issuer+'/token',requiredAcr:'fixture:mfa',requiredAmr:['mfa'],authorityFile:await put('authority',authority.publicKey.export({type:'spki',format:'pem'})),checkpointFile:await put('checkpoint',JSON.stringify({sequence:1,digest:createHash('sha256').update(catalogue).digest('hex')})),catalogueFile:await put('catalogue',catalogue),signatureFile:await put('sig',sign(null,catalogue,authority.privateKey)),clientSecretFile:await put('client-secret',secret)},
    local:{issuer:'urn:verivaro:runtime-fixture',audience:'api',signingKeyFile:await put('signing',local.privateKey.export({type:'pkcs8',format:'pem'}))},
    secrets:{admissionKeyFile:await put('admission-key',randomBytes(32).toString('base64url')),contextKeyFile:await put('context-key',context.toString('base64url')),browserKeyFile:await put('browser-key',randomBytes(32).toString('base64url'))}};
@@ -72,9 +74,16 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   assert.equal((await request(route+'/'+project,{method:'PATCH',headers:{...mutationHeaders,origin:'https://evil.invalid'},body})).status,403);
   assert.equal((await request(route+'/'+project,{method:'PATCH',headers:{...mutationHeaders,'idempotency-key':randomUUID()},body})).status,409);
   assert.equal((await admin.query('SELECT count(*)::int AS n FROM verivaro_private.project_mutation_audit WHERE request_id=$1',[requestId])).rows[0].n,1);
+  const evidenceBody='HTTPS uploaded evidence',evidenceRequest=randomUUID(),evidenceHeaders={cookie:session,origin,'content-type':'text/plain; charset=utf-8','idempotency-key':evidenceRequest,'x-evidence-sha256':createHash('sha256').update(evidenceBody).digest('hex')};
+  const uploaded=await request(route+'/'+project+'/evidence',{method:'POST',headers:evidenceHeaders,body:evidenceBody});assert.equal(uploaded.status,200);
+  const uploadedId=JSON.parse(uploaded.body).evidence.id;
+  const repeat=await request(route+'/'+project+'/evidence',{method:'POST',headers:evidenceHeaders,body:evidenceBody});assert.equal(repeat.status,200);assert.equal(JSON.parse(repeat.body).evidence.id,uploadedId);
+  scanner.setVerdict('infected');
+  assert.equal((await request(route+'/'+project+'/evidence',{method:'POST',headers:{...evidenceHeaders,'idempotency-key':randomUUID()},body:evidenceBody})).status,422);
+  const listed=await request(route+'/'+project+'/evidence',{headers:{cookie:session}});assert.equal(listed.status,200);assert.ok(JSON.parse(listed.body).items.some(x=>x.id===uploadedId));
   assert.equal((await request('/auth/logout-all',{method:'POST',headers:{origin,cookie:session}})).status,204);
   assert.equal((await request(route,{headers:{cookie:session}})).status,401);
   await app.stop();assert.equal(app.server.listening,false);
   console.log('application_https_browser_to_rls_gate_passed');
- }finally{await app?.stop();await admin.end();await rm(dir,{recursive:true,force:true});}
+ }finally{await app?.stop();await scanner?.close();await admin.end();await rm(dir,{recursive:true,force:true});}
 });
