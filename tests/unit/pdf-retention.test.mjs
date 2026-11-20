@@ -8,10 +8,11 @@ import {canonicalTextPdf} from '../../src/security/evidence-formats.mjs';
 import {createOriginalPdfQuarantine} from '../../src/security/pdf-quarantine.mjs';
 import {createPdfRetentionGate,signPdfRetentionDocument} from '../../src/security/pdf-retention.mjs';
 import {createLocalPdfDeletionLedger} from '../../src/security/pdf-deletion-ledger.mjs';
+import {createLocalPdfDeletionReplica} from '../../src/security/pdf-deletion-replica.mjs';
 const now='2026-11-21T11:00:00.000Z';
 const id=()=>randomUUID(),source=canonicalTextPdf(['Equipment must carry ID.']),pair=()=>generateKeyPairSync('ed25519');
 test('dual signatures, independent hold and durable deletion receipts',async()=>{
- const root=await mkdtemp(join(tmpdir(),'vv-pdf-life-')),ledgerRoot=await mkdtemp(join(tmpdir(),'vv-pdf-ledger-')),key=randomBytes(32),ledger=createLocalPdfDeletionLedger({root:ledgerRoot,privateKey:pair().privateKey}),policyKey=pair(),reviewers=[pair(),pair()],actors=[id(),id()];let hold=true;
+ const root=await mkdtemp(join(tmpdir(),'vv-pdf-life-')),ledgerRoot=await mkdtemp(join(tmpdir(),'vv-pdf-ledger-')),replicaRoot=await mkdtemp(join(tmpdir(),'vv-pdf-replica-')),key=randomBytes(32),receiptKey=pair(),replica=createLocalPdfDeletionReplica({root:replicaRoot,trustedKey:receiptKey.publicKey}),ledger=createLocalPdfDeletionLedger({root:ledgerRoot,privateKey:receiptKey.privateKey,replica}),policyKey=pair(),reviewers=[pair(),pair()],actors=[id(),id()];let hold=true;
  const gate=createPdfRetentionGate({policyPublicKey:policyKey.publicKey,approvers:reviewers.map((k,i)=>({actorId:actors[i],publicKey:k.publicKey})),holdLookup:async()=>hold,clock:()=>new Date(now)});
  let acquired=0;const vault=createOriginalPdfQuarantine({root,key,keyId:'lifecycle',scan:async()=> 'clean',retentionGate:gate,deletionLedger:ledger,withExclusiveHoldLock:async(meta,fn,signal)=>{acquired++;signal.throwIfAborted();return fn();}}),signal=new AbortController().signal;
  try{
@@ -30,7 +31,7 @@ test('dual signatures, independent hold and durable deletion receipts',async()=>
   const receipt=JSON.parse(await readFile(join(root,result.receiptName),'utf8'));
   assert.equal(receipt.sha256,meta.sha256);assert.equal((await ledger.read(meta,{signal})).status,'completed');
   await assert.rejects(vault.read(meta,{signal}));await assert.rejects(vault.destroy(meta,{authorization,signal}));
- }finally{vault.close();ledger.close();key.fill(0);await rm(root,{force:true,recursive:true});await rm(ledgerRoot,{force:true,recursive:true});}
+ }finally{vault.close();ledger.close();replica.close();key.fill(0);await rm(root,{force:true,recursive:true});await rm(ledgerRoot,{force:true,recursive:true});await rm(replicaRoot,{force:true,recursive:true});}
 });
 test('retention requires a trusted hold-lock coordinator',()=>{const k=randomBytes(32);try{assert.throws(()=>createOriginalPdfQuarantine({root:'/tmp/test',key:k,keyId:'test',scan:async()=> 'clean',retentionGate:async()=>true}));}finally{k.fill(0);}});
 test('future retention, expired approvals and unavailable legal-hold data deny deletion',async()=>{
@@ -53,7 +54,7 @@ test('future retention, expired approvals and unavailable legal-hold data deny d
 
 test('journal and signed retention gate deny unknown and active holds, permit explicit release',async()=>{
  const {createLocalPdfHoldRegistry}=await import('../../src/security/pdf-hold-registry.mjs');
- const root=await mkdtemp(join(tmpdir(),'vv-ret-hold-')),holdRoot=await mkdtemp(join(tmpdir(),'vv-ret-journal-')),ledgerRoot=await mkdtemp(join(tmpdir(),'vv-ret-ledger-')),key=randomBytes(32),holdKey=randomBytes(32),ledger=createLocalPdfDeletionLedger({root:ledgerRoot,privateKey:pair().privateKey});
+ const root=await mkdtemp(join(tmpdir(),'vv-ret-hold-')),holdRoot=await mkdtemp(join(tmpdir(),'vv-ret-journal-')),ledgerRoot=await mkdtemp(join(tmpdir(),'vv-ret-ledger-')),replicaRoot=await mkdtemp(join(tmpdir(),'vv-ret-replica-')),key=randomBytes(32),holdKey=randomBytes(32),receiptKey=pair(),replica=createLocalPdfDeletionReplica({root:replicaRoot,trustedKey:receiptKey.publicKey}),ledger=createLocalPdfDeletionLedger({root:ledgerRoot,privateKey:receiptKey.privateKey,replica});
  const policyKey=pair(),a=pair(),b=pair(),actors=[id(),id()],signal=new AbortController().signal;
  let allowed=true;
  const registry=createLocalPdfHoldRegistry({root:holdRoot,key:holdKey,authorizeChange:async()=>allowed});
@@ -71,5 +72,5 @@ test('journal and signed retention gate deny unknown and active holds, permit ex
   allowed=true;await registry.recordHoldChange(m,{actorId:id(),held:false,reason:'Trusted reviewer released legal hold',signal});
   assert.equal((await vault.destroy(m,{authorization,signal})).deleted,true);assert.equal((await ledger.read(m,{signal})).status,'completed');
   await assert.rejects(vault.read(m,{signal}));
- }finally{vault.close();registry.close();ledger.close();key.fill(0);holdKey.fill(0);await rm(root,{force:true,recursive:true});await rm(holdRoot,{force:true,recursive:true});await rm(ledgerRoot,{force:true,recursive:true});}
+ }finally{vault.close();registry.close();ledger.close();replica.close();key.fill(0);holdKey.fill(0);await rm(root,{force:true,recursive:true});await rm(holdRoot,{force:true,recursive:true});await rm(ledgerRoot,{force:true,recursive:true});await rm(replicaRoot,{force:true,recursive:true});}
 });

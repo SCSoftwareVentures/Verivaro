@@ -36,8 +36,8 @@ export function verifyPdfDeletionEvidence(envelope,trustedKey,{meta,prepared}={}
  }
  return envelope.body;
 }
-export function createLocalPdfDeletionLedger({root,privateKey,clock=()=>new Date()}={}){
- if(typeof root!=='string'||!isAbsolute(root)||root.length>220||/[\x00-\x1f]/.test(root)||typeof clock!=='function'||!constants.O_NOFOLLOW||!constants.O_EXCL)deny();
+export function createLocalPdfDeletionLedger({root,privateKey,clock=()=>new Date(),replica}={}){
+ if(typeof root!=='string'||!isAbsolute(root)||root.length>220||/[\x00-\x1f]/.test(root)||typeof clock!=='function'||!constants.O_NOFOLLOW||!constants.O_EXCL||(replica!==undefined&&(replica.root===root||typeof replica.read!=='function'||typeof replica.write!=='function')))deny();
  const key=privateKey?.type==='private'?privateKey:createPrivateKey(privateKey);
  if(key.asymmetricKeyType!=='ed25519')deny();
  const publicInfo=identity(key);let closed=false;
@@ -95,6 +95,10 @@ export function createLocalPdfDeletionLedger({root,privateKey,clock=()=>new Date
   if(completed&&!prepared)deny();
   if(prepared){if(verifyPdfDeletionEvidence(prepared,publicInfo.key,{meta}).kind!=='prepared')deny();}
   if(completed)verifyPdfDeletionEvidence(completed,publicInfo.key,{meta,prepared});
+  if(replica){
+   const other=await replica.read(meta,{signal});
+   if(JSON.stringify(other)!==JSON.stringify({status:completed?'completed':prepared?'prepared':'none',prepared,completed}))deny();
+  }
   signal.throwIfAborted();
   return {status:completed?'completed':prepared?'prepared':'none',prepared,completed};
  }
@@ -104,6 +108,7 @@ export function createLocalPdfDeletionLedger({root,privateKey,clock=()=>new Date
   const body={version:1,kind:'prepared',deletionId:randomUUID(),...checkedMeta(meta),authorizationSha256,preparedSha256:null};
   const envelope=make(body),stored=await writeOnce(paths(meta).stage,envelope);
   verifyPdfDeletionEvidence(stored,publicInfo.key,{meta});
+  if(replica)await replica.write(meta,stored,signal);
   signal.throwIfAborted();return stored;
  }
  async function complete(meta,prepared,originalPath,signal){
@@ -117,7 +122,8 @@ export function createLocalPdfDeletionLedger({root,privateKey,clock=()=>new Date
   const envelope=make({version:1,kind:'completed',deletionId:verified.deletionId,...checkedMeta(meta),authorizationSha256:verified.authorizationSha256,preparedSha256:sha(Buffer.from(JSON.stringify(prepared)))});
   const saved=await writeOnce(paths(meta).completed,envelope);
   verifyPdfDeletionEvidence(saved,publicInfo.key,{meta,prepared});
+  if(replica)await replica.write(meta,saved,signal);
   signal.throwIfAborted();return saved;
  }
- return Object.freeze({root,fingerprint:publicInfo.fingerprint,publicKey:publicInfo.key.export({format:'pem',type:'spki'}),prepare,complete,read,close(){closed=true;}});
+ return Object.freeze({root,replicated:replica!==undefined,fingerprint:publicInfo.fingerprint,publicKey:publicInfo.key.export({format:'pem',type:'spki'}),prepare,complete,read,close(){closed=true;}});
 }

@@ -17,7 +17,7 @@ async function checkRoot(root){
  if(!s.isDirectory()||(s.mode&0o077)!==0||(typeof process.getuid==='function'&&s.uid!==process.getuid()))fail();
 }
 export function createOriginalPdfQuarantine({root,key,keyId,scan,retentionGate,withExclusiveHoldLock,deletionLedger}={}){
- if(typeof root!=='string'||!isAbsolute(root)||root.length>250||/[\x00-\x1f]/.test(root)||!Buffer.isBuffer(key)||key.length!==32||typeof scan!=='function'||typeof keyId!=='string'||!/^[a-z][a-z0-9_-]{0,31}$/.test(keyId)||!constants.O_NOFOLLOW||(retentionGate!==undefined&&(typeof retentionGate!=='function'||typeof withExclusiveHoldLock!=='function'))||(withExclusiveHoldLock!==undefined&&typeof withExclusiveHoldLock!=='function')||(retentionGate!==undefined&&(!deletionLedger||deletionLedger.root===root||typeof deletionLedger.prepare!=='function'||typeof deletionLedger.complete!=='function'||typeof deletionLedger.read!=='function')))fail();
+ if(typeof root!=='string'||!isAbsolute(root)||root.length>250||/[\x00-\x1f]/.test(root)||!Buffer.isBuffer(key)||key.length!==32||typeof scan!=='function'||typeof keyId!=='string'||!/^[a-z][a-z0-9_-]{0,31}$/.test(keyId)||!constants.O_NOFOLLOW||(retentionGate!==undefined&&(typeof retentionGate!=='function'||typeof withExclusiveHoldLock!=='function'))||(withExclusiveHoldLock!==undefined&&typeof withExclusiveHoldLock!=='function')||(retentionGate!==undefined&&(!deletionLedger||deletionLedger.root===root||typeof deletionLedger.prepare!=='function'||typeof deletionLedger.complete!=='function'||typeof deletionLedger.read!=='function'||deletionLedger.replicated!==true)))fail();
  const secret=Buffer.from(key);let busy=false,closed=false;
  async function gate(fn){
   if(closed||busy)fail();busy=true;
