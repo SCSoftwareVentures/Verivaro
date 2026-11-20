@@ -75,23 +75,31 @@ export function createOfflinePoppler({pdfinfoPath='/usr/bin/pdfinfo',pdftoppmPat
 export async function normalizeExternalPdf(source,{renderer,signal}={}){
  if(!Buffer.isBuffer(source)||source.length<20||source.length>PDF_NORMALIZER_MAX_SOURCE||!header.test(source.subarray(0,12).toString('latin1'))||typeof renderer?.inspect!=='function'||typeof renderer?.render!=='function'||!signal)reject();
  signal.throwIfAborted();
- const info=await renderer.inspect(source,signal);let count;
- try{count=inspectPdfInfo(info);}finally{info?.fill?.(0);}
- const scans=[],manifestPages=[];let pixels=0,canonical;
+ // Own a stable snapshot across all awaits; callers may reuse/mutate their buffer.
+ const snapshot=Buffer.from(source),sourceDigest=hash(snapshot),scans=[],manifestPages=[];
+ let pixels=0,canonical;
  try{
+  let info,count;
+  try{info=await renderer.inspect(snapshot,signal);signal.throwIfAborted();count=inspectPdfInfo(info);}
+  finally{info?.fill?.(0);}
   for(let page=1;page<=count;page++){
    signal.throwIfAborted();
-   const bytes=await renderer.render(source,page,signal);let result;
-   try{result=ppmToCanonicalPng(bytes);}finally{bytes?.fill?.(0);}
+   const bytes=await renderer.render(snapshot,page,signal);let result;
+   try{signal.throwIfAborted();result=ppmToCanonicalPng(bytes);}finally{bytes?.fill?.(0);}
    pixels+=result.width*result.height;
    if(pixels>2097152){result.png.fill(0);reject();}
    scans.push(result.png);
-   manifestPages.push({page,width:result.width,height:result.height,rasterSha256:hash(result.png)});
+   manifestPages.push(Object.freeze({page,width:result.width,height:result.height,rasterSha256:hash(result.png)}));
   }
   canonical=count===1?canonicalScannedPdf(scans[0]):canonicalMultipageScannedPdf(scans);
-  const verified=count===1?readCanonicalScannedPdf(canonical):readCanonicalMultipageScannedPdf(canonical,{page:1});
-  try{if(count!==1&&verified.pageCount!==count)reject();}
-  finally{verified.png.fill(0);}
-  return {pdf:canonical,manifest:Object.freeze({version:1,sourceSha256:hash(source),sourceBytes:source.length,derivedSha256:hash(canonical),derivedBytes:canonical.length,pageCount:count,pages:manifestPages,originalRetained:false,reviewRequired:true,format:'offline-poppler-to-canonical-raster-v1',notice:'Derived copy; original source PDF is not retained by this transform. The converted file is not an original-document authenticity attestation. Text, links, forms and interactive content may be lost.'})};
- }finally{for(const b of scans)b.fill(0);}
+  // Independently read *each* emitted page and verify every manifest anchor.
+  for(let page=1;page<=count;page++){
+   const verified=count===1?readCanonicalScannedPdf(canonical):readCanonicalMultipageScannedPdf(canonical,{page});
+   try{
+    const expected=manifestPages[page-1];
+    if(verified.page!==page||(verified.pageCount??1)!==count||verified.width!==expected.width||verified.height!==expected.height||verified.rasterSha256!==expected.rasterSha256)reject();
+   }finally{verified.png.fill(0);}
+  }
+  return {pdf:canonical,manifest:Object.freeze({version:1,sourceSha256:sourceDigest,sourceBytes:snapshot.length,derivedSha256:hash(canonical),derivedBytes:canonical.length,pageCount:count,pages:Object.freeze(manifestPages),originalRetained:false,reviewRequired:true,format:'offline-poppler-to-canonical-raster-v1',notice:'Derived copy; original source PDF is not retained by this transform. The converted file is not an original-document authenticity attestation. Text, links, forms and interactive content may be lost.'})};
+ }finally{for(const b of scans)b.fill(0);snapshot.fill(0);}
 }

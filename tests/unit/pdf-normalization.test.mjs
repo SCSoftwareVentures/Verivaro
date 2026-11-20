@@ -26,3 +26,16 @@ test('per-page abort and timeouts fail closed; no normalizer renders when prefli
  let invoked=0;await assert.rejects(normalizeExternalPdf(source,{renderer:{inspect:async()=>report(5),render:async()=>{invoked++;return ppm();}},signal:new AbortController().signal}));assert.equal(invoked,0);
  assert.throws(()=>createOfflinePoppler({pdfinfoPath:'pdfinfo'}));assert.throws(()=>createOfflinePoppler({timeoutMs:40000}));
 });
+
+test('caller buffer mutation during asynchronous rendering cannot change normalized bytes or source hash',async()=>{
+ const input=Buffer.from(source),digest=sha(input);let renderDigest;
+ const out=await normalizeExternalPdf(input,{renderer:{
+  inspect:async stable=>{input.fill(0);assert.equal(sha(stable),digest);return report(2);},
+  render:async stable=>{renderDigest=sha(stable);return ppm();}
+ },signal:new AbortController().signal});
+ assert.equal(renderDigest,digest);assert.equal(out.manifest.sourceSha256,digest);assert.equal(out.manifest.pageCount,2);
+ assert.ok(Object.isFrozen(out.manifest));assert.ok(Object.isFrozen(out.manifest.pages));assert.ok(Object.isFrozen(out.manifest.pages[0]));
+ const a=readCanonicalMultipageScannedPdf(out.pdf,{page:1}),b=readCanonicalMultipageScannedPdf(out.pdf,{page:2});
+ try{assert.equal(a.rasterSha256,out.manifest.pages[0].rasterSha256);assert.equal(b.rasterSha256,out.manifest.pages[1].rasterSha256);}
+ finally{a.png.fill(0);b.png.fill(0);}
+});
