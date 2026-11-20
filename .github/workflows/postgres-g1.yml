@@ -1,0 +1,243 @@
+name: PostgreSQL G1 isolation gate
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  postgres-isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci-only
+          POSTGRES_DB: verivaro_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d verivaro_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: ci-only
+      PGDATABASE: verivaro_test
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.16.0'
+      - name: Prepare isolated integration driver
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/vv-live-driver"
+          cp tests/integration/driver/package.json "$RUNNER_TEMP/vv-live-driver/"
+          cp tests/integration/driver/package-lock.json "$RUNNER_TEMP/vv-live-driver/"
+          npm ci --prefix "$RUNNER_TEMP/vv-live-driver" --ignore-scripts --no-audit --no-fund
+      - name: Apply schema and adversarial checks
+        env:
+          VV_CI_PG_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          VV_RUNTIME_PASSWORD="$(openssl rand -hex 32)"
+          echo "::add-mask::$VV_RUNTIME_PASSWORD"
+          export VV_RUNTIME_PASSWORD
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0001_tenant_foundation.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0002_evidence_immutability.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0003_signed_context.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0004_project_access.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0005_identity_sessions.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0006_identity_lifecycle.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/context_fixture.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/tenant_isolation.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/adversarial_permissions.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/privilege_audit.sql
+          bash db/tests/concurrent_scopes.sh
+          # Blocking regression: forged identity must never grant access.
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/identity_spoof_gate.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/signed_context_gate.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/project_access_gate.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/runtime_dedicated_login.sql
+          VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-pool.test.mjs
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/identity_lifecycle_gate.sql
+          # Test the preceding lifecycle migration before applying its stricter successor.
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0007_dual_recovery.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/dual_recovery_gate.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0008_scoped_sharing.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/scoped_sharing_gate.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0009_share_generation.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/share_generation_gate.sql
+          VV_SHARE_PASSWORD="$(openssl rand -hex 32)"
+          echo "::add-mask::$VV_SHARE_PASSWORD"
+          export VV_SHARE_PASSWORD
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/share_gateway_login.sql
+          VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-share-download.test.mjs
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0010_recipient_shares.sql
+          VV_RECIPIENT_PASSWORD="$(openssl rand -hex 32)"
+          echo "::add-mask::$VV_RECIPIENT_PASSWORD"
+          export VV_RECIPIENT_PASSWORD
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/recipient_gateway_login.sql
+          VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-recipient-download.test.mjs
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0011_distributed_admission.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0012_security_monitor.sql
+          VV_ADMISSION_PASSWORD="$(openssl rand -hex 32)"
+          VV_ADMISSION_B_PASSWORD="$(openssl rand -hex 32)"
+          echo "::add-mask::$VV_ADMISSION_PASSWORD"
+          echo "::add-mask::$VV_ADMISSION_B_PASSWORD"
+          export VV_ADMISSION_PASSWORD VV_ADMISSION_B_PASSWORD
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/admission_logins.sql
+          VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-distributed-admission.test.mjs
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/security_monitor_gate.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0013_monitor_dashboard.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0014_alert_outbox.sql
+          VV_MONITOR_WORKER_PASSWORD="$(openssl rand -hex 32)"
+          VV_MONITOR_READER_PASSWORD="$(openssl rand -hex 32)"
+          echo "::add-mask::$VV_MONITOR_WORKER_PASSWORD"
+          echo "::add-mask::$VV_MONITOR_READER_PASSWORD"
+          export VV_MONITOR_WORKER_PASSWORD VV_MONITOR_READER_PASSWORD
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/monitor_logins.sql
+          VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-monitor.test.mjs
+          VV_ALERT_A_PASSWORD="$(openssl rand -hex 32)"
+          VV_ALERT_B_PASSWORD="$(openssl rand -hex 32)"
+          echo "::add-mask::$VV_ALERT_A_PASSWORD"
+          echo "::add-mask::$VV_ALERT_B_PASSWORD"
+          export VV_ALERT_A_PASSWORD VV_ALERT_B_PASSWORD
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/alert_logins.sql
+          VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-alert-outbox.test.mjs
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0015_restore_review.sql
+          VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-service-login.test.mjs
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0016_provider_identity.sql
+          VV_IDENTITY_PASSWORD="$(openssl rand -hex 32)"
+          echo "::add-mask::$VV_IDENTITY_PASSWORD"
+          export VV_IDENTITY_PASSWORD
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/provider_identity_login.sql
+          VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-provider-identity.test.mjs
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0017_browser_auth.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0018_identity_lifecycle_events.sql
+          VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-browser-auth.test.mjs
+          VV_IDENTITY_EVENTS_PASSWORD="$(openssl rand -hex 32)"
+          echo "::add-mask::$VV_IDENTITY_EVENTS_PASSWORD"
+          export VV_IDENTITY_EVENTS_PASSWORD
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/provider_event_login.sql
+          VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-provider-events.test.mjs
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0019_api_admission.sql
+          VV_API_A_PASSWORD="$(openssl rand -hex 32)"
+          VV_API_B_PASSWORD="$(openssl rand -hex 32)"
+          echo "::add-mask::$VV_API_A_PASSWORD"
+          echo "::add-mask::$VV_API_B_PASSWORD"
+          export VV_API_A_PASSWORD VV_API_B_PASSWORD
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/api_admission_logins.sql
+          VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-api-gateway.test.mjs
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0020_project_mutation.sql
+          VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-project-mutation.test.mjs
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0021_evidence_ingestion.sql
+          VV_INGEST_PASSWORD="$(openssl rand -hex 32)"
+          echo "::add-mask::$VV_INGEST_PASSWORD"
+          export VV_INGEST_PASSWORD
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/ingestion_login.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0022_evidence_formats_quotas.sql
+          VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-evidence-ingestion.test.mjs
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0023_evidence_retrieval.sql
+          VV_EVIDENCE_READER_PASSWORD="$(openssl rand -hex 32)"
+          echo "::add-mask::$VV_EVIDENCE_READER_PASSWORD"
+          export VV_EVIDENCE_READER_PASSWORD
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/evidence_reader_login.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0024_evidence_attestation.sql
+          VV_EVIDENCE_AUDITOR_PASSWORD="$(openssl rand -hex 32)"
+          echo "::add-mask::$VV_EVIDENCE_AUDITOR_PASSWORD"
+          export VV_EVIDENCE_AUDITOR_PASSWORD
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/evidence_auditor_login.sql
+          VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-evidence-attestation.test.mjs
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0025_evidence_review_release.sql
+          VV_RELEASE_PASSWORD="$(openssl rand -hex 32)"
+          echo "::add-mask::$VV_RELEASE_PASSWORD"
+          export VV_RELEASE_PASSWORD
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/release_login.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0026_release_workspace.sql
+          VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-evidence-release.test.mjs
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0027_project_administration.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0028_recipient_workspace.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0029_project_lifecycle_report.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0030_bounded_evidence_listing.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0031_tenant_administration.sql
+          VV_TENANT_OPERATOR_PASSWORD="$(openssl rand -hex 32)"
+          echo "::add-mask::$VV_TENANT_OPERATOR_PASSWORD"
+          export VV_TENANT_OPERATOR_PASSWORD
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/tenant_operator_login.sql
+          VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-tenant-administration.test.mjs
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0032_custody_invitations.sql
+          VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-custody-invitations.test.mjs
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0033_requirement_graph.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0034_graph_workspace.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0035_contractiq_sources.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0036_rejection_preflight.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0037_submission_snapshots.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0038_requirement_dependencies.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0039_dependency_removals.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0040_prooflock_records.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0041_prooflock_capture.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0042_prooflock_insights.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0043_prooflock_recovery.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0044_financial_records.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0045_project_chronology.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0046_acknowledgements_tasks.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0047_customer_package_access.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0048_trustproof.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0049_export_templates.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0050_organisation_templates.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0051_lifecycle_archive.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0052_evidence_intelligence.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0053_document_conditions.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0054_batch_import_lineage.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0055_contractiq_obligation_lines.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0056_canonical_multipage_sources.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0057_manual_source_lines.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0058_office_evidence_formats.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0059_office_requirement_sources.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0060_ocr_requirement_sources.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0061_canonical_scanned_pdf.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0062_multipage_image_pdf.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0063_ocr_transcription_corrections.sql
+          VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-requirement-graph.test.mjs
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/full_security_gate.sql
+          # Real encrypted logical backup and isolated recovery; no artifacts uploaded.
+          backup_root="$(mktemp -d)"
+          trap 'rm -rf "$backup_root"' EXIT
+          mkdir -m 700 "$backup_root/spool" "$backup_root/bin"
+          # The runner's default PostgreSQL client may be newer than the server.
+          # Use the exact major version shipped in the disposable service container.
+          test -n "$VV_CI_PG_CONTAINER"
+          for tool in pg_dump pg_restore; do
+            printf '#!/bin/sh\nexec docker exec -i -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -e PGCONNECT_TIMEOUT %s %s "$@"\n' "$VV_CI_PG_CONTAINER" "$tool" > "$backup_root/bin/$tool"
+            chmod 700 "$backup_root/bin/$tool"
+          done
+          export PATH="$backup_root/bin:$PATH"
+          VV_BACKUP_KEY="$(node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64url'))")"
+          echo "::add-mask::$VV_BACKUP_KEY"
+          VV_INSTALLATION_ID="$(node -e "process.stdout.write(require('node:crypto').randomUUID())")"
+          export VV_BACKUP_KEY VV_INSTALLATION_ID
+          node services/database-recovery/main.mjs backup "$backup_root"
+          backup_path="$(find "$backup_root" -maxdepth 1 -type d -name 'backup-*' -print)"
+          test -d "$backup_path"
+          VV_RESTORE_APPROVED=1 VV_RESTORE_SPOOL="$backup_root/spool" node services/database-recovery/main.mjs restore "$backup_path" verivaro_restore_ci
+          psql -X -v ON_ERROR_STOP=1 -d verivaro_restore_ci -f db/tests/restored_database_gate.sql
+          psql -X -v ON_ERROR_STOP=1 -d verivaro_restore_ci -f db/tests/full_security_gate.sql
+          for table in verivaro.tenants verivaro.projects verivaro.evidence verivaro_private.security_incidents verivaro_private.download_leases verivaro_private.project_mutation_receipts verivaro_private.project_mutation_audit verivaro_private.evidence_objects verivaro_private.evidence_access_events verivaro_private.evidence_release_requests verivaro_private.evidence_release_reviews verivaro_private.evidence_release_receipts verivaro_private.project_admin_events verivaro_private.project_archive_receipts verivaro_private.tenant_admin_requests verivaro_private.tenant_transfer_acceptances verivaro_private.tenant_admin_receipts verivaro_private.archive_custody_handover verivaro_private.tenant_invitations verivaro_private.tenant_invitation_cancellations verivaro_private.requirement_versions verivaro_private.requirement_reviews verivaro_private.requirement_evidence_links verivaro_private.requirement_link_reviews verivaro_private.requirement_sources verivaro_private.submission_snapshots verivaro_private.submission_reviews verivaro_private.submission_authorizations verivaro_private.requirement_dependencies verivaro_private.requirement_dependency_reviews verivaro_private.requirement_dependency_removals verivaro_private.requirement_dependency_removal_reviews verivaro_private.prooflock_milestones verivaro_private.prooflock_windows verivaro_private.prooflock_window_reviews verivaro_private.prooflock_capture_receipts verivaro_private.prooflock_alert_policies verivaro_private.prooflock_recovery_proposals verivaro_private.prooflock_recovery_reviews verivaro_private.financial_records verivaro_private.financial_versions verivaro_private.financial_reviews verivaro_private.project_chronology verivaro_private.project_chronology_reviews verivaro_private.acknowledgement_grants verivaro_private.acknowledgement_revocations verivaro_private.acknowledgement_events verivaro_private.resolution_tasks verivaro_private.resolution_task_events verivaro_private.customer_package_grants verivaro_private.customer_package_revocations verivaro_private.customer_package_reads verivaro_private.trustproof_entries verivaro_private.export_template_versions verivaro_private.organisation_template_publications verivaro_private.organisation_template_imports verivaro_private.project_lifecycle_events verivaro_private.evidence_metadata_versions verivaro_private.evidence_metadata_reviews verivaro_private.requirement_document_conditions verivaro_private.evidence_import_lineage; do
+            source_hash="$(psql -X -At -c "SELECT md5(COALESCE(string_agg(row_to_json(t)::text, ',' ORDER BY row_to_json(t)::text),'')) FROM $table t")"
+            restored_hash="$(psql -X -At -d verivaro_restore_ci -c "SELECT md5(COALESCE(string_agg(row_to_json(t)::text, ',' ORDER BY row_to_json(t)::text),'')) FROM $table t")"
+            test "$source_hash" = "$restored_hash"
+          done
+          echo "isolated_restore_content_and_security_gate_passed"
+          # Independent complete synthetic source using the real schema and real object bytes.
+          createdb -w --template=template0 verivaro_bundle_ci
+          pg_dump -w --schema-only --format=custom --dbname=verivaro_test | pg_restore -w --single-transaction --exit-on-error --dbname=verivaro_bundle_ci
+          VV_CI_BACKUP_PATH="$backup_path" VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-evidence-recovery.test.mjs
+          # Disposable PostgreSQL TLS fixture; real certificates and real transport.
+          bash db/tests/service_tls_gate.sh

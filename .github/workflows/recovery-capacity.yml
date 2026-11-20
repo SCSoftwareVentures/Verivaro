@@ -1,0 +1,28 @@
+name: G1 maximum recovery capacity
+on:
+  push:
+    branches: ["engineering/g1-postgres-tenant-foundation-20261119"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  capacity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        capacity: [database, evidence]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.16.0'
+      - name: Full-capacity encrypted recovery
+        env:
+          VV_RECOVERY_STRESS: ${{ matrix.capacity }}
+        run: node --test tests/stress/maximum-recovery.test.mjs

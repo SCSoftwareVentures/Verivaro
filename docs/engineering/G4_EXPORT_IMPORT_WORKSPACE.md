@@ -1,0 +1,7 @@
+# Workbook profile, local CSV mapping and draft cover
+
+The additional immutable workbook-v1 profile contains the existing PDF, CSVs and named evidence originals plus a deterministic OpenXML XLSX workbook with two worksheets. Every cell is an inline string; no formula elements, macros, external relationships or arbitrary paths. The offline verifier regenerates and compares all four derivatives. Earlier profiles remain byte-compatible. The same exact approved snapshot and rechecked authorization are required.
+
+CSV preview is the same bounded parser used in unit tests, embedded as repository-owned browser code. File contents are processed locally, no external request or database write on preview. An explicit row selection fills the existing draft editor; ordinary server-side validation and independent review remain mandatory. One row at a time; bulk creation and source attachment provenance are not provided.
+
+An active graph submitter may download a separate internal PDF cover from the current authorised assessment. Each page is explicitly marked DRAFT - NOT APPROVED; no evidence originals, frozen approval, package hash or recipient release are included. No automatic changes, messages or external services. Custom arbitrary templates, full draft ZIPs, native spreadsheet application rendering and dedicated browser acceptance remain outstanding. Grouped CI remains pending.

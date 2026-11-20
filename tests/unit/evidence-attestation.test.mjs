@@ -1,0 +1,22 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID,randomBytes,generateKeyPairSync} from 'node:crypto';
+import {signEvidenceCheckpoint,verifyEvidenceCheckpoint,verifyEvidenceTransition,compareEvidenceInventory} from '../../src/security/evidence-attestation.mjs';
+test('independent signed custody chain rejects altered/deleted records, rollback and wrong scope',()=>{
+ const {privateKey:signingKey,publicKey:verificationKey}=generateKeyPairSync('ed25519'),installationId=randomUUID(),database='verivaro_test',now=Date.now();
+ const scope={installationId,database,now},record=()=>({id:randomUUID(),digest:randomBytes(32).toString('hex'),encrypted:true});
+ const original=[record(),record()],extended=[...original,record()];
+ const a=signEvidenceCheckpoint({...scope,inventory:original,signingKey,initial:true});
+ const b=signEvidenceCheckpoint({...scope,inventory:extended,signingKey,previous:a});
+ assert.deepEqual(verifyEvidenceTransition({...scope,verificationKey,previous:a,next:b}),{sequence:2,records:3,added:1});
+ assert.equal(compareEvidenceInventory({...scope,verificationKey,...a,inventory:extended}).unattested,1);
+ assert.throws(()=>signEvidenceCheckpoint({...scope,inventory:original.slice(1),signingKey,previous:a}));
+ assert.throws(()=>signEvidenceCheckpoint({...scope,inventory:[{...original[0],digest:'0'.repeat(64)},original[1]],signingKey,previous:a}));
+ assert.throws(()=>signEvidenceCheckpoint({...scope,inventory:original,signingKey}));
+ assert.throws(()=>verifyEvidenceCheckpoint({...scope,verificationKey,...a,checkpoint:b.checkpoint}));
+ assert.throws(()=>verifyEvidenceCheckpoint({...scope,verificationKey,...a,database:'wrong'}));
+ assert.throws(()=>verifyEvidenceCheckpoint({...scope,verificationKey,...a,signature:Buffer.alloc(64)}));
+ assert.throws(()=>verifyEvidenceTransition({...scope,verificationKey,previous:b,next:a}));
+ assert.throws(()=>compareEvidenceInventory({...scope,verificationKey,...b,inventory:original}));
+ assert.throws(()=>verifyEvidenceCheckpoint({...scope,verificationKey,...a,now:now+100,maxAgeMs:99}));
+});

@@ -24,4 +24,93 @@ jobs:
           node-version: '22.16.0'
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
+      - name: Check integration and browser fixture syntax
+        run: |
+          set -euo pipefail
+          for f in tests/integration/*.mjs tests/browser/*.mjs; do node --check "$f"; done
       - run: npm run demo
+      - name: Independent PDF rendering and ZIP verification
+        run: |
+          set -euo pipefail
+          if ! command -v pdftoppm >/dev/null || ! command -v pdftotext >/dev/null; then sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends poppler-utils; fi
+          out="$(mktemp -d)"
+          trap 'rm -rf "$out"' EXIT
+          node tests/fixtures/render-verification-export.mjs "$out"
+          python3 tests/fixtures/verify-rendered-export.py "$out"
+      - name: Actual offline OCR engine on independently rendered synthetic evidence
+        run: |
+          set -euo pipefail
+          if ! command -v tesseract >/dev/null; then sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng; fi
+          out="$(mktemp -d)"
+          trap 'rm -rf "$out"' EXIT
+          node --input-type=module -e "import {canonicalTextPdf} from './src/security/evidence-formats.mjs';import {writeFileSync} from 'node:fs';writeFileSync(process.argv[1],canonicalTextPdf(['Equipment must carry ID.']))" "$out/source.pdf"
+          pdftoppm -f 1 -l 1 -singlefile -r 200 -x 100 -y 60 -W 1050 -H 130 "$out/source.pdf" "$out/source"
+          node tests/fixtures/actual-ocr-engine.mjs "$out/source.ppm"
+      - name: Independent scanned PDF rendering gate
+        run: |
+          set -euo pipefail
+          out="$(mktemp -d)"
+          trap 'rm -rf "$out"' EXIT
+          node tests/fixtures/emit-scanned-pdf.mjs "$out/scan.pdf"
+          pdfinfo "$out/scan.pdf" | grep -Eq '^Pages:[[:space:]]+1$'
+          node tests/fixtures/emit-scanned-pdf.mjs "$out/multipage.pdf" multipage
+          pdfinfo "$out/multipage.pdf" | grep -Eq '^Pages:[[:space:]]+2$'
+          pdftoppm -f 1 -l 2 -r 72 -png "$out/multipage.pdf" "$out/multi"
+          test "$(find "$out" -maxdepth 1 -name 'multi-*.png' | wc -l)" -eq 2
+          pdftoppm -f 1 -l 1 -singlefile -r 72 -png "$out/scan.pdf" "$out/render"
+          test -s "$out/render.png"
+          test "$(pdftotext "$out/scan.pdf" - | tr -d "\\014\\n\\r\\t " | wc -c)" -eq 0
+      - name: Offline OCR transcription accuracy and latency benchmark
+        run: |
+          set -euo pipefail
+          out="$(mktemp -d)"
+          trap 'rm -rf "$out"' EXIT
+          node tests/fixtures/ocr-quality-benchmark.mjs emit "$out"
+          for id in equipment-id valve-tag zone-number inspection-date pressure-interval emergency-access; do
+            pdftoppm -f 1 -l 1 -singlefile -r 200 -x 100 -y 60 -W 1050 -H 130 "$out/$id.pdf" "$out/$id"
+            test -s "$out/$id.ppm"
+          done
+          node tests/fixtures/ocr-quality-benchmark.mjs evaluate "$out"
+      - name: Independently parsed PDF into bounded canonical image evidence
+        run: |
+          set -euo pipefail
+          if ! command -v pdfinfo >/dev/null || ! command -v pdftoppm >/dev/null; then sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends poppler-utils; fi
+          node tests/fixtures/actual-pdf-normalization.mjs
+      - name: Offline OCR scan-quality stress matrix
+        run: |
+          set -euo pipefail
+          out="$(mktemp -d)"
+          trap 'rm -rf "$out"' EXIT
+          node --input-type=module -e "import {canonicalTextPdf} from './src/security/evidence-formats.mjs';import {writeFileSync} from 'node:fs';writeFileSync(process.argv[1],canonicalTextPdf(['Valve V-204 must be checked.']))" "$out/stress.pdf"
+          pdftoppm -f 1 -l 1 -singlefile -r 200 -x 100 -y 60 -W 1050 -H 130 "$out/stress.pdf" "$out/stress"
+          node tests/fixtures/ocr-stress-benchmark.mjs "$out/stress.ppm"
+      - name: PDF worker Linux isolation profile static gate
+        run: |
+          set -euo pipefail
+          node tests/fixtures/pdf-service-isolation-static.mjs
+      - name: PDF worker enforced Linux isolation acceptance
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          command -v sudo
+          command -v systemd-run
+          probe="/run/vv-pdf-iso-probe-$GITHUB_RUN_ID.mjs"
+          sentinel="/tmp/vv-pdf-host-sentinel-$GITHUB_RUN_ID"
+          trap 'sudo rm -f "$probe"; rm -f "$sentinel"' EXIT
+          sudo install -m 644 tests/fixtures/pdf-worker-enforced-probe.mjs "$probe"
+          printf host > "$sentinel"
+          original_net="$(readlink /proc/self/ns/net)"
+          sudo systemd-run --quiet --wait --pipe --collect --unit="vv-pdf-iso-$GITHUB_RUN_ID" \
+            -p User=nobody -p Group=nogroup \
+            -p NoNewPrivileges=yes -p PrivateNetwork=yes \
+            -p RestrictAddressFamilies=AF_UNIX -p PrivateTmp=yes \
+            -p ProtectSystem=strict -p ProtectHome=yes \
+            -p ProtectProc=invisible -p RestrictNamespaces=yes \
+            -p CapabilityBoundingSet= -p AmbientCapabilities= \
+            -p MemoryMax=512M -p CPUQuota=100% -p TasksMax=32 \
+            -p LimitCORE=0 -p SystemCallArchitectures=native \
+            "$(command -v node)" "$probe" "$sentinel" "$original_net"
+      - name: Authenticated PDF worker with actual Poppler through private Unix socket
+        run: |
+          set -euo pipefail
+          node tests/fixtures/actual-pdf-worker.mjs

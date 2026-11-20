@@ -1,0 +1,7 @@
+# ProofLock foundation
+
+Standalone deterministic F15/F16 planning kernel: revision-scoped approved window rules, IANA timezone/explicit offset validation (DST folds require a specified offset, gaps are rejected), elapsed-minute lead time, explicit unknown schedules, due-now/overdue/advisory priority, and schedule revision comparison with elapsed superseded deadlines preserved. No inference that a planned stage happened or evidence was captured on time. Existing requirement assessment is input; a satisfied rule now is not proof of historical timely capture.
+
+The kernel is not yet connected to trusted persistence, API, or mobile workspace. Next: immutable milestone and evidence-window revision/review records; scoped service and browser controls; historical evaluation lineage; then capture, in-app alert deduplication and controlled recovery. The kernel currently calculates superseded history with the supplied current approved window lead and risk; old window versions and historically effective lead-time changes require persistent exact version lineage. Business calendars and statutory date calculations are excluded. No email, deployment, or production claims.
+
+CI also retries signed Ubuntu package index provisioning across official mirror endpoints after the duplicate Chromium run encountered a mirror synchronization mismatch. The browser test itself is not retried or skipped and APT signature verification is unchanged.

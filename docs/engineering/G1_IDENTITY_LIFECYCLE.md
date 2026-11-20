@@ -1,0 +1,9 @@
+# G1 identity lifecycle and account recovery
+
+Candidate implementation, pending exact-head CI. Separate NOLOGIN service roles for ordinary registration/revocation and emergency disable/recovery. The runtime role cannot invoke these controls. Provision separate dedicated credentials through a reviewed deployment; no credentials are bundled.
+
+The trusted identity service must validate the production provider, map its stable issuer/subject to an internal actor, verify fresh authentication time and MFA policy, generate a new random session UUID, and invoke register_session before issuing the local signed token. The database enforces a five-minute authentication freshness window and one-hour session maximum. It does not independently verify the upstream authentication proof. Never accept actor, authenticated_at, approval UUID, or other privileged arguments from untrusted client input.
+
+Disable revokes all sessions and bars registration. Recovery requires a separately authorised recovery service, an externally verified approval and a unique approval UUID; this UUID prevents replay but is not proof of approval or a substitute for MFA. Recovery permanently revokes all previous sessions, sets an authentication-time fence, and does not create a new session. A new upstream authentication after recovery is mandatory. The event table records minimal append-only transition history. Retention and legally required deletion policy, actual IdP integration, dual-control recovery approvals, private credential provisioning, active statement cancellation and independent assessment remain outstanding.
+
+Lifecycle operations use per-actor transaction advisory locks and reject snapshot-isolation transactions. Privileged direct DML must be reserved for controlled migration/incident break-glass; it bypasses the lifecycle service contract. No live identity or customer data used.
