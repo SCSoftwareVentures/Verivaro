@@ -288,15 +288,16 @@ test('persistent graph independently reviews exact versions and links; contradic
    const pending=(await graph.assessment(as('author'))).requirements.find(q=>q.versionId===ma.versionId);
    assert.equal(pending.state,'awaiting_correction_review');assert.equal(pending.criterion,'Inspect equipment.');
    assert.equal(pending.source.correction.proposedText,correction.correctedText);assert.equal(pending.canProposeOcrCorrection,false);
-   const cf={correctionId:correction.correctionId,decision:'rejected',reason:'Could not verify all from the original image.'};
+   const cf={correctionId:correction.correctionId,decision:'rejected',reason:'Could not verify all from the original image.',confirm:true};
    await assert.rejects(graph.reviewOcrCorrection(as('author',cf)),ReleaseDenied);
    await assert.rejects(graph.reviewOcrSource(as('reviewer2',{versionId:ma.versionId,sha256:multiStored.sha256,quoteSha256:mr.quoteSha256,regionDigest:mr.regionDigest,reason:'Attempted bypass',confirm:true})),ReleaseDenied);
+   await assert.rejects(graph.reviewOcrCorrection(as('reviewer2',{...cf,confirm:false})),ReleaseDenied);
    assert.equal(await graph.reviewOcrCorrection(as('reviewer2',cf)),true);
    const rejected=(await graph.assessment(as('author'))).requirements.find(q=>q.versionId===ma.versionId);
    assert.equal(rejected.state,'correction_rejected');assert.equal(rejected.canProposeOcrCorrection,true);
    const replacement={...correction,correctionId:randomUUID(),expectedRevision:1,correctedText:'Inspect equipment carefully.',reason:'Verified final wording on original page.'};
    await graph.proposeOcrCorrection(as('author',replacement));
-   const approved={correctionId:replacement.correctionId,decision:'approved',reason:'Checked exact page and pixel region against correction.'};
+   const approved={correctionId:replacement.correctionId,decision:'approved',reason:'Checked exact page and pixel region against correction.',confirm:true};
    assert.equal(await graph.reviewOcrCorrection(as('reviewer2',approved)),true);
    assert.equal(await graph.reviewOcrCorrection(as('reviewer2',approved)),true);
    const afterCorrection=(await graph.assessment(as('viewer'))).requirements.find(q=>q.versionId===ma.versionId);
