@@ -73,14 +73,14 @@ export function createOcrPreview({retrieve,assessment,recognize}){
  return async(input,{signal}={})=>{
   if(active)throw Error('OCR capacity');active=true;let source,output;
   try{
-   signal.throwIfAborted();if(!(await assessment(input)).canWrite)throw new ReleaseDenied('OCR denied');
+   signal.throwIfAborted();const initial=await assessment(input);if(!initial.canWrite||initial.archived)throw new ReleaseDenied('OCR denied');
    source=await retrieve(input);signal.throwIfAborted();
    if(source.mediaType!=='image/png'||source.sha256!==input.sha256||sha(source.data)!==input.sha256)throw new ReleaseConflict('OCR source mismatch');
    validateEvidence(source.data,'image/png');
    const width=source.data.readUInt32BE(16),height=source.data.readUInt32BE(20);
    output=await recognize(source.data,signal);signal.throwIfAborted();
    const regions=parseOcrTsv(output,{width,height});
-   if(!(await assessment(input)).canWrite)throw new ReleaseDenied('OCR denied');
+   const final=await assessment(input);if(!final.canWrite||final.archived)throw new ReleaseDenied('OCR denied');
    signal.throwIfAborted();
    return {algorithm:'tesseract-eng-psm6-tsv-v1',sha256:input.sha256,width,height,regions,verified:false,reviewRequired:true,warning:'OCR may misread or omit text. Confidence is an engine score, not calibrated probability. Compare each region with the original. No requirement has been imported.'};
   }finally{source?.data?.fill(0);output?.fill?.(0);active=false;}

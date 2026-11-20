@@ -13,6 +13,8 @@ import {createSubmissionPackage} from './submission-package.mjs';
 import {createPortableProjectArchive} from './portable-project-archive.mjs';
 import {createAuditCheckpointSigner} from './signed-audit-checkpoint.mjs';
 import {createContractIQ} from './contractiq-extraction.mjs';
+import {createOcrPreview} from './ocr-preview.mjs';
+import {createOcrSocketClient} from './ocr-socket.mjs';
 import {createGraphWorkspaceApi,isGraphWorkspaceRequest,isGraphWorkspaceMutation} from './graph-workspace-api.mjs';
 import {createReleaseWorkspaceApi,isReleaseWorkspaceRequest,isReleaseWorkspaceMutation} from './release-workspace-api.mjs';
 import {createEvidenceReleaseDatabase,createEvidencePublisher} from './evidence-release.mjs';
@@ -50,10 +52,12 @@ function invalidHeaders(req,host){
 export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,report=()=>{}}){
  if(typeof Pool!=='function')throw Error('missing database driver');
  const cfg=JSON.parse(await readText(configPath,16384));
- const enabled=Object.hasOwn(cfg,'ingestion'),releaseEnabled=Object.hasOwn(cfg,'release');
+ const enabled=Object.hasOwn(cfg,'ingestion'),releaseEnabled=Object.hasOwn(cfg,'release'),ocrEnabled=Object.hasOwn(cfg,'ocr');
+ if(ocrEnabled&&!enabled)throw Error('OCR requires encrypted ingestion');
+ if(ocrEnabled){exact(cfg.ocr,['socketPath','keyFile']);if(cfg.ocr.socketPath!=='/run/verivaro-ocr/worker.sock')throw Error('invalid OCR worker socket');}
  if(releaseEnabled&&!enabled)throw Error('release requires ingestion');
  const serviceRoles={...roles,...(enabled?{ingestion:'verivaro_evidence_ingestor',evidenceReader:'verivaro_evidence_reader'}:{}),...(releaseEnabled?{release:'verivaro_release_service',recipient:'verivaro_recipient_gateway'}:{})};
- exact(cfg,['origin','listenHost','listenPort','tlsKeyFile','tlsCertFile','database','logins','provider','local','secrets',...(enabled?['ingestion']:[]),...(releaseEnabled?['release']:[]),...(Object.hasOwn(cfg,'auditSigning')?['auditSigning']:[])]);
+ exact(cfg,['origin','listenHost','listenPort','tlsKeyFile','tlsCertFile','database','logins','provider','local','secrets',...(enabled?['ingestion']:[]),...(releaseEnabled?['release']:[]),...(Object.hasOwn(cfg,'auditSigning')?['auditSigning']:[]),...(ocrEnabled?['ocr']:[])]);
  if(releaseEnabled){exact(cfg.release,['root']);if(typeof cfg.release.root!=='string'||!isAbsolute(cfg.release.root))throw Error('invalid release root');const s=await lstat(cfg.release.root);if(!s.isDirectory()||(s.mode&0o077)!==0||(typeof process.getuid==='function'&&s.uid!==process.getuid()))throw Error('unsafe release root');}
  if(enabled)exact(cfg.ingestion,['keyId','keyFile','scannerSocket',...(Object.hasOwn(cfg.ingestion,'retiredKeys')?['retiredKeys']:[])]);
  const origin=new URL(cfg.origin);
@@ -63,7 +67,7 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
  exact(cfg.local,['issuer','audience','signingKeyFile']);
  exact(cfg.secrets,['browserKeyFile','contextKeyFile','admissionKeyFile']);
  const pools={},credentials=[],rawKeys=[];
- let server;
+ let server,ocrClient;
  try{
   for(const [name,role] of Object.entries(serviceRoles)){
    const login=cfg.logins[name];exact(login,['user','passwordFile']);
@@ -95,7 +99,7 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
   const scoped=createScopedDatabase(pools.runtime,{verifier,key:contextKey,expectedLogin:cfg.logins.runtime.user,report,indexedEvidence:true});
   const api=createApplicationApi({resolveSession:browser.resolveSession,scoped,admission,verifier,origin:origin.origin});
   const workflow=createEvidenceReleaseDatabase(pools.runtime,{expectedLogin:cfg.logins.runtime.user,verifier,contextKey,mode:'workflow'});
-  let upload,download,publish,extract,assembleSubmission,assemblePortableArchive;
+  let upload,download,publish,extract,ocrPreview,assembleSubmission,assemblePortableArchive;
   if(enabled){
    const evidenceKey=await readKey(cfg.ingestion.keyFile);rawKeys.push(evidenceKey);
    if(rawKeys.slice(0,-1).some(k=>k.equals(evidenceKey)))throw Error('duplicate evidence key');
@@ -118,11 +122,12 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
    }
    upload=createEvidenceUploadHandler({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,ingest});
    extract=createContractIQ({retrieve,workflow});
+   if(ocrEnabled){const ocrKey=await readPrivate(cfg.ocr.keyFile,32);rawKeys.push(ocrKey);if(ocrKey.length!==32||rawKeys.slice(0,-1).some(k=>k.equals(ocrKey)))throw Error('invalid or duplicate OCR key');ocrClient=createOcrSocketClient({socketPath:cfg.ocr.socketPath,key:ocrKey});ocrPreview=createOcrPreview({retrieve,assessment:input=>workflow.assessment(input),recognize:ocrClient});}
    assembleSubmission=createSubmissionPackage({workflow,retrieve});
    assemblePortableArchive=createPortableProjectArchive({workflow,retrieve});
    download=createEvidenceDownloadHandler({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,retrieve});
   }
-  const graph=createGraphWorkspaceApi({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,workflow,extract,assembleSubmission,auditSigner,assemblePortableArchive});
+  const graph=createGraphWorkspaceApi({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,workflow,extract,ocrPreview,assembleSubmission,auditSigner,assemblePortableArchive});
   const workspace=createReleaseWorkspaceApi({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,workflow,publish,uploadsEnabled:enabled});
   const tenantService=createTenantAdministration(pools.runtime,{expectedLogin:cfg.logins.runtime.user,mode:'workspace',verifier,contextKey,trustedIssuer:p.issuer});
   const tenantAdmin=createTenantAdminApi({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,administration:tenantService});
@@ -193,8 +198,8 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
    stop(){if(stopped)return stopped;draining=true;stopped=(async()=>{
     const closing=new Promise(r=>server.close(()=>r()));server.closeIdleConnections();
     const timer=setTimeout(()=>server.closeAllConnections(),5000);timer.unref();
-    try{await closing;await Promise.allSettled([...work]);}finally{clearTimeout(timer);await Promise.all(Object.values(pools).map(p=>p.end()));}
+    try{await closing;await Promise.allSettled([...work]);}finally{clearTimeout(timer);ocrClient?.close();await Promise.all(Object.values(pools).map(p=>p.end()));}
    })();return stopped;}
   });
- }catch(e){for(const k of rawKeys)k.fill(0);server?.close();await Promise.allSettled(Object.values(pools).map(p=>p.end()));throw Error('application startup denied');}
+ }catch(e){ocrClient?.close();for(const k of rawKeys)k.fill(0);server?.close();await Promise.allSettled(Object.values(pools).map(p=>p.end()));throw Error('application startup denied');}
 }

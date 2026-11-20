@@ -29,3 +29,8 @@ test('missing executable and cancellation fail closed',async()=>{
  const run=createTesseractEngine({binaryPath:'/nonexistent/tesseract',timeoutMs:1000}),data=fixturePng();
  await assert.rejects(run(data,new AbortController().signal));const ac=new AbortController();ac.abort();await assert.rejects(run(data,ac.signal));
 });
+
+test('archived assessment blocks the read-only preview before original access',async()=>{
+ const preview=createOcrPreview({assessment:async()=>({canWrite:true,archived:true}),retrieve:async()=>{throw Error('must not retrieve');},recognize:async()=>{throw Error('must not recognize');}});
+ await assert.rejects(preview({sha256:'0'.repeat(64)},{signal:new AbortController().signal}),ReleaseDenied);
+});
