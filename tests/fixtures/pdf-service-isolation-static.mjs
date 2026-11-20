@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {spawnSync} from 'node:child_process';
+const file='services/pdf-worker/verivaro-pdf.service',unit=await readFile(file,'utf8');
+const required=['User=verivaro-pdf','Group=verivaro-pdf-client','NoNewPrivileges=yes','PrivateNetwork=yes','RestrictAddressFamilies=AF_UNIX','ProtectSystem=strict','ProtectHome=yes','PrivateTmp=yes','RestrictNamespaces=yes','ProtectProc=invisible','MemoryMax=512M','TasksMax=32','CPUQuota=100%','LimitCORE=0','CapabilityBoundingSet=','LoadCredential=pdf-key:'];
+for(const line of required)assert.ok(unit.split('\n').includes(line)||line.endsWith(':')&&unit.includes(line),line);
+if(process.platform!=='linux')throw Error('Linux inspection required');
+const cmd=spawnSync('systemd-analyze',['verify',file],{encoding:'utf8',timeout:10000,maxBuffer:65536});
+assert.equal(cmd.error,undefined);
+const msg=(cmd.stdout??'')+(cmd.stderr??'');
+if(cmd.status!==0&&!/not executable|No such file or directory|not found/i.test(msg))throw Error('unit verification failed: '+msg);
+console.log('PDF_SERVICE_STATIC_HARDENING_CHECK '+JSON.stringify({systemdChecked:true,status:cmd.status,detail:msg.slice(0,350),runtimeIsolated:false}));

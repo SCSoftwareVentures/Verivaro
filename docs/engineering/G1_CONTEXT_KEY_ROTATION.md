@@ -4,7 +4,7 @@
 
 ## Current design and evidence
 
-The application signer in `src/security/sign-database-context.mjs` uses a 32-byte HMAC key supplied by trusted service provisioning. PostgreSQL verifies with the singleton `verivaro_private.context_key` table in `db/migrations/0005_identity_sessions.sql`. The v2 envelope binds tenant, actor, session ID, backend PID, transaction ID and an expiry no later than 45 seconds. RLS still checks live session and membership. The runtime role cannot read or update the key. A single-key database verifier provides **no concurrent old/new key grace period**, so changing it deliberately invalidates every outstanding signed envelope.
+The application signer in `src/security/sign-database-context.mjs` uses a 32-byte HMAC key supplied by trusted service provisioning. PostgreSQL verifies with the singleton `verivaro_private.context_key` table in `db/migrations/0003_signed_context.sql` (with session-bound v2 validation introduced by `db/migrations/0005_identity_sessions.sql`). The v2 envelope binds tenant, actor, session ID, backend PID, transaction ID and an expiry no later than 45 seconds. RLS still checks live session and membership. The runtime role cannot read or update the key. A single-key database verifier provides **no concurrent old/new key grace period**, so changing it deliberately invalidates every outstanding signed envelope.
 
 `db/tests/context_key_rotation_gate.sql` is run on an isolated `verivaro_test` CI database. It checks an old envelope works before key replacement, stops authorising after a privileged key update, a newly issued envelope works with the replacement key, and rolling the transaction back restores the fixture. It neither accesses production key material nor changes a production database.
 

@@ -9,3 +9,5 @@
 **Verification:** deterministic fakes test active-content/encryption rejects, page limits, malformed raster, abortion, source/derivative SHA, and canonical output; actual Poppler renderer runs in CI against independently produced two-page text PDF. No real documents, cloud OCR, production deployment or paid infrastructure used.
 
 **Still outstanding:** secure authenticated quarantine ingress, sandbox enforcement on production Linux, document loss review, page fidelity benchmarks, automatic provenance chain of custody linking original and derivative, full-size/scanned photo handling and customer testing. There is no claim of support for *all* PDF variants.
+
+Additional integrity hardening: the converter takes a private input-buffer snapshot before its first asynchronous call, so an external caller cannot silently alter its content during page rendering; snapshot is zeroised on exit. Every emitted raster is re-read from the canonical PDF and checked against the frozen per-page digest manifest. These are syntactic/byte integrity checks, **not** independent evidence-authenticity validation.

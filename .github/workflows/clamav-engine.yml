@@ -29,6 +29,8 @@ jobs:
           trap 'if test -n "$pid"; then kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; fi; rm -rf "$root"' EXIT
           mkdir -m 700 "$root/db"
           printf '%s\n' '44d88612fea8a8f36de82e1278abb02f:68:Verivaro.EICAR.Test' > "$root/db/test.hdb"
+          # Harmless synthetic PDF marker, locally defined as a ClamAV test signature.
+          printf '%s\n' 'Verivaro.PdfQuarantine.Test:0:*:56562d51554152414e54494e452d544553542d5349474e4154555245' > "$root/db/test.ndb"
           printf 'LocalSocket %s\nDatabaseDirectory %s\nForeground yes\nLocalSocketMode 600\nStreamMaxLength 1M\nMaxScanSize 2M\nMaxFileSize 1M\n' "$root/clamd.sock" "$root/db" > "$root/clamd.conf"
           clamd --version
           clamd --config-file="$root/clamd.conf" >"$root/engine.log" 2>&1 &
@@ -39,4 +41,4 @@ jobs:
             sleep 1
           done
           test -S "$root/clamd.sock" || { cat "$root/engine.log"; exit 1; }
-          VV_REAL_CLAMD_SOCKET="$root/clamd.sock" node --test tests/integration/real-clamd.test.mjs
+          VV_REAL_CLAMD_SOCKET="$root/clamd.sock" node --test tests/integration/real-clamd.test.mjs tests/integration/real-pdf-quarantine-clamd.test.mjs
