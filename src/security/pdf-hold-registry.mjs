@@ -7,7 +7,7 @@ const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}
 const sha=/^[a-f0-9]{64}$/;
 const deny=()=>{throw Error('legal-hold registry denied');};
 const keys=(o,fields)=>o&&typeof o==='object'&&!Array.isArray(o)&&Object.keys(o).sort().join('|')===fields.slice().sort().join('|');
-const scope=m=>{if(!m||!uuid.test(m.tenantId)||!uuid.test(m.projectId)||!uuid.test(m.quarantineId)||!sha.test(m.sha256))deny();return Object.freeze({tenantId:m.tenantId,projectId:m.projectId,quarantineId:m.quarantineId,sourceSha256:m.sha256});};
+const scope=m=>{const hash=m?.sha256??m?.sourceSha256;if(!m||!uuid.test(m.tenantId)||!uuid.test(m.projectId)||!uuid.test(m.quarantineId)||!sha.test(hash)||(m.sha256!==undefined&&m.sourceSha256!==undefined&&m.sha256!==m.sourceSha256))deny();return Object.freeze({tenantId:m.tenantId,projectId:m.projectId,quarantineId:m.quarantineId,sourceSha256:hash});};
 const clean=s=>typeof s==='string'&&s.length>=8&&s.length<=256&&s===s.trim()&&!/[\x00-\x1f\x7f-\x9f]/u.test(s);
 const iso=s=>typeof s==='string'&&Number.isFinite(Date.parse(s))&&new Date(s).toISOString()===s;
 const mac=(k,v)=>createHmac('sha256',k).update(v).digest('hex');

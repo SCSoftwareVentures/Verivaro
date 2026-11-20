@@ -24,7 +24,8 @@ test('default unknown, cross-instance exclusion and explicit independently autho
   allowed=true;
   const release=await a.recordHoldChange(m,{actorId:id(),held:false,reason:'Authorized registry hold release',signal:signal()});
   assert.equal(release.sequence,2);
-  assert.equal(await b.withExclusiveHoldLock(m,()=>b.holdLookup(m,signal()),signal()),false);
+  assert.equal(await b.withExclusiveHoldLock(m,()=>b.holdLookup({...m,sourceSha256:m.sha256,sha256:undefined},signal()),signal()),false);
+  await assert.rejects(b.withExclusiveHoldLock(m,()=>b.holdLookup({...m,sourceSha256:'0'.repeat(64)},signal()),signal()));
   await assert.rejects(a.recordHoldChange(m,{actorId:id(),held:false,reason:'Duplicate hold release request',signal:signal()}));
  }finally{a.close();b.close();key.fill(0);await rm(root,{recursive:true,force:true});}
 });
