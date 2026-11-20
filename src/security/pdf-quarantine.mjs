@@ -1,6 +1,6 @@
 // Standalone operator-only encrypted quarantine for *untrusted original* PDF bytes.
 // This is NOT an application's public upload store or evidence admission bypass.
-import {open,lstat,unlink} from 'node:fs/promises';
+import {open,lstat,unlink,rename} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {join,isAbsolute} from 'node:path';
 import {createCipheriv,createDecipheriv,createHash,randomBytes,randomUUID,timingSafeEqual} from 'node:crypto';
@@ -16,8 +16,8 @@ async function checkRoot(root){
  const s=await lstat(root);
  if(!s.isDirectory()||(s.mode&0o077)!==0||(typeof process.getuid==='function'&&s.uid!==process.getuid()))fail();
 }
-export function createOriginalPdfQuarantine({root,key,keyId,scan}={}){
- if(typeof root!=='string'||!isAbsolute(root)||root.length>250||/[\x00-\x1f]/.test(root)||!Buffer.isBuffer(key)||key.length!==32||typeof scan!=='function'||typeof keyId!=='string'||!/^[a-z][a-z0-9_-]{0,31}$/.test(keyId)||!constants.O_NOFOLLOW)fail();
+export function createOriginalPdfQuarantine({root,key,keyId,scan,retentionGate}={}){
+ if(typeof root!=='string'||!isAbsolute(root)||root.length>250||/[\x00-\x1f]/.test(root)||!Buffer.isBuffer(key)||key.length!==32||typeof scan!=='function'||typeof keyId!=='string'||!/^[a-z][a-z0-9_-]{0,31}$/.test(keyId)||!constants.O_NOFOLLOW||(retentionGate!==undefined&&typeof retentionGate!=='function'))fail();
  const secret=Buffer.from(key);let busy=false,closed=false;
  async function gate(fn){
   if(closed||busy)fail();busy=true;
@@ -25,6 +25,9 @@ export function createOriginalPdfQuarantine({root,key,keyId,scan}={}){
   finally{busy=false;}
  }
  const location=quarantineId=>join(root,quarantineId+'.vvq');
+ const deletionIntent=quarantineId=>join(root,quarantineId+'.delete-intent');
+ const deletedReceipt=quarantineId=>join(root,quarantineId+'.deleted');
+ async function assertNotDeleting(quarantineId){try{await lstat(deletionIntent(quarantineId));fail();}catch(e){if(e.code!=='ENOENT')throw e;}}
  async function put({source,tenantId,projectId,signal}){
   return gate(async()=>{
    if(!id.test(tenantId)||!id.test(projectId)||!pdf(source)||!signal)fail();
@@ -51,6 +54,7 @@ export function createOriginalPdfQuarantine({root,key,keyId,scan}={}){
   return gate(async()=>{
    if(!valid(meta)||meta.keyId!==keyId||!signal)fail();
    signal.throwIfAborted();
+   await assertNotDeleting(meta.quarantineId);
    const path=location(meta.quarantineId);
    const handle=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
    let encrypted,plain;
@@ -70,5 +74,35 @@ export function createOriginalPdfQuarantine({root,key,keyId,scan}={}){
    }finally{plain?.fill(0);encrypted?.fill(0);await handle.close();}
   });
  }
- return Object.freeze({put,read,close(){closed=true;secret.fill(0);}});
+ async function destroy(meta,{authorization,signal}={}){
+  return gate(async()=>{
+   if(!retentionGate||!valid(meta)||meta.keyId!==keyId||!signal)fail();
+   signal.throwIfAborted();
+   await assertNotDeleting(meta.quarantineId);
+   const originalPath=location(meta.quarantineId),intentPath=deletionIntent(meta.quarantineId);
+   const target=await open(originalPath,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+   let before;
+   try{
+    before=await target.stat();
+    if(!before.isFile()||(before.mode&0o077)!==0||(typeof process.getuid==='function'&&before.uid!==process.getuid())||before.size!==meta.bytes+28)fail();
+   }finally{await target.close();}
+   if(await retentionGate(meta,authorization,signal)!==true)fail();
+   signal.throwIfAborted();
+   // Write-ahead intent makes interrupted deletions deny future reads.
+   const record=Buffer.from(JSON.stringify({version:1,kind:'original-pdf-delete-intent',quarantineId:meta.quarantineId,tenantId:meta.tenantId,projectId:meta.projectId,sha256:meta.sha256,authorizationSha256:digest(Buffer.from(JSON.stringify(authorization))),issuedAt:new Date().toISOString()}));
+   const f=await open(intentPath,constants.O_CREAT|constants.O_EXCL|constants.O_WRONLY|constants.O_NOFOLLOW|constants.O_SYNC,0o600);
+   try{await f.writeFile(record);await f.sync();}finally{await f.close();record.fill(0);}
+   const directory=await open(root,constants.O_RDONLY|constants.O_DIRECTORY|constants.O_NOFOLLOW);
+   try{
+    await directory.sync();
+    signal.throwIfAborted();
+    const same=await lstat(originalPath);
+    if(same.dev!==before.dev||same.ino!==before.ino||same.size!==before.size||!same.isFile())fail();
+    await unlink(originalPath);await directory.sync();
+    await rename(intentPath,deletedReceipt(meta.quarantineId));await directory.sync();
+    return Object.freeze({deleted:true,quarantineId:meta.quarantineId,originalSha256:meta.sha256,receiptName:meta.quarantineId+'.deleted'});
+   }finally{await directory.close();}
+  });
+ }
+ return Object.freeze({put,read,...(retentionGate?{destroy}:{}),close(){closed=true;secret.fill(0);}});
 }
