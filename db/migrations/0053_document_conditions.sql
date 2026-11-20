@@ -85,7 +85,7 @@ REVOKE ALL ON FUNCTION verivaro_verification.pin_document_condition(uuid,uuid,uu
 GRANT EXECUTE ON FUNCTION verivaro_verification.pin_document_condition(uuid,uuid,uuid,uuid,text,text,text,text,text) TO verivaro_runtime;
 CREATE OR REPLACE FUNCTION verivaro_private.dependency_assessment(t uuid,p uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog,verivaro_private AS $evaluate$
-DECLARE g jsonb;done jsonb:='{}'::jsonb;outcome jsonb;remaining integer;progress integer;q jsonb;item jsonb;deps jsonb;parent jsonb;d record;failed boolean;local_text jsonb;rid text;fp text;
+DECLARE g jsonb;done jsonb:='{}'::jsonb;outcome jsonb;remaining integer;progress integer;q jsonb;item jsonb;deps jsonb;removals jsonb;parent jsonb;d record;failed boolean;local_text jsonb;rid text;fp text;
 BEGIN
  g:=verivaro_private.local_assessment(t,p);
  remaining:=jsonb_array_length(g->'requirements');
@@ -107,6 +107,13 @@ BEGIN
    IF jsonb_array_length(deps)>0 THEN
     item:=item||jsonb_build_object('dependencyPins',deps,'localState',q->>'state');
     IF failed AND q->>'state'<>'integrity_failure' THEN item:=jsonb_set(item,'{state}','"dependency_blocked"'::jsonb);END IF;
+   END IF;
+   SELECT COALESCE(jsonb_agg(jsonb_build_object('removalId',m.removal_id,'prerequisiteId',m.prerequisite_id,'historicalEdgeId',m.historical_edge_id,'proposalReason',m.reason,'decision',COALESCE(rv.decision,'pending'),'reviewReason',rv.reason) ORDER BY m.prerequisite_id),'[]'::jsonb)
+   INTO removals FROM verivaro_private.requirement_dependency_removals m LEFT JOIN verivaro_private.requirement_dependency_removal_reviews rv USING(removal_id)
+   WHERE m.tenant_id=t AND m.project_id=p AND m.version_id=(q->>'versionId')::uuid;
+   IF jsonb_array_length(removals)>0 THEN
+    item:=item||jsonb_build_object('dependencyRemovals',removals,'localState',q->>'state');
+    IF EXISTS(SELECT 1 FROM jsonb_array_elements(removals) r WHERE r->>'decision'<>'approved') AND q->>'state'<>'integrity_failure' THEN item:=jsonb_set(item,'{state}','"dependency_blocked"'::jsonb);END IF;
    END IF;
    local_text:=(item-'canRevise'-'canReview'-'canLink'-'links')||jsonb_build_object('links',COALESCE((SELECT jsonb_agg(x-'canReview' ORDER BY x->>'linkId') FROM jsonb_array_elements(item->'links') x),'[]'::jsonb));
    fp:=encode(verivaro_private.digest(convert_to(jsonb_build_array(t,p,local_text)::text,'UTF8'),'sha256'),'hex');
