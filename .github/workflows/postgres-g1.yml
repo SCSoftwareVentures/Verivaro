@@ -232,13 +232,28 @@ jobs:
           # Discover all migrated application tables; a new table must not bypass
           # synthetic restore comparison merely because an allowlist was not updated.
           table_query="SELECT format('%I.%I', n.nspname, c.relname) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname LIKE 'verivaro%' AND c.relkind IN ('r','p') ORDER BY 1"
-          source_tables="$(psql -X -v ON_ERROR_STOP=1 -At -c "$table_query")"
-          restored_tables="$(psql -X -v ON_ERROR_STOP=1 -At -d verivaro_restore_ci -c "$table_query")"
+          source_tables="$(psql -X -v ON_ERROR_STOP=1 -At -c "$table_query" | LC_ALL=C sort)"
+          restored_tables="$(psql -X -v ON_ERROR_STOP=1 -At -d verivaro_restore_ci -c "$table_query" | LC_ALL=C sort)"
           test -n "$source_tables"
-          test "$source_tables" = "$restored_tables"
+          # Quarantine intentionally creates these three restore-only tables. All
+          # original tables must survive, and no other new tables are permitted.
+          missing_tables="$(comm -23 <(printf '%s\n' "$source_tables") <(printf '%s\n' "$restored_tables"))"
+          added_tables="$(comm -13 <(printf '%s\n' "$source_tables") <(printf '%s\n' "$restored_tables"))"
+          expected_added="$(printf '%s\n' verivaro_private.restore_quarantine verivaro_private.restoration_reviews verivaro_private.restoration_evidence_receipt | LC_ALL=C sort)"
+          test -z "$missing_tables"
+          test "$added_tables" = "$expected_added"
           table_count=0
+          skipped_quarantine_tables=0
           while IFS= read -r table; do
             test -n "$table"
+            # Quarantine revokes/rotates/clears precisely these stateful controls.
+            # Compare their post-restore invariants in restored_database_gate.sql,
+            # not raw row hashes. Future mutations must update this audited list.
+            case "$table" in
+              verivaro_private.identity_sessions|verivaro_private.identity_events|verivaro_private.disabled_actors|verivaro_private.recovery_operators|verivaro_private.login_challenges|verivaro_private.browser_flows|verivaro_private.browser_sessions|verivaro_private.auth_telemetry|verivaro_private.api_rate_keys|verivaro_private.api_rate_state|verivaro_private.share_grants|verivaro_private.share_events|verivaro_private.released_exports|verivaro_private.context_key|verivaro_private.alert_outbox|verivaro_private.monitor_state)
+                skipped_quarantine_tables=$((skipped_quarantine_tables+1))
+                continue ;;
+            esac
             source_hash="$(psql -X -v ON_ERROR_STOP=1 -At -c "SELECT md5(COALESCE(string_agg(row_to_json(t)::text, ',' ORDER BY row_to_json(t)::text),'')) FROM $table t")"
             restored_hash="$(psql -X -v ON_ERROR_STOP=1 -At -d verivaro_restore_ci -c "SELECT md5(COALESCE(string_agg(row_to_json(t)::text, ',' ORDER BY row_to_json(t)::text),'')) FROM $table t")"
             test "$source_hash" = "$restored_hash"
@@ -246,7 +261,9 @@ jobs:
           done <<< "$source_tables"
           # Verify sequence state as well as table rows. A restored identity
           # sequence at the wrong position can produce duplicate IDs later.
-          sequence_query="SELECT format('%I.%I', n.nspname, c.relname) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname LIKE 'verivaro%' AND c.relkind='S' ORDER BY 1"
+          # Identity-event and sharing-event sequences advance during quarantine;
+          # preserve and compare all other sequence positions and definitions.
+          sequence_query="SELECT format('%I.%I', n.nspname, c.relname) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname LIKE 'verivaro%' AND c.relkind='S' AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend d JOIN pg_catalog.pg_class owner_table ON owner_table.oid=d.refobjid JOIN pg_catalog.pg_namespace owner_ns ON owner_ns.oid=owner_table.relnamespace WHERE d.objid=c.oid AND d.deptype IN ('a','i') AND format('%I.%I', owner_ns.nspname, owner_table.relname) IN ('verivaro_private.identity_events','verivaro_private.share_events')) ORDER BY 1"
           source_sequences="$(psql -X -v ON_ERROR_STOP=1 -At -c "$sequence_query")"
           restored_sequences="$(psql -X -v ON_ERROR_STOP=1 -At -d verivaro_restore_ci -c "$sequence_query")"
           test "$source_sequences" = "$restored_sequences"
@@ -260,7 +277,7 @@ jobs:
               sequence_count=$((sequence_count+1))
             done <<< "$source_sequences"
           fi
-          echo "restore_catalog_verified tables=$table_count sequences=$sequence_count"
+          echo "restore_catalog_verified preserved_tables=$table_count quarantine_mutable_tables=$skipped_quarantine_tables sequences=$sequence_count"
           echo "isolated_restore_content_and_security_gate_passed"
           # Independent complete synthetic source using the real schema and real object bytes.
           createdb -w --template=template0 verivaro_bundle_ci
