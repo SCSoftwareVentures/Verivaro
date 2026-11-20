@@ -39,6 +39,14 @@ test('unknown malware verdict and mutable scanner input fail closed before file 
  const changed=createOriginalPdfQuarantine({root,key,keyId:'pdf',scan:async b=>{b[20]^=1;return 'clean';}});
  try{await assert.rejects(changed.put({...s,source,signal}));assert.deepEqual(await (await import('node:fs/promises')).readdir(root),[]);}finally{changed.close();key.fill(0);await rm(root,{recursive:true,force:true});}
 });
+test('aborted scan and post-write cancellation leave no untracked original file',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'vv-rawpdf-')),key=randomBytes(32),s=scope(),controller=new AbortController();
+ const aborted=createOriginalPdfQuarantine({root,key,keyId:'scan',scan:async()=>{controller.abort();return 'clean';}});
+ try{
+  await assert.rejects(aborted.put({...s,source,signal:controller.signal}));
+  assert.deepEqual(await (await import('node:fs/promises')).readdir(root),[]);
+ }finally{aborted.close();key.fill(0);await rm(root,{force:true,recursive:true});}
+});
 test('receipt binds retained original and derivative under an independent Ed25519 trust key',async()=>{
  const root=await mkdtemp(join(tmpdir(),'vv-rawpdf-')),key=randomBytes(32),pair=generateKeyPairSync('ed25519'),signal=new AbortController().signal;
  const vault=createOriginalPdfQuarantine({root,key,keyId:'original',scan:async()=> 'clean'});

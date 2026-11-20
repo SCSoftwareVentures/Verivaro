@@ -1,6 +1,6 @@
 // Standalone operator-only encrypted quarantine for *untrusted original* PDF bytes.
 // This is NOT an application's public upload store or evidence admission bypass.
-import {open,lstat,stat} from 'node:fs/promises';
+import {open,lstat,unlink} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {join,isAbsolute} from 'node:path';
 import {createCipheriv,createDecipheriv,createHash,randomBytes,randomUUID,timingSafeEqual} from 'node:crypto';
@@ -30,7 +30,7 @@ export function createOriginalPdfQuarantine({root,key,keyId,scan}={}){
    if(!id.test(tenantId)||!id.test(projectId)||!pdf(source)||!signal)fail();
    signal.throwIfAborted();
    const original=Buffer.from(source),before=digest(original);
-   let encrypted,handle;
+   let encrypted,handle,filePath,created=false,committed=false;
    try{
     const verdict=await scan(original,signal);
     signal.throwIfAborted();
@@ -38,13 +38,13 @@ export function createOriginalPdfQuarantine({root,key,keyId,scan}={}){
     const meta={quarantineId:randomUUID(),tenantId,projectId,sha256:before,bytes:original.length,keyId};
     const nonce=randomBytes(12),cipher=createCipheriv('aes-256-gcm',secret,nonce);
     cipher.setAAD(aad(meta));encrypted=Buffer.concat([nonce,cipher.update(original),cipher.final(),cipher.getAuthTag()]);
-    const path=location(meta.quarantineId);
+    filePath=location(meta.quarantineId);
     // Server-generated UUID name, new file only; any collision or symlink fails.
-    handle=await open(path,constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW|constants.O_SYNC,0o600);
+    handle=await open(filePath,constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW|constants.O_SYNC,0o600);created=true;
     try{let off=0;while(off<encrypted.length){const r=await handle.write(encrypted,off,encrypted.length-off,off);if(r.bytesWritten<1)fail();off+=r.bytesWritten;}await handle.sync();}
     finally{await handle.close();handle=undefined;}
-    signal.throwIfAborted();return Object.freeze(meta);
-   }finally{original.fill(0);encrypted?.fill(0);if(handle)await handle.close();}
+    signal.throwIfAborted();committed=true;return Object.freeze(meta);
+   }finally{original.fill(0);encrypted?.fill(0);if(handle)await handle.close();if(created&&!committed)try{await unlink(filePath);}catch{ /* quarantine cleanup must be administratively reconciled on storage failure */ }}
   });
  }
  async function read(meta,{signal}={}){
