@@ -60,3 +60,14 @@ jobs:
           pdftoppm -f 1 -l 1 -singlefile -r 72 -png "$out/scan.pdf" "$out/render"
           test -s "$out/render.png"
           test "$(pdftotext "$out/scan.pdf" - | tr -d "\\014\\n\\r\\t " | wc -c)" -eq 0
+      - name: Offline OCR transcription accuracy and latency benchmark
+        run: |
+          set -euo pipefail
+          out="$(mktemp -d)"
+          trap 'rm -rf "$out"' EXIT
+          node tests/fixtures/ocr-quality-benchmark.mjs emit "$out"
+          for id in equipment-id valve-tag zone-number inspection-date pressure-interval emergency-access; do
+            pdftoppm -f 1 -l 1 -singlefile -r 200 -x 100 -y 60 -W 1050 -H 130 "$out/$id.pdf" "$out/$id"
+            test -s "$out/$id.ppm"
+          done
+          node tests/fixtures/ocr-quality-benchmark.mjs evaluate "$out"
