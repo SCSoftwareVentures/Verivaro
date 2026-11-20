@@ -203,7 +203,7 @@ test('persistent graph independently reviews exact versions and links; contradic
   try{
    const retrieve=createEvidenceReader(readerPool,{expectedLogin:'vv_ci_evidence_reader',verifier,contextKey,readKey:async()=>graphKey});
    const extract=createContractIQ({retrieve,workflow:graph});
-   const pdf=canonicalPagedTextPdf([Array(40).fill('Introduction'),['Equipment must carry ID.','Inspection is mandatory.']]);
+   const pdf=canonicalPagedTextPdf([Array(40).fill('Introduction'),['Equipment must carry ID.','Inspection is mandatory.']],{compressed:true});
    const obj=await ingest(as('author',{data:pdf,mediaType:'application/pdf',requestId:randomUUID(),signal}));
    const source=as('author',{evidenceId:obj.id,sha256:obj.sha256});
    const result=await extract(source,{signal});assert.deepEqual(result.candidates.map(c=>[c.line,c.page,c.algorithm]),[[41,2,'modal-line-v1'],[42,2,'obligation-line-v2']]);

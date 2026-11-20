@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomBytes,randomUUID} from 'node:crypto';
+import {deflateSync} from 'node:zlib';
 import {canonicalTextPdf,canonicalPagedTextPdf,readCanonicalPdfPages,validatePdf,validatePng} from '../../src/security/evidence-formats.mjs';
 import {fixturePng} from '../fixtures/evidence-formats-fixture.mjs';
 import {sealEvidence,openEvidence,validateEvidence} from '../../src/security/evidence-objects.mjs';
@@ -26,4 +27,32 @@ test('canonical multi-page PDF preserves page order and denies altered graph, ov
  assert.throws(()=>canonicalPagedTextPdf([Array(41).fill('a')]));
  assert.throws(()=>canonicalPagedTextPdf([[]]));
  const max=Array.from({length:32},()=>Array(40).fill('a'.repeat(90)));assert.deepEqual(readCanonicalPdfPages(canonicalPagedTextPdf(max)),max);
+});
+
+test('FlateDecode PDF accepts independent compression levels and exact escaped literal text',()=>{
+ const pages=[['A (test) must include C:\\docs.','Delivery must be < 5 days & documented.'],['No substitution is permitted.']];
+ for(const level of [0,1,6,9]){
+  const pdf=canonicalPagedTextPdf(pages,{compressed:true,level});
+  assert.deepEqual(readCanonicalPdfPages(pdf),pages);assert.deepEqual(validatePdf(pdf),pdf);
+  const start=pdf.indexOf(Buffer.from('stream\n'))+7,altered=Buffer.from(pdf);altered[start]^=255;
+  assert.throws(()=>validatePdf(altered));assert.throws(()=>validatePdf(Buffer.concat([pdf,Buffer.from('tail')])));
+ }
+ assert.deepEqual(readCanonicalPdfPages(canonicalPagedTextPdf(pages)),pages);
+ const raw=canonicalPagedTextPdf([['Work must comply.']]);
+ assert.throws(()=>validatePdf(Buffer.from(raw.toString().replace('Work must comply.','Work (must) comply.'))));
+});
+// Replace a single compressed stream and independently rebuild xref by exact byte offsets.
+function replaceCompressedPayload(pdf,payload){
+ let s=pdf.toString('latin1'),m=/<< \/Length (\d+) \/Filter \/FlateDecode >>\nstream\n/.exec(s),start=m.index+m[0].length,end=start+Number(m[1]);
+ s=s.slice(0,m.index)+'<< /Length '+payload.length+' /Filter /FlateDecode >>\nstream\n'+payload.toString('latin1')+s.slice(end);
+ const x=s.lastIndexOf('\nxref\n')+1,body=s.slice(0,x),offsets=[...body.matchAll(/^\d+ 0 obj$/gm)].map(m=>m.index);
+ return Buffer.from(body+'xref\n0 '+(offsets.length+1)+'\n0000000000 65535 f \n'+offsets.map(x=>String(x).padStart(10,'0')+' 00000 n \n').join('')+'trailer\n<< /Size '+(offsets.length+1)+' /Root 1 0 R >>\nstartxref\n'+x+'\n%%EOF\n','latin1');
+}
+test('compressed streams reject expansion bombs, trailing deflate members and extra PDF operators',()=>{
+ const pdf=canonicalPagedTextPdf([['Work must comply.']],{compressed:true});
+ const valid=deflateSync(Buffer.from('BT\n/F1 12 Tf\n50 750 Td\n(Work must comply.) Tj\nET\n'));
+ for(const payload of [deflateSync(Buffer.alloc(100000,65)),Buffer.concat([valid,Buffer.from('tail')]),Buffer.concat([valid,valid]),deflateSync(Buffer.from('BT\n/F1 12 Tf\n50 750 Td\n(Work must comply.) Tj\n/JavaScript Do\nET\n'))]){
+  assert.throws(()=>validatePdf(replaceCompressedPayload(pdf,payload)));
+ }
+ assert.deepEqual(readCanonicalPdfPages(replaceCompressedPayload(pdf,valid)),[['Work must comply.']]);
 });

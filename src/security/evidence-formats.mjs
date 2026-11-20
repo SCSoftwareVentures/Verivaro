@@ -1,4 +1,4 @@
-import {inflateSync} from 'node:zlib';
+import {inflateSync,deflateSync} from 'node:zlib';
 const signature=Buffer.from([137,80,78,71,13,10,26,10]);
 const crcTable=Array.from({length:256},(_,i)=>{let c=i;for(let j=0;j<8;j++)c=c&1?0xedb88320^(c>>>1):c>>>1;return c>>>0;});
 export function crc32(b){let c=0xffffffff;for(const v of b)c=crcTable[(c^v)&255]^(c>>>8);return (c^0xffffffff)>>>0;}
@@ -27,38 +27,57 @@ export function validatePng(b){
  for(let i=0;i<buffer.length;i+=stride)if(buffer[i]>4)throw Error('invalid PNG filter');
  return b;
 }
-// Canonical PDF subset: up to 32 pages of uncompressed ASCII text.
-// Existing single-page representation remains byte-for-byte compatible.
-// Byte-exact reconstruction rejects arbitrary object graphs and active content.
+// Bounded, byte-exact PDF allowlist. Plain legacy files remain unchanged.
 export const PDF_MAX_PAGES=32,PDF_MAX_LINES_PER_PAGE=40;
-const pdfLine=/^[A-Za-z0-9 .,!?_:;@+\/-]{1,90}$/;
-export function canonicalTextPdf(lines){return canonicalPagedTextPdf([lines]);}
-export function canonicalPagedTextPdf(pages){
- if(!Array.isArray(pages)||pages.length<1||pages.length>PDF_MAX_PAGES||pages.some(lines=>!Array.isArray(lines)||lines.length<1||lines.length>PDF_MAX_LINES_PER_PAGE||Array.from(lines).some(x=>typeof x!=='string'||!pdfLine.test(x))))throw Error('unsupported PDF text');
- const pageIds=pages.map((_,i)=>i===0?3:4+2*i);
- const objs=['<< /Type /Catalog /Pages 2 0 R >>','<< /Type /Pages /Kids ['+pageIds.map(id=>id+' 0 R').join(' ')+'] /Count '+pages.length+' >>'];
- for(let i=0;i<pages.length;i++){
-  const pageId=pageIds[i],contentId=i===0?5:pageId+1,lines=pages[i];
-  const stream='BT\n/F1 12 Tf\n50 750 Td\n'+lines.map((s,j)=>(j?'0 -16 Td\n':'')+'('+s+') Tj\n').join('')+'ET\n';
+const PDF_MAX_INFLATED_PAGE=8192,PDF_MAX_BYTES=262144;
+const pdfLine=/^[\x20-\x7e]{1,90}$/;
+const escapeLine=s=>s.replace(/[()\\]/g,c=>'\\'+c);
+function pageStream(lines){
+ if(!Array.isArray(lines)||lines.length<1||lines.length>PDF_MAX_LINES_PER_PAGE||Array.from(lines).some(x=>typeof x!=='string'||!pdfLine.test(x)))throw Error('unsupported PDF text');
+ return 'BT\n/F1 12 Tf\n50 750 Td\n'+lines.map((s,j)=>(j?'0 -16 Td\n':'')+'('+escapeLine(s)+') Tj\n').join('')+'ET\n';
+}
+function buildPdf(streams){
+ if(!Array.isArray(streams)||streams.length<1||streams.length>PDF_MAX_PAGES)throw Error('unsupported PDF pages');
+ const pageIds=streams.map((_,i)=>i===0?3:4+2*i);
+ const objs=['<< /Type /Catalog /Pages 2 0 R >>','<< /Type /Pages /Kids ['+pageIds.map(id=>id+' 0 R').join(' ')+'] /Count '+streams.length+' >>'];
+ for(let i=0;i<streams.length;i++){
+  const pageId=pageIds[i],contentId=i===0?5:pageId+1,{encoded,compressed}=streams[i];
   objs[pageId-1]='<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents '+contentId+' 0 R >>';
-  objs[contentId-1]='<< /Length '+Buffer.byteLength(stream)+' >>\nstream\n'+stream+'endstream';
+  objs[contentId-1]='<< /Length '+encoded.length+(compressed?' /Filter /FlateDecode':'')+' >>\nstream\n'+encoded+(compressed?'\n':'')+'endstream';
  }
  objs[3]='<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';
  let out='%PDF-1.4\n',offsets=[];
- for(let i=0;i<objs.length;i++){offsets.push(Buffer.byteLength(out));out+=(i+1)+' 0 obj\n'+objs[i]+'\nendobj\n';}
- const xref=Buffer.byteLength(out),count=objs.length+1;
+ for(let i=0;i<objs.length;i++){offsets.push(out.length);out+=(i+1)+' 0 obj\n'+objs[i]+'\nendobj\n';}
+ const xref=out.length,count=objs.length+1;
  out+='xref\n0 '+count+'\n0000000000 65535 f \n'+offsets.map(x=>String(x).padStart(10,'0')+' 00000 n \n').join('')+'trailer\n<< /Size '+count+' /Root 1 0 R >>\nstartxref\n'+xref+'\n%%EOF\n';
- return Buffer.from(out);
+ if(out.length>PDF_MAX_BYTES)throw Error('unsupported PDF size');
+ return Buffer.from(out,'latin1');
+}
+export function canonicalTextPdf(lines){return canonicalPagedTextPdf([lines]);}
+export function canonicalPagedTextPdf(pages,{compressed=false,level=6}={}){
+ if(!Array.isArray(pages)||pages.length<1||pages.length>PDF_MAX_PAGES||typeof compressed!=='boolean'||!Number.isInteger(level)||level<0||level>9)throw Error('unsupported PDF pages');
+ return buildPdf(Array.from(pages,lines=>{const plain=pageStream(lines);return {encoded:compressed?deflateSync(Buffer.from(plain,'ascii'),{level}).toString('latin1'):plain,compressed};}));
 }
 export function readCanonicalPdfPages(b){
- if(!Buffer.isBuffer(b)||b.length<1||b.length>262144)throw Error('unsupported PDF size');
- const s=b.toString('latin1'),pages=[];
- for(const stream of s.matchAll(/^stream\nBT\n\/F1 12 Tf\n50 750 Td\n([\s\S]*?)^ET\nendstream$/gm)){
+ if(!Buffer.isBuffer(b)||b.length<1||b.length>PDF_MAX_BYTES)throw Error('unsupported PDF size');
+ const s=b.toString('latin1'),pages=[],streams=[];
+ const header=/^<< \/Length (0|[1-9][0-9]{0,5})( \/Filter \/FlateDecode)? >>\nstream\n/gm;
+ let m;
+ while((m=header.exec(s))!==null){
   if(pages.length>=PDF_MAX_PAGES)throw Error('too many PDF pages');
-  const lines=[...stream[1].matchAll(/^\(([A-Za-z0-9 .,!?_:;@+\/-]{1,90})\) Tj$/gm)].map(x=>x[1]);
-  pages.push(lines);
+  const n=Number(m[1]),compressed=Boolean(m[2]),start=header.lastIndex,end=start+n,tail=compressed?'\nendstream\nendobj\n':'endstream\nendobj\n';
+  if(n<1||n>PDF_MAX_INFLATED_PAGE+64||end>b.length||s.slice(end,end+tail.length)!==tail)throw Error('invalid PDF stream length');
+  const encoded=s.slice(start,end);header.lastIndex=end+tail.length;
+  let plain=encoded;
+  if(compressed){
+   const {buffer,engine}=inflateSync(b.subarray(start,end),{maxOutputLength:PDF_MAX_INFLATED_PAGE,info:true});
+   try{if(engine.bytesWritten!==n)throw Error('trailing compressed PDF data');plain=buffer.toString('latin1');}finally{buffer.fill(0);}
+  }else if(n>PDF_MAX_INFLATED_PAGE)throw Error('PDF stream too large');
+  const lines=[...plain.matchAll(/^\(([\x20-\x7e]{1,180})\) Tj$/gm)].map(x=>x[1].replace(/\\([()\\])/g,'$1'));
+  if(pageStream(lines)!==plain)throw Error('unsupported PDF text stream');
+  pages.push(lines);streams.push({encoded,compressed});
  }
- if(!canonicalPagedTextPdf(pages).equals(b))throw Error('unsupported PDF structure');
+ if(!buildPdf(streams).equals(b))throw Error('unsupported PDF structure');
  return pages;
 }
 export function validatePdf(b){readCanonicalPdfPages(b);return b;}

@@ -48,3 +48,8 @@ test('multi-page PDF candidates retain actual page and global line across pagina
  const seen=[],run=createContractIQ({retrieve:async()=>({data:Buffer.from(data),mediaType:'application/pdf',sha256}),workflow:{assessment:async()=>({canWrite:true}),importSourceLine:async v=>seen.push(v)}});
  await run({sha256,line:81,quoteSha256:hash(pages[2][0]),page:1},{importLine:true,signal:new AbortController().signal});assert.equal(seen[0].page,3);
 });
+
+test('compressed PDF candidates retain exact escaped text, digest and original page location',()=>{
+ const quote='Contractor must retain (signed) C:\\records.',data=canonicalPagedTextPdf([['General'],[quote]],{compressed:true});
+ const r=extractRequirementCandidates(data,'application/pdf');assert.equal(r.sha256,hash(data));assert.deepEqual(r.candidates.map(c=>[c.page,c.line,c.quote,c.quoteSha256]),[[2,2,quote,hash(quote)]]);
+});
