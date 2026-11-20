@@ -16,8 +16,8 @@ async function checkRoot(root){
  const s=await lstat(root);
  if(!s.isDirectory()||(s.mode&0o077)!==0||(typeof process.getuid==='function'&&s.uid!==process.getuid()))fail();
 }
-export function createOriginalPdfQuarantine({root,key,keyId,scan,retentionGate,withExclusiveHoldLock}={}){
- if(typeof root!=='string'||!isAbsolute(root)||root.length>250||/[\x00-\x1f]/.test(root)||!Buffer.isBuffer(key)||key.length!==32||typeof scan!=='function'||typeof keyId!=='string'||!/^[a-z][a-z0-9_-]{0,31}$/.test(keyId)||!constants.O_NOFOLLOW||(retentionGate!==undefined&&(typeof retentionGate!=='function'||typeof withExclusiveHoldLock!=='function'))||(withExclusiveHoldLock!==undefined&&typeof withExclusiveHoldLock!=='function'))fail();
+export function createOriginalPdfQuarantine({root,key,keyId,scan,retentionGate,withExclusiveHoldLock,deletionLedger}={}){
+ if(typeof root!=='string'||!isAbsolute(root)||root.length>250||/[\x00-\x1f]/.test(root)||!Buffer.isBuffer(key)||key.length!==32||typeof scan!=='function'||typeof keyId!=='string'||!/^[a-z][a-z0-9_-]{0,31}$/.test(keyId)||!constants.O_NOFOLLOW||(retentionGate!==undefined&&(typeof retentionGate!=='function'||typeof withExclusiveHoldLock!=='function'))||(withExclusiveHoldLock!==undefined&&typeof withExclusiveHoldLock!=='function')||(retentionGate!==undefined&&(!deletionLedger||deletionLedger.root===root||typeof deletionLedger.prepare!=='function'||typeof deletionLedger.complete!=='function'||typeof deletionLedger.read!=='function')))fail();
  const secret=Buffer.from(key);let busy=false,closed=false;
  async function gate(fn){
   if(closed||busy)fail();busy=true;
@@ -88,8 +88,12 @@ export function createOriginalPdfQuarantine({root,key,keyId,scan,retentionGate,w
    }finally{await target.close();}
    if(await retentionGate(meta,authorization,signal)!==true)fail();
    signal.throwIfAborted();
+   const authorizationSha256=digest(Buffer.from(JSON.stringify(authorization)));
+   // A signed, fsync-confirmed record in a separate archive must exist BEFORE unlink.
+   const prepared=await deletionLedger.prepare(meta,authorizationSha256,signal);
+   signal.throwIfAborted();
    // Write-ahead intent makes interrupted deletions deny future reads.
-   const record=Buffer.from(JSON.stringify({version:1,kind:'original-pdf-delete-intent',quarantineId:meta.quarantineId,tenantId:meta.tenantId,projectId:meta.projectId,sha256:meta.sha256,authorizationSha256:digest(Buffer.from(JSON.stringify(authorization))),issuedAt:new Date().toISOString()}));
+   const record=Buffer.from(JSON.stringify({version:1,kind:'original-pdf-delete-intent',quarantineId:meta.quarantineId,tenantId:meta.tenantId,projectId:meta.projectId,sha256:meta.sha256,authorizationSha256,preparedSha256:digest(Buffer.from(JSON.stringify(prepared))),deletionId:prepared.body.deletionId,issuedAt:new Date().toISOString()}));
    const f=await open(intentPath,constants.O_CREAT|constants.O_EXCL|constants.O_WRONLY|constants.O_NOFOLLOW|constants.O_SYNC,0o600);
    try{await f.writeFile(record);await f.sync();}finally{await f.close();record.fill(0);}
    const directory=await open(root,constants.O_RDONLY|constants.O_DIRECTORY|constants.O_NOFOLLOW);
@@ -99,9 +103,11 @@ export function createOriginalPdfQuarantine({root,key,keyId,scan,retentionGate,w
     const same=await lstat(originalPath);
     if(same.dev!==before.dev||same.ino!==before.ino||same.size!==before.size||!same.isFile())fail();
     await unlink(originalPath);await directory.sync();
+    // Final signing failure leaves an intent tombstone for explicit reconciliation.
+    const completed=await deletionLedger.complete(meta,prepared,originalPath,signal);
     await link(intentPath,deletedReceipt(meta.quarantineId));await directory.sync();
     await unlink(intentPath);await directory.sync();
-    return Object.freeze({deleted:true,quarantineId:meta.quarantineId,originalSha256:meta.sha256,receiptName:meta.quarantineId+'.deleted'});
+    return Object.freeze({deleted:true,quarantineId:meta.quarantineId,originalSha256:meta.sha256,receiptName:meta.quarantineId+'.deleted',signedDeletionId:completed.body.deletionId,ledgerFingerprint:completed.body.keyFingerprint});
    }finally{await directory.close();}
   },signal));
  }
