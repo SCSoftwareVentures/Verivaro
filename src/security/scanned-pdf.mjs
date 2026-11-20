@@ -9,7 +9,8 @@ function chunk(type,data){
  size.writeUInt32BE(data.length);crc.writeUInt32BE(crc32(Buffer.concat([tag,data])));
  return Buffer.concat([size,tag,data,crc]);
 }
-function rasterToPng(rgb,w,h){
+export function canonicalPngFromRgb(rgb,w,h){
+ if(!Buffer.isBuffer(rgb)||!Number.isInteger(w)||!Number.isInteger(h)||w<1||h<1||w>2048||h>2048||w*h>1048576||rgb.length!==w*h*3)throw Error('invalid canonical RGB image');
  const stride=w*3,filtered=Buffer.alloc(h*(stride+1));
  try{
   for(let y=0;y<h;y++)rgb.copy(filtered,y*(stride+1)+1,y*stride,(y+1)*stride);
@@ -68,6 +69,6 @@ export function readCanonicalScannedPdf(pdf){
  const {buffer,engine}=inflateSync(compressed,{maxOutputLength:w*h*3,info:true});
  try{
   if(buffer.length!==w*h*3||engine.bytesWritten!==n)fail();
-  const png=rasterToPng(buffer,w,h);return {page:1,width:w,height:h,png,rasterSha256:sha(png),format:'bounded-image-pdf-v1'};
+  const png=canonicalPngFromRgb(buffer,w,h);return {page:1,width:w,height:h,png,rasterSha256:sha(png),format:'bounded-image-pdf-v1'};
  }finally{buffer.fill(0);}
 }
