@@ -56,3 +56,17 @@ test('compressed streams reject expansion bombs, trailing deflate members and ex
  }
  assert.deepEqual(readCanonicalPdfPages(replaceCompressedPayload(pdf,valid)),[['Work must comply.']]);
 });
+
+test('single-page image-only PDF verifies exact image graph, payload length and canonical original bytes',async()=>{
+ const {canonicalScannedPdf,readCanonicalScannedPdf}=await import('../../src/security/scanned-pdf.mjs');
+ const w=32,h=18,pixels=Buffer.alloc(h*(w*3+1));for(let y=0;y<h;y++)pixels[y*(w*3+1)+1]=y;
+ const source=fixturePng({width:w,height:h,pixels}),pdf=canonicalScannedPdf(source),scan=readCanonicalScannedPdf(pdf);
+ assert.equal(scan.page,1);assert.equal(scan.width,w);assert.equal(scan.height,h);assert.equal(scan.png.length>0,true);
+ assert.deepEqual(validateEvidence(pdf,'application/pdf'),pdf);
+ assert.equal(scan.rasterSha256,(await import('node:crypto')).createHash('sha256').update(scan.png).digest('hex'));
+ assert.deepEqual(readCanonicalScannedPdf(canonicalScannedPdf(scan.png)).png,scan.png);
+ assert.throws(()=>readCanonicalPdfPages(pdf));
+ for(const changed of [Buffer.concat([pdf,Buffer.from('tail')]),Buffer.from(pdf.toString('latin1').replace('/Subtype /Image','/Subtype /JavaScript'),'latin1'),Buffer.from(pdf.toString('latin1').replace('/Count 1','/Count 2'),'latin1'),pdf.subarray(0,pdf.length-1),Buffer.from(pdf.toString('latin1').replace('/Filter /FlateDecode','/Filter /JBIG2Decode'),'latin1')])assert.throws(()=>validateEvidence(changed,'application/pdf'));
+ assert.throws(()=>canonicalScannedPdf(fixturePng({width:1,height:1,pixels:Buffer.from([0,1,2,3]),extra:true})));
+ scan.png.fill(0);
+});

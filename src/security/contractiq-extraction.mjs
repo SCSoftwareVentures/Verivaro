@@ -12,7 +12,9 @@ export function extractRequirementCandidates(data,mediaType,{afterLine=0,manual=
  const office=mediaType==='application/vnd.openxmlformats-officedocument.wordprocessingml.document'?'docx':mediaType==='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'?'xlsx':null;
  if(!office&&!['text/plain; charset=utf-8','application/pdf'].includes(mediaType))throw new UnsupportedExtraction('Source extraction not yet available for this evidence format');
  const pdf=mediaType==='application/pdf';
- const lines=office?extractOfficeSpans(data,office).spans.map(({quote,quoteSha256,...location})=>({quote,page:null,location})):pdf?readCanonicalPdfPages(data).flatMap((lines,i)=>lines.map(quote=>({quote,page:i+1}))):new TextDecoder('utf-8',{fatal:true}).decode(data).split(/\r\n|\r|\n/).map(quote=>({quote,page:null}));
+ let pages;
+ if(pdf){try{pages=readCanonicalPdfPages(data);}catch{throw new UnsupportedExtraction('Scanned image-only PDF requires OCR review');}}
+ const lines=office?extractOfficeSpans(data,office).spans.map(({quote,quoteSha256,...location})=>({quote,page:null,location})):pdf?pages.flatMap((lines,i)=>lines.map(quote=>({quote,page:i+1}))):new TextDecoder('utf-8',{fatal:true}).decode(data).split(/\r\n|\r|\n/).map(quote=>({quote,page:null}));
  let matched=0,skipped=0,remaining=0;const candidates=[];
  for(let i=0;i<lines.length;i++){
   const quote=lines[i].quote.trim();

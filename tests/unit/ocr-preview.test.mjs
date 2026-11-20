@@ -43,3 +43,17 @@ test('OCR import rederives exact region and requires explicit author confirmatio
  await assert.rejects(preview({...input,regionDigest:'0'.repeat(64)},{signal,importRegion:true}),ReleaseConflict);
  await preview(input,{signal,importRegion:true});assert.equal(calls.length,1);assert.deepEqual(calls[0].location.box,r.box);assert.equal(calls[0].quote,r.quote);assert.equal(calls[0].location.regionDigest,r.regionDigest);
 });
+
+test('canonical image-only PDF preview binds PDF and raster hashes, and import repeats exact image recognition',async()=>{
+ const {canonicalScannedPdf,readCanonicalScannedPdf}=await import('../../src/security/scanned-pdf.mjs');
+ const img=fixturePng({width:100,height:60,pixels:Buffer.alloc(60*301)}),pdf=canonicalScannedPdf(img),pdfSha=hash(pdf),scan=readCanonicalScannedPdf(pdf),calls=[];
+ const p=createOcrPreview({retrieve:async()=>({data:Buffer.from(pdf),sha256:pdfSha,mediaType:'application/pdf'}),assessment:async()=>({canWrite:true}),recognize:async b=>{assert.deepEqual(b,scan.png);return tsv();},importSource:async a=>calls.push(a)});
+ const signal=new AbortController().signal,out=await p({sha256:pdfSha},{signal});assert.equal(out.page,1);assert.equal(out.rasterSha256,scan.rasterSha256);
+ const r=out.regions[0],args={sha256:pdfSha,ordinal:r.ordinal,regionDigest:r.regionDigest,quoteSha256:r.quoteSha256,confirm:true};
+ await p({...args,location:{page:99}},{signal,importRegion:true});assert.equal(calls.length,1);assert.equal(calls[0].location.page,1);assert.equal(calls[0].location.rasterSha256,scan.rasterSha256);
+ await assert.rejects(p({...args,regionDigest:'f'.repeat(64)},{signal,importRegion:true}),ReleaseConflict);
+ const textPdf=(await import('../../src/security/evidence-formats.mjs')).canonicalTextPdf(['Equipment must carry ID.']);
+ const bad=createOcrPreview({retrieve:async()=>({data:Buffer.from(textPdf),sha256:hash(textPdf),mediaType:'application/pdf'}),assessment:async()=>({canWrite:true}),recognize:async()=>{throw Error('OCR must not run');}});
+ await assert.rejects(bad({sha256:hash(textPdf)},{signal}),ReleaseConflict);
+ scan.png.fill(0);
+});

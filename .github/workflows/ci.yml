@@ -46,3 +46,13 @@ jobs:
           node --input-type=module -e "import {canonicalTextPdf} from './src/security/evidence-formats.mjs';import {writeFileSync} from 'node:fs';writeFileSync(process.argv[1],canonicalTextPdf(['Equipment must carry ID.']))" "$out/source.pdf"
           pdftoppm -f 1 -l 1 -singlefile -r 200 -x 100 -y 60 -W 1050 -H 130 "$out/source.pdf" "$out/source"
           node tests/fixtures/actual-ocr-engine.mjs "$out/source.ppm"
+      - name: Independent scanned PDF rendering gate
+        run: |
+          set -euo pipefail
+          out="$(mktemp -d)"
+          trap 'rm -rf "$out"' EXIT
+          node tests/fixtures/emit-scanned-pdf.mjs "$out/scan.pdf"
+          pdfinfo "$out/scan.pdf" | grep -Eq '^Pages:[[:space:]]+1$'
+          pdftoppm -f 1 -l 1 -singlefile -r 72 -png "$out/scan.pdf" "$out/render"
+          test -s "$out/render.png"
+          test "$(pdftotext "$out/scan.pdf" - | wc -c)" -eq 1
