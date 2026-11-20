@@ -27,7 +27,7 @@ export async function loadServicePoolConfig({env=process.env,role,max=2}){
  const port=Number(env.PGPORT??5432);if(!Number.isInteger(port)||port<1||port>65535)throw Error('invalid database port');
  const local=env.VV_ALLOW_LOCAL_PLAINTEXT==='1';
  if(env.VV_ALLOW_LOCAL_PLAINTEXT!==undefined&&!local)throw Error('invalid plaintext policy');
- if(local&&(!loopback(host)||env.VV_DB_CA_FILE!==undefined))throw Error('plaintext permitted only for explicit loopback test');
+ if(local&&(!loopback(host)||database!=='verivaro_test'||env.VV_LIVE_TEST!=='1'||env.VV_DB_CA_FILE!==undefined))throw Error('plaintext permitted only for disposable loopback CI test');
  let ssl;
  if(local)ssl=false;
  else{
