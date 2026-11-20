@@ -32,7 +32,7 @@ test('signed keyset rotation durably advances checkpoint before accepting new ke
  now+=601;assert.throws(()=>p.verify(fixedToken(nonce())));
  const noWriter=createRotatingProviderVerifier({issuer,audience,requiredAcr:'fixture:mfa',authorityKey:authority.publicKey,...first,now:()=>1800000000});
  await assert.rejects(noWriter.rotate(second.catalogue,second.signature,second.checkpoint),/durable checkpoint writer required/);
- assert.equal(noWriter.verify(fixedToken(nonce(),{},privateKey),1800000000).issuer,issuer);
+ assert.equal(noWriter.verify(token(nonce(),{iat:1800000000,auth_time:1800000000,exp:1800000300}),1800000000).issuer,issuer);
 });
 test('unconfirmed checkpoint persists a fail-closed keyset state; concurrent rotation is blocked',async()=>{
  const authority=generateKeyPairSync('ed25519'),replacement=generateKeyPairSync('rsa',{modulusLength:2048});
