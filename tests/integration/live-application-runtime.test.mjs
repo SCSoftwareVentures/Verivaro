@@ -273,8 +273,14 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   const queueGraph=await getGraph(reviewer);assert.equal(queueGraph.requirements[0].canReview,true);
   assert.equal((await g('rule-review',{versionId:rule.versionId,decision:'approved',reason:'Confirmed criterion'},reviewer)).status,200);
   assert.equal((await getGraph()).requirements[0].state,'missing_evidence');
-  const freshEvidence=await request(newBase+'/evidence',{method:'POST',headers:{...evidenceHeaders,'idempotency-key':randomUUID()},body:evidenceBody});assert.equal(freshEvidence.status,200);
+  const lineageUploadId=randomUUID();
+  const freshEvidence=await request(newBase+'/evidence',{method:'POST',headers:{...evidenceHeaders,'idempotency-key':lineageUploadId},body:evidenceBody});assert.equal(freshEvidence.status,200);
   const graphEvidence=JSON.parse(freshEvidence.body).evidence;
+  const lineage={evidenceId:graphEvidence.id,sha256:graphEvidence.sha256,uploadRequestId:lineageUploadId,batchId:randomUUID(),ordinal:1,originalName:'original.txt',relativePath:'folder/original.txt'};
+  assert.equal((await g('import-lineage',{...lineage,relativePath:'../original.txt'})).status,400);assert.equal((await g('import-lineage',{...lineage,uploadRequestId:randomUUID()})).status,404);
+  assert.equal((await g('import-lineage',lineage)).status,200);assert.equal((await g('import-lineage',lineage)).status,200);assert.equal((await g('import-lineage',{...lineage,batchId:randomUUID()})).status,409);
+  const lineageList=await request(graphBase+'/import-lineage-list',{headers:{cookie:session}});assert.equal(lineageList.status,200);assert.equal(JSON.parse(lineageList.body).items[0].relativePath,lineage.relativePath);
+  await admin.query('DELETE FROM verivaro_private.api_rate_keys');await admin.query('UPDATE verivaro_private.api_rate_state SET bucket=-1,requests=0');
   const edge={versionId:rule.versionId,linkId:randomUUID(),evidenceId:graphEvidence.id,sha256:graphEvidence.sha256};
   assert.equal((await g('link',edge)).status,200);
   assert.equal((await g('link-review',{linkId:edge.linkId,decision:'pass',reason:'Matched identifier'},session)).status,404);
