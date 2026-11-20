@@ -240,8 +240,12 @@ jobs:
           missing_tables="$(comm -23 <(printf '%s\n' "$source_tables") <(printf '%s\n' "$restored_tables"))"
           added_tables="$(comm -13 <(printf '%s\n' "$source_tables") <(printf '%s\n' "$restored_tables"))"
           expected_added="$(printf '%s\n' verivaro_private.restore_quarantine verivaro_private.restoration_reviews verivaro_private.restoration_evidence_receipt | LC_ALL=C sort)"
-          test -z "$missing_tables"
-          test "$added_tables" = "$expected_added"
+          if test -n "$missing_tables" || test "$added_tables" != "$expected_added"; then
+            echo "::error::restore_catalog_inventory_mismatch"
+            printf 'missing_source_tables=%s\n' "$missing_tables"
+            printf 'unexpected_restored_tables=%s\n' "$added_tables"
+            exit 1
+          fi
           table_count=0
           skipped_quarantine_tables=0
           while IFS= read -r table; do
@@ -256,7 +260,10 @@ jobs:
             esac
             source_hash="$(psql -X -v ON_ERROR_STOP=1 -At -c "SELECT md5(COALESCE(string_agg(row_to_json(t)::text, ',' ORDER BY row_to_json(t)::text),'')) FROM $table t")"
             restored_hash="$(psql -X -v ON_ERROR_STOP=1 -At -d verivaro_restore_ci -c "SELECT md5(COALESCE(string_agg(row_to_json(t)::text, ',' ORDER BY row_to_json(t)::text),'')) FROM $table t")"
-            test "$source_hash" = "$restored_hash"
+            if test "$source_hash" != "$restored_hash"; then
+              echo "::error::restored_content_mismatch table=$table"
+              exit 1
+            fi
             table_count=$((table_count+1))
           done <<< "$source_tables"
           # Verify sequence state as well as table rows. A restored identity
@@ -273,7 +280,10 @@ jobs:
               test -n "$sequence"
               source_state="$(psql -X -v ON_ERROR_STOP=1 -At -c "SELECT last_value::text || ':' || is_called::text FROM $sequence")"
               restored_state="$(psql -X -v ON_ERROR_STOP=1 -At -d verivaro_restore_ci -c "SELECT last_value::text || ':' || is_called::text FROM $sequence")"
-              test "$source_state" = "$restored_state"
+              if test "$source_state" != "$restored_state"; then
+                echo "::error::restored_sequence_mismatch sequence=$sequence"
+                exit 1
+              fi
               sequence_count=$((sequence_count+1))
             done <<< "$source_sequences"
           fi
