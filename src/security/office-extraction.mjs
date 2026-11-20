@@ -63,13 +63,14 @@ export function extractOfficeSpans(archive,kind){
    const book=shape(get(mainPath),'workbook',{xmlns:sheet,'xmlns:r':rel});if(book.length!==1)fail();
    const sheets=shape(book[0],'sheets');if(sheets.length<1||sheets.length>16)fail();
    const rp='xl/_rels/workbook.xml.rels';used.add(rp);const records=relationships(get(rp));
-   let shared=[];const sharedRels=[...records].filter(([,r])=>r.type==='sharedStrings');
+   let shared=[],sharedCount=null,sharedUses=0;const sharedRels=[...records].filter(([,r])=>r.type==='sharedStrings');
    if(sharedRels.length>1)fail();
    if(sharedRels.length){
     const [id,r]=sharedRels[0];if(r.target!=='sharedStrings.xml')fail();records.delete(id);
     const part='xl/sharedStrings.xml';used.add(part);expected.set(part,MIME+'spreadsheetml.sharedStrings+xml');
     const ss=get(part),items=shape(ss,'sst',{xmlns:sheet},['count','uniqueCount']);
-    if(items.length>8192||ss.attrs.uniqueCount!==undefined&&Number(ss.attrs.uniqueCount)!==items.length||ss.attrs.count!==undefined&&!/^[0-9]{1,6}$/.test(ss.attrs.count))fail();
+    if(items.length>8192||ss.attrs.uniqueCount!==undefined&&(!/^(?:0|[1-9][0-9]{0,5})$/.test(ss.attrs.uniqueCount)||Number(ss.attrs.uniqueCount)!==items.length)||ss.attrs.count!==undefined&&!/^(?:0|[1-9][0-9]{0,5})$/.test(ss.attrs.count))fail();
+    sharedCount=ss.attrs.count===undefined?null:Number(ss.attrs.count);
     shared=items.map(si=>{const k=shape(si,'si');if(k.length!==1)fail();return text(k[0],'t');});
    }
    const ids=new Set(),names=new Set(),targets=new Set();
@@ -91,18 +92,18 @@ export function extractOfficeSpans(archive,kind){
      for(const cell of cells){
       const ch=shape(cell,'c',{r:null},['t']),m=/^([A-Z]{1,2})([1-9][0-9]{0,3})$/.exec(cell.attrs.r);
       if(!m||Number(m[2])!==rn||colNumber(m[1])<=prevCol||colNumber(m[1])>52||ch.length!==1)fail();prevCol=colNumber(m[1]);
-      let quote,kind=cell.attrs.t??'n';
+      let quote,reference={},kind=cell.attrs.t??'n';
       if(kind==='inlineStr'){const k=shape(ch[0],'is');if(k.length!==1)fail();quote=text(k[0],'t');}
-      else if(kind==='s'){const s=text(ch[0],'v');if(!/^(?:0|[1-9][0-9]{0,4})$/.test(s)||Number(s)>=shared.length)fail();quote=shared[Number(s)];}
+      else if(kind==='s'){const s=text(ch[0],'v');if(!/^(?:0|[1-9][0-9]{0,4})$/.test(s)||Number(s)>=shared.length)fail();const index=Number(s);quote=shared[index];sharedUses++;reference={sharedStringIndex:index,sharedStringPart:'xl/sharedStrings.xml',sharedStringPartSha256:partHashes.get('xl/sharedStrings.xml')};}
       else if(kind==='n'){quote=text(ch[0],'v');if(!/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[Ee][+-]?\d+)?$/.test(quote)||!Number.isFinite(Number(quote)))fail();}
       else fail();
-      if(quote)add(part,{sheet:name,sheetId:id,cell:cell.attrs.r,valueKind:kind},quote);
+      if(quote)add(part,{sheet:name,sheetId:id,cell:cell.attrs.r,valueKind:kind,...reference},quote);
      }
     }
     if(children[j]?.name==='autoFilter'){const filter=children[j++];empty(filter,'autoFilter',{ref:null});if(!/^A1:[A-Z]{1,2}[1-9][0-9]{0,3}$/.test(filter.attrs.ref))fail();}
     if(j!==children.length)fail();
    }
-   if(records.size)fail();
+   if(records.size||sharedCount!==null&&sharedCount!==sharedUses)fail();
   }
   if(used.size!==entries.size||[...entries.keys()].some(p=>!used.has(p)))fail();
   checkTypes(get('[Content_Types].xml'),expected);

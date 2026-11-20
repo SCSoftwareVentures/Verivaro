@@ -34,6 +34,6 @@ function book(content,{sheetAttrs='',extra='',shared=false}={}){
 }
 test('XLSX shared strings and literal numeric values; formulas, hidden sheets and ambiguous coordinates refused',()=>{
  const valid=book('<row r="2"><c r="B2" t="s"><v>0</v></c><c r="C2"><v>3.75</v></c></row>',{shared:true});
- assert.deepEqual(extractOfficeSpans(valid,'xlsx').spans.map(s=>[s.cell,s.valueKind,s.quote]),[['B2','s','Provide proof.'],['C2','n','3.75']]);
+ const result=extractOfficeSpans(valid,'xlsx');assert.deepEqual(result.spans.map(s=>[s.cell,s.valueKind,s.quote]),[['B2','s','Provide proof.'],['C2','n','3.75']]);assert.equal(result.spans[0].sharedStringIndex,0);assert.equal(result.spans[0].sharedStringPart,'xl/sharedStrings.xml');assert.match(result.spans[0].sharedStringPartSha256,/^[a-f0-9]{64}$/);assert.equal(result.spans[1].sharedStringPart,undefined);assert.throws(()=>extractOfficeSpans(book('<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>0</v></c></row>',{shared:true}),'xlsx'));
  for(const b of [book('<row r="1"><c r="A1"><f>1+1</f><v>2</v></c></row>'),book('<row r="1"><c r="A2"><v>2</v></c></row>'),book('<row r="1"><c r="A1"><v>2</v></c><c r="A1"><v>3</v></c></row>'),book('<row r="1"><c r="A1" t="s"><v>1</v></c></row>',{shared:true}),book('',{sheetAttrs:' state="hidden"'}),book('',{extra:'<drawing r:id="rId1"/>'})])assert.throws(()=>extractOfficeSpans(b,'xlsx'));
 });
