@@ -76,3 +76,11 @@ jobs:
           set -euo pipefail
           if ! command -v pdfinfo >/dev/null || ! command -v pdftoppm >/dev/null; then sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends poppler-utils; fi
           node tests/fixtures/actual-pdf-normalization.mjs
+      - name: Offline OCR scan-quality stress matrix
+        run: |
+          set -euo pipefail
+          out="$(mktemp -d)"
+          trap 'rm -rf "$out"' EXIT
+          node --input-type=module -e "import {canonicalTextPdf} from './src/security/evidence-formats.mjs';import {writeFileSync} from 'node:fs';writeFileSync(process.argv[1],canonicalTextPdf(['Valve V-204 must be checked.']))" "$out/stress.pdf"
+          pdftoppm -f 1 -l 1 -singlefile -r 200 -x 100 -y 60 -W 1050 -H 130 "$out/stress.pdf" "$out/stress"
+          node tests/fixtures/ocr-stress-benchmark.mjs "$out/stress.ppm"
