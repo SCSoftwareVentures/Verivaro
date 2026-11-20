@@ -57,3 +57,16 @@ test('canonical image-only PDF preview binds PDF and raster hashes, and import r
  await assert.rejects(bad({sha256:hash(textPdf)},{signal}),ReleaseConflict);
  scan.png.fill(0);
 });
+
+test('multipage PDF OCR re-derives selected page and denies source coordinate substitution',async()=>{
+ const {canonicalMultipageScannedPdf}=await import('../../src/security/scanned-pdf-multipage.mjs');
+ const a=fixturePng({width:100,height:60,pixels:Buffer.alloc(60*301)}),other=Buffer.alloc(60*301);other[1]=55;
+ const b=fixturePng({width:100,height:60,pixels:other}),pdf=canonicalMultipageScannedPdf([a,b]),sha256=hash(pdf),calls=[],signal=new AbortController().signal;
+ const preview=createOcrPreview({retrieve:async()=>({data:Buffer.from(pdf),sha256,mediaType:'application/pdf'}),assessment:async()=>({canWrite:true}),recognize:async()=>tsv(),importSource:async x=>calls.push(x)});
+ const first=await preview({sha256,page:1},{signal}),second=await preview({sha256,page:2},{signal});
+ assert.equal(first.pageCount,2);assert.equal(second.page,2);assert.notEqual(first.rasterSha256,second.rasterSha256);assert.notEqual(first.regions[0].regionDigest,second.regions[0].regionDigest);
+ const r=second.regions[0],args={sha256,page:2,ordinal:r.ordinal,quoteSha256:r.quoteSha256,regionDigest:r.regionDigest,confirm:true};
+ await preview(args,{signal,importRegion:true});assert.equal(calls[0].location.page,2);
+ await assert.rejects(preview({...args,page:1},{signal,importRegion:true}),ReleaseConflict);
+ await assert.rejects(preview({...args,page:3},{signal,importRegion:true}),ReleaseConflict);
+});

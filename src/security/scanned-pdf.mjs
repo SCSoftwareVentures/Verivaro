@@ -35,7 +35,7 @@ function fromPng(png){
   return {w,h,rgb};
  }finally{buffer.fill(0);}
 }
-function pack(w,h,compressed){
+export function packCanonicalRaster(w,h,compressed){
  if(!Number.isSafeInteger(w)||!Number.isSafeInteger(h)||w<1||h<1||w>2048||h>2048||w*h>MAX_PIXELS||!Buffer.isBuffer(compressed)||compressed.length<1||compressed.length>LIMIT)fail();
  const content='q\n'+w+' 0 0 '+h+' 0 0 cm\n/Im0 Do\nQ\n',encoded=compressed.toString('latin1');
  const objects=[
@@ -55,7 +55,7 @@ function pack(w,h,compressed){
 export function canonicalScannedPdf(png){
  if(!Buffer.isBuffer(png)||png.length<1||png.length>LIMIT)fail();
  const {w,h,rgb}=fromPng(png);
- try{return pack(w,h,deflateSync(rgb,{level:6}));}finally{rgb.fill(0);}
+ try{return packCanonicalRaster(w,h,deflateSync(rgb,{level:6}));}finally{rgb.fill(0);}
 }
 export function readCanonicalScannedPdf(pdf){
  if(!Buffer.isBuffer(pdf)||pdf.length<1||pdf.length>LIMIT)fail();
@@ -64,7 +64,7 @@ export function readCanonicalScannedPdf(pdf){
  const w=Number(m[1]),h=Number(m[2]),n=Number(m[5]),start=m[0].length,end=start+n;
  if(w>2048||h>2048||w*h>MAX_PIXELS||n>LIMIT||end>pdf.length||s.slice(end,end+18)!=='\nendstream\nendobj\n')fail();
  const compressed=pdf.subarray(start,end);
- if(!pack(w,h,compressed).equals(pdf))fail(); // all objects, offsets and bytes, no active extras
+ if(!packCanonicalRaster(w,h,compressed).equals(pdf))fail(); // all objects, offsets and bytes, no active extras
  const {buffer,engine}=inflateSync(compressed,{maxOutputLength:w*h*3,info:true});
  try{
   if(buffer.length!==w*h*3||engine.bytesWritten!==n)fail();

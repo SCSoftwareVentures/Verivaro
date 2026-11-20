@@ -3,6 +3,7 @@ import {spawn} from 'node:child_process';
 import {isAbsolute} from 'node:path';
 import {validateEvidence} from './evidence-objects.mjs';
 import {readCanonicalScannedPdf} from './scanned-pdf.mjs';
+import {readCanonicalMultipageScannedPdf} from './scanned-pdf-multipage.mjs';
 import {ReleaseDenied,ReleaseConflict} from './evidence-release.mjs';
 const sha=b=>createHash('sha256').update(b).digest('hex');
 const fail=()=>{throw Error('invalid OCR output');};
@@ -77,9 +78,10 @@ export function createOcrPreview({retrieve,assessment,recognize,importSource}){
    signal.throwIfAborted();const initial=await assessment(input);if(!initial.canWrite||initial.archived)throw new ReleaseDenied('OCR denied');
    source=await retrieve(input);signal.throwIfAborted();
    if(!['image/png','application/pdf'].includes(source.mediaType)||source.sha256!==input.sha256||sha(source.data)!==input.sha256)throw new ReleaseConflict('OCR source mismatch');
+   if(input.page!==undefined&&(!Number.isInteger(input.page)||input.page<1||input.page>4||source.mediaType!=='application/pdf'))throw new ReleaseConflict('OCR page denied');
    let raster=source.data;
    if(source.mediaType==='application/pdf'){
-    try{scan=readCanonicalScannedPdf(source.data);raster=scan.png;}catch{throw new ReleaseConflict('Only canonical image-only PDFs support OCR');}
+    try{if(input.page!==undefined&&input.page>1)scan=readCanonicalMultipageScannedPdf(source.data,{page:input.page});else {try{scan=readCanonicalScannedPdf(source.data);scan.pageCount=1;}catch{scan=readCanonicalMultipageScannedPdf(source.data,{page:input.page??1});}}raster=scan.png;}catch{throw new ReleaseConflict('Only canonical image-only PDFs support OCR');}
    }else validateEvidence(source.data,'image/png');
    const width=raster.readUInt32BE(16),height=raster.readUInt32BE(20);
    output=await recognize(raster,signal);signal.throwIfAborted();
@@ -92,7 +94,7 @@ export function createOcrPreview({retrieve,assessment,recognize,importSource}){
     if(!r||[...r.quote].length>1024||Buffer.byteLength(r.quote)>4096||/[\x00-\x1f\x7f-\x9f]/u.test(r.quote))throw new ReleaseConflict('OCR region changed');
     return await importSource({...input,quote:r.quote,location:{algorithm:'tesseract-eng-psm6-tsv-v1',width,height,block:r.block,paragraph:r.paragraph,line:r.line,box:r.box,confidence:r.confidence,minWordConfidence:r.minWordConfidence,wordCount:r.wordCount,regionDigest:r.regionDigest,...(scan?{page:scan.page,rasterSha256:scan.rasterSha256}:{})}});
    }
-   return {algorithm:'tesseract-eng-psm6-tsv-v1',sha256:input.sha256,width,height,...(scan?{page:scan.page,rasterSha256:scan.rasterSha256}:{}),regions,verified:false,reviewRequired:true,warning:'OCR may misread or omit text. Confidence is an engine score, not calibrated probability. Compare each region with the original. No requirement has been imported.'};
+   return {algorithm:'tesseract-eng-psm6-tsv-v1',sha256:input.sha256,width,height,...(scan?{page:scan.page,pageCount:scan.pageCount??1,rasterSha256:scan.rasterSha256}:{}),regions,verified:false,reviewRequired:true,warning:'OCR may misread or omit text. Confidence is an engine score, not calibrated probability. Compare each region with the original. No requirement has been imported.'};
   }finally{source?.data?.fill(0);scan?.png?.fill(0);output?.fill?.(0);active=false;}
  };
 }

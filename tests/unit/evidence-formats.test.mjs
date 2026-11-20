@@ -70,3 +70,14 @@ test('single-page image-only PDF verifies exact image graph, payload length and 
  assert.throws(()=>canonicalScannedPdf(fixturePng({width:1,height:1,pixels:Buffer.from([0,1,2,3]),extra:true})));
  scan.png.fill(0);
 });
+
+test('four-page canonical scan validates exact object graph and page provenance',async()=>{
+ const {canonicalMultipageScannedPdf,readCanonicalMultipageScannedPdf}=await import('../../src/security/scanned-pdf-multipage.mjs');
+ const pngs=Array.from({length:4},(_,i)=>{const pixels=Buffer.alloc(60*301);pixels[1]=i+1;return fixturePng({width:100,height:60,pixels});});
+ const pdf=canonicalMultipageScannedPdf(pngs);
+ assert.deepEqual(validateEvidence(pdf,'application/pdf'),pdf);
+ for(let i=1;i<=4;i++){const r=readCanonicalMultipageScannedPdf(pdf,{page:i});assert.equal(r.pageCount,4);assert.equal(r.page,i);r.png.fill(0);}
+ for(const tampered of [Buffer.concat([pdf,Buffer.from('tail')]),Buffer.from(pdf.toString('latin1').replace('/Count 4','/Count 3'),'latin1'),Buffer.from(pdf.toString('latin1').replace('/Im0 Do','/JS Do'),'latin1'),pdf.subarray(0,-1)])assert.throws(()=>validateEvidence(tampered,'application/pdf'));
+ for(const bad of [0,5,2.5])assert.throws(()=>readCanonicalMultipageScannedPdf(pdf,{page:bad}));
+ assert.throws(()=>canonicalMultipageScannedPdf([pngs[0]]));assert.throws(()=>canonicalMultipageScannedPdf([...pngs,pngs[0]]));
+});

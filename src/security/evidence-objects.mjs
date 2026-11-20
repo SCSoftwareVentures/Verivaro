@@ -1,6 +1,7 @@
 import {createCipheriv,createDecipheriv,createHash,randomBytes,randomUUID,timingSafeEqual} from 'node:crypto';
 import {TYPES,validatePng,validatePdf} from './evidence-formats.mjs';
 import {readCanonicalScannedPdf} from './scanned-pdf.mjs';
+import {readCanonicalMultipageScannedPdf} from './scanned-pdf-multipage.mjs';
 import {extractOfficeSpans} from './office-extraction.mjs';
 import {Readable} from 'node:stream';
 import {createPrivateFileStore,isArtifactId} from './private-file-store.mjs';
@@ -18,7 +19,7 @@ export function validateEvidence(data,mediaType=TYPES[0]){
  if(!Buffer.isBuffer(data)||data.length<1||data.length>MAX_EVIDENCE_UPLOAD||!TYPES.includes(mediaType))throw Error('invalid evidence format');
  if(mediaType===TYPES[0])return validateTextEvidence(data);
  if(mediaType==='image/png')return validatePng(data);
- if(mediaType==='application/pdf'){try{return validatePdf(data);}catch{const raster=readCanonicalScannedPdf(data);raster.png.fill(0);return data;}}
+ if(mediaType==='application/pdf'){try{return validatePdf(data);}catch{try{const raster=readCanonicalScannedPdf(data);raster.png.fill(0);return data;}catch{const raster=readCanonicalMultipageScannedPdf(data);raster.png.fill(0);return data;}}}
  extractOfficeSpans(data,mediaType==='application/vnd.openxmlformats-officedocument.wordprocessingml.document'?'docx':'xlsx');return data;
 }
 export function sealEvidence(data,{tenantId,projectId,id=randomUUID(),key,keyId,mediaType=TYPES[0]}){

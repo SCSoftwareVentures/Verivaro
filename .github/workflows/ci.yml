@@ -53,6 +53,10 @@ jobs:
           trap 'rm -rf "$out"' EXIT
           node tests/fixtures/emit-scanned-pdf.mjs "$out/scan.pdf"
           pdfinfo "$out/scan.pdf" | grep -Eq '^Pages:[[:space:]]+1$'
+          node tests/fixtures/emit-scanned-pdf.mjs "$out/multipage.pdf" multipage
+          pdfinfo "$out/multipage.pdf" | grep -Eq '^Pages:[[:space:]]+2$'
+          pdftoppm -f 1 -l 2 -r 72 -png "$out/multipage.pdf" "$out/multi"
+          test "$(find "$out" -maxdepth 1 -name 'multi-*.png' | wc -l)" -eq 2
           pdftoppm -f 1 -l 1 -singlefile -r 72 -png "$out/scan.pdf" "$out/render"
           test -s "$out/render.png"
           test "$(pdftotext "$out/scan.pdf" - | tr -d "\\014\\n\\r\\t " | wc -c)" -eq 0
