@@ -22,3 +22,5 @@ test('import derives quote from source rather than caller, checks hash and zeroe
  await assert.rejects(run({sha256,line:1,quoteSha256:'0'.repeat(64)},{importLine:true,signal}));
  assert.equal(await run({sha256,line:1,quoteSha256:hash(bytes),quote:'fake'},{importLine:true,signal}),'ok');assert.equal(seen[0].quote,bytes.toString());assert.ok(retrieved.every(b=>b.every(x=>x===0)));
 });
+
+test('extended obligation cues retain the exact original and versioned algorithm',()=>{const r=extractRequirementCandidates(Buffer.from('General\nContractor undertakes to provide inspection results.\nNo substitution is permitted.\nEquipment must carry ID.\nReference table'),type);assert.deepEqual(r.candidates.map(x=>[x.line,x.algorithm,x.category]),[[2,'obligation-line-v2','obligation_candidate'],[3,'obligation-line-v2','prohibition'],[4,'modal-line-v1','obligation_candidate']]);assert.equal(r.candidates[0].quoteSha256,hash('Contractor undertakes to provide inspection results.'));});

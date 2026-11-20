@@ -11,12 +11,15 @@ export function extractRequirementCandidates(data,mediaType){
  let matched=0,skipped=0;const candidates=[];
  for(let i=0;i<lines.length;i++){
   const quote=lines[i].trim();
-  if(!/\b(?:shall|must|required\s+to|needs?\s+to)\b/i.test(quote))continue;
+  const legacy=/\b(?:shall|must|required\s+to|needs?\s+to)\b/i.test(quote);
+  const extended=/\b(?:is|are)\s+(?:to\s+be|required|mandatory|prohibited|not\s+permitted)\b|\b(?:mandatory|prohibited)\b|\bno\s+[^.!?]{1,100}\b(?:permitted|allowed)\b|\b(?:undertakes|agrees)\s+to\b/i.test(quote);
+  if(!legacy&&!extended)continue;
+  const algorithm=legacy?'modal-line-v1':'obligation-line-v2',category=/\b(?:shall\s+not|must\s+not|prohibited|not\s+permitted|no\s+[^.!?]{1,100}\b(?:permitted|allowed))\b/i.test(quote)?'prohibition':/\b(?:before|after|within|by\s+\d)\b/i.test(quote)?'timing':'obligation_candidate';
   matched++;
   if([...quote].length>1024||Buffer.byteLength(quote)>4096||/[\x00-\x1f\x7f-\x9f]/u.test(quote)){skipped++;continue;}
-  if(candidates.length<64)candidates.push({line:i+1,page:pdf?1:null,quote,quoteSha256:hash(quote)});
+  if(candidates.length<64)candidates.push({line:i+1,page:pdf?1:null,quote,quoteSha256:hash(quote),algorithm,category});
  }
- return {algorithm:'modal-line-v1',sha256:hash(data),mediaType,candidates,matched,skipped,truncated:matched-skipped>candidates.length,
+ return {algorithm:'obligation-line-v2',sha256:hash(data),mediaType,candidates,matched,skipped,truncated:matched-skipped>candidates.length,
   warning:'Heuristic line candidates only; may miss obligations or include non-obligations. Human review of the full original is required.'};
 }
 export function createContractIQ({retrieve,workflow}){
@@ -35,7 +38,7 @@ export function createContractIQ({retrieve,workflow}){
    const line=result.candidates.find(c=>c.line===input.line&&c.quoteSha256===input.quoteSha256);
    if(!line)throw new ReleaseConflict('source candidate mismatch');
    signal.throwIfAborted();
-   return await workflow.importSourceLine({...input,page:line.page,quote:line.quote});
+   return await workflow.importSourceLine({...input,page:line.page,quote:line.quote,algorithm:line.algorithm});
   }finally{source?.data?.fill(0);active--;}
  };
 }

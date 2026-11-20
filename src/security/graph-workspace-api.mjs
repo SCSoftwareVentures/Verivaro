@@ -157,7 +157,7 @@ export function createGraphWorkspaceApi({origin,verifier,admission,resolveSessio
     res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Content-Disposition':'attachment; filename="project-intelligence-'+projectId+'.json"','Cache-Control':'no-store, private','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY','Content-Security-Policy':"default-src 'none'; sandbox; frame-ancestors 'none'",'Cross-Origin-Resource-Policy':'same-origin','Connection':'close','Content-Length':Buffer.byteLength(body),'X-Archive-SHA256':createHash('sha256').update(body).digest('hex')});res.end(body);return;
    }
    const batchImportEnabled=['recordImportLineage','importLineageList'].every(k=>typeof workflow[k]==='function');
-   if(action==='import-lineage-list'){if(!batchImportEnabled)return denied(res,404);return response(res,200,{items:await workflow.importLineageList(scope)});}
+   if(action==='import-lineage-list'){if(!batchImportEnabled)return denied(res,404);return response(res,200,{actorId:p.actorId,items:await workflow.importLineageList(scope)});}
    const evidenceIntelligenceEnabled=['evidenceIntelligence','writeEvidenceMetadata','reviewEvidenceMetadata'].every(k=>typeof workflow[k]==='function');
    if(action==='evidence-intelligence'){if(!evidenceIntelligenceEnabled)return denied(res,404);return response(res,200,await workflow.evidenceIntelligence(scope));}
    const lifecycleEnabled=['lifecycleRecords','writeLifecycleEvent'].every(k=>typeof workflow[k]==='function');
