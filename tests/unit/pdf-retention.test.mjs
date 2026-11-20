@@ -49,3 +49,26 @@ test('future retention, expired approvals and unavailable legal-hold data deny d
  held=true;await assert.rejects(gate(meta,auth,signal));
  assert.throws(()=>createPdfRetentionGate({policyPublicKey:policyKey.publicKey,approvers:[{actorId:actors[0],publicKey:a.publicKey},{actorId:actors[1],publicKey:a.publicKey}],holdLookup:async()=>false}));
 });
+
+test('journal and signed retention gate deny unknown and active holds, permit explicit release',async()=>{
+ const {createLocalPdfHoldRegistry}=await import('../../src/security/pdf-hold-registry.mjs');
+ const root=await mkdtemp(join(tmpdir(),'vv-ret-hold-')),holdRoot=await mkdtemp(join(tmpdir(),'vv-ret-journal-')),key=randomBytes(32),holdKey=randomBytes(32);
+ const policyKey=pair(),a=pair(),b=pair(),actors=[id(),id()],signal=new AbortController().signal;
+ let allowed=true;
+ const registry=createLocalPdfHoldRegistry({root:holdRoot,key:holdKey,authorizeChange:async()=>allowed});
+ const retention=createPdfRetentionGate({policyPublicKey:policyKey.publicKey,approvers:[{actorId:actors[0],publicKey:a.publicKey},{actorId:actors[1],publicKey:b.publicKey}],holdLookup:registry.holdLookup,clock:()=>new Date(now)});
+ const vault=createOriginalPdfQuarantine({root,key,keyId:'originals',scan:async()=> 'clean',retentionGate:retention,withExclusiveHoldLock:registry.withExclusiveHoldLock});
+ try{
+  const m=await vault.put({tenantId:id(),projectId:id(),source,signal}),sc={tenantId:m.tenantId,projectId:m.projectId,quarantineId:m.quarantineId,sourceSha256:m.sha256};
+  const policy=signPdfRetentionDocument({...sc,version:1,action:'delete-original-pdf',policyId:id(),issuedAt:'2026-10-01T00:00:00.000Z',retainUntil:'2026-11-20T00:00:00.000Z',legalHold:false},policyKey.privateKey,'policy');
+  const approvals=[a,b].map((k,i)=>signPdfRetentionDocument({...sc,version:1,action:'delete-original-pdf',policyId:policy.payload.policyId,actorId:actors[i],issuedAt:'2026-11-20T00:00:00.000Z',expiresAt:'2026-11-22T00:00:00.000Z'},k.privateKey,'approval'));
+  const authorization={policy,approvals};
+  await assert.rejects(vault.destroy(m,{authorization,signal})); // no event, unknown
+  await registry.recordHoldChange(m,{actorId:id(),held:true,reason:'Evidence litigation hold active',signal});
+  await assert.rejects(vault.destroy(m,{authorization,signal}));
+  allowed=false;await assert.rejects(registry.recordHoldChange(m,{actorId:id(),held:false,reason:'Not approved for release',signal}));
+  allowed=true;await registry.recordHoldChange(m,{actorId:id(),held:false,reason:'Trusted reviewer released legal hold',signal});
+  assert.equal((await vault.destroy(m,{authorization,signal})).deleted,true);
+  await assert.rejects(vault.read(m,{signal}));
+ }finally{vault.close();registry.close();key.fill(0);holdKey.fill(0);await rm(root,{force:true,recursive:true});await rm(holdRoot,{force:true,recursive:true});}
+});
