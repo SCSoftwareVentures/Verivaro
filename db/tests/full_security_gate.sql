@@ -82,6 +82,10 @@ BEGIN
  JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
  WHERE r.rolname LIKE 'verivaro_%'
    AND n.nspname LIKE 'verivaro%'
+   -- pgcrypto is installed under verivaro_private and legitimately overloads
+   -- names. A service lacking schema USAGE cannot invoke those routines.
+   AND n.nspname <> 'verivaro_private'
+   AND pg_catalog.has_schema_privilege(r.oid,n.oid,'USAGE')
    AND p.prokind IN ('f','p')
    AND pg_catalog.has_function_privilege(r.oid,p.oid,'EXECUTE')
  GROUP BY r.rolname,n.nspname,p.proname
