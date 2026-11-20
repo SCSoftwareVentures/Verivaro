@@ -25,11 +25,11 @@ test('actual Unix socket authenticates requests, refuses wrong keys, validates o
 });
 test('forged response and cancellation fail closed',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'vv-ocr-')),socketPath=join(dir,'w.sock'),key=randomBytes(32),data=fixturePng();
- const peers=new Set(),fake=createServer({allowHalfOpen:true},s=>{peers.add(s);s.on('error',()=>{});s.once('close',()=>peers.delete(s));s.write(randomBytes(32));s.on('data',()=>{});s.on('end',()=>s.end(Buffer.alloc(37)));});
+ let leaked=0;const peers=new Set(),fake=createServer({allowHalfOpen:true},s=>{peers.add(s);s.on('error',()=>{});s.once('close',()=>peers.delete(s));s.on('data',b=>{leaked+=b.length;s.write(randomBytes(64));});s.on('end',()=>s.end());});
  let client;
  try{
   await new Promise(r=>fake.listen(socketPath,r));await chmod(socketPath,0o660);
-  client=createOcrSocketClient({socketPath,key,timeoutMs:1000});await assert.rejects(client(data,new AbortController().signal));
+  client=createOcrSocketClient({socketPath,key,timeoutMs:1000});await assert.rejects(client(data,new AbortController().signal));assert.equal(leaked,32);
   const ac=new AbortController();ac.abort();await assert.rejects(client(data,ac.signal));
  }finally{client?.close();for(const s of peers)s.destroy();await new Promise(r=>fake.close(r));await rm(dir,{recursive:true,force:true});key.fill(0);}
 });
