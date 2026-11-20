@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
-import {readFile} from 'node:fs/promises';
+import {readFile,mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {randomBytes} from 'node:crypto';
+import {startOcrWorker,createOcrSocketClient} from '../../src/security/ocr-socket.mjs';
 import {createTesseractEngine,parseOcrTsv} from '../../src/security/ocr-preview.mjs';
 import {fixturePng} from './evidence-formats-fixture.mjs';
 // Poppler emits P6 PPM; transform an independently rendered synthetic PDF
@@ -7,5 +11,7 @@ import {fixturePng} from './evidence-formats-fixture.mjs';
 const ppm=await readFile(process.argv[2]),header=/^P6\n([1-9]\d*) ([1-9]\d*)\n255\n/.exec(ppm.subarray(0,64).toString('latin1'));
 assert.ok(header);const width=Number(header[1]),height=Number(header[2]),start=header[0].length;assert.equal(ppm.length-start,width*height*3);
 const pixels=Buffer.alloc(height*(width*3+1));for(let y=0;y<height;y++)ppm.copy(pixels,y*(width*3+1)+1,start+y*width*3,start+(y+1)*width*3);
-const png=fixturePng({width,height,pixels}),recognize=createTesseractEngine(),out=await recognize(png,new AbortController().signal);
-try{const rows=parseOcrTsv(out,{width,height});assert.match(rows.map(r=>r.quote).join(' '),/Equipment must carry ID/i);assert.ok(rows.every(r=>r.reviewRequired));console.log('actual_tesseract_synthetic_image_gate_passed');}finally{out.fill(0);png.fill(0);pixels.fill(0);ppm.fill(0);}
+const png=fixturePng({width,height,pixels}),dir=await mkdtemp(join(tmpdir(),'vv-ocr-real-')),socketPath=join(dir,'worker.sock'),key=randomBytes(32);
+let worker,recognize,out;
+try{worker=await startOcrWorker({socketPath,key,recognize:createTesseractEngine()});recognize=createOcrSocketClient({socketPath,key});out=await recognize(png,new AbortController().signal);
+const rows=parseOcrTsv(out,{width,height});assert.match(rows.map(r=>r.quote).join(' '),/Equipment must carry ID/i);assert.ok(rows.every(r=>r.reviewRequired));console.log('actual_tesseract_synthetic_image_gate_passed');}finally{recognize?.close();await worker?.close();await rm(dir,{recursive:true,force:true});key.fill(0);out?.fill(0);png.fill(0);pixels.fill(0);ppm.fill(0);}
