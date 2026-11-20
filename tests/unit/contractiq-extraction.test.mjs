@@ -24,3 +24,17 @@ test('import derives quote from source rather than caller, checks hash and zeroe
 });
 
 test('extended obligation cues retain the exact original and versioned algorithm',()=>{const r=extractRequirementCandidates(Buffer.from('General\nContractor undertakes to provide inspection results.\nNo substitution is permitted.\nEquipment must carry ID.\nReference table'),type);assert.deepEqual(r.candidates.map(x=>[x.line,x.algorithm,x.category]),[[2,'obligation-line-v2','obligation_candidate'],[3,'obligation-line-v2','prohibition'],[4,'modal-line-v1','obligation_candidate']]);assert.equal(r.candidates[0].quoteSha256,hash('Contractor undertakes to provide inspection results.'));});
+
+ test('bounded source cursor reaches every eligible line and refuses invalid cursors',()=>{
+ const data=Buffer.from(Array.from({length:140},(_,i)=>i===64?'Optional note':i===65?'Must '+ 'x'.repeat(1025):'Work must comply '+(i+1)+'.').join('\n'));
+ const a=extractRequirementCandidates(data,type),b=extractRequirementCandidates(data,type,{afterLine:a.nextAfterLine}),c=extractRequirementCandidates(data,type,{afterLine:b.nextAfterLine});
+ assert.deepEqual([a.candidates.length,b.candidates.length,c.candidates.length],[64,64,10]);assert.equal(a.nextAfterLine,64);assert.equal(b.nextAfterLine,130);assert.equal(c.nextAfterLine,null);assert.equal(c.truncated,false);assert.equal(b.candidates[0].line,67);assert.equal(new Set([...a.candidates,...b.candidates,...c.candidates].map(x=>x.line)).size,138);assert.equal(c.matched,139);assert.equal(c.skipped,1);
+ for(const afterLine of [-1,1.5,'1',262145,null])assert.throws(()=>extractRequirementCandidates(data,type,{afterLine}),RangeError);
+ assert.deepEqual(extractRequirementCandidates(data,type,{afterLine:140}).candidates,[]);
+ });
+ test('source import verifies late lines independently of pagination or supplied cursor',async()=>{
+ const quote='Contractor must provide late evidence.',bytes=Buffer.from(Array(80).fill('Work must comply.').concat(quote).join('\n')),sha256=hash(bytes),seen=[];
+ const run=createContractIQ({retrieve:async()=>({data:Buffer.from(bytes),mediaType:type,sha256}),workflow:{assessment:async()=>({canWrite:true}),importSourceLine:async v=>{seen.push(v);return 'ok';}}});const signal=new AbortController().signal;
+ assert.equal(await run({sha256,line:81,quoteSha256:hash(quote),afterLine:999,quote:'forged'},{importLine:true,signal}),'ok');assert.equal(seen[0].quote,quote);
+ await assert.rejects(run({sha256,line:80,quoteSha256:hash(quote)},{importLine:true,signal}));await assert.rejects(run({sha256,line:82,quoteSha256:hash(quote)},{importLine:true,signal}));
+ });

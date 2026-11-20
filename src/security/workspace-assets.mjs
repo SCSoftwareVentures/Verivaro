@@ -771,9 +771,11 @@ el('extractForm').addEventListener('submit',event=>{event.preventDefault();perfo
  if(!current)return;const {base,data}=current,selected=data.evidence.find(e=>e.id===el('extractEvidence').value);
  if(!selected)throw Error('Select a supported source document.');
  const source={evidenceId:selected.id,sha256:selected.sha256},out=el('extractCandidates'),notice=el('extractNotice');
+ const showPage=async(afterLine=0)=>{
  out.replaceChildren();notice.textContent='';
- const result=await api(base+'/verification/extract',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(source)});
- notice.textContent=result.candidates.length+' candidates; '+result.skipped+' skipped'+(result.truncated?' (additional candidates not shown)':'')+'. '+result.warning;
+ const result=await api(base+'/verification/extract',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(afterLine?{...source,afterLine}:source)});
+ if(current?.base!==base||el('extractEvidence').value!==selected.id)return;
+ notice.textContent=result.candidates.length+' candidates on this page; '+result.skipped+' skipped in source'+(result.truncated?' (more candidates available)':'')+'. '+result.warning;
  out.append(link('Download original document',base+'/evidence/'+selected.id+'/download'));
  for(const c of result.candidates){const row=node('article',undefined,'item'),app=graphChoice(graphApplicability,'unknown');
   row.append(node('p',(c.page?'Page '+c.page+' · ':'')+'Line '+c.line,'meta'),node('p',c.quote),node('p',(c.category??'obligation_candidate').replaceAll('_',' ')+' · '+(c.algorithm??result.algorithm),'meta'),graphField('Applicability',app),button('Draft from source',async()=>{
@@ -783,6 +785,9 @@ el('extractForm').addEventListener('submit',event=>{event.preventDefault();perfo
    attempts.delete(key+':id');attempts.delete(key+':version');await loadProject();say('Source-linked requirement drafted.');
   }));out.append(row);
  }
+ if(afterLine)out.append(button('First candidate page',()=>showPage(0)));
+ if(Number.isInteger(result.nextAfterLine)&&result.nextAfterLine>afterLine)out.append(button('Next candidate page',()=>showPage(result.nextAfterLine)));
+ };await showPage();
 });});
 el('extractEvidence').addEventListener('change',()=>{el('extractCandidates').replaceChildren();el('extractNotice').textContent='';});
 el('requirementForm').addEventListener('submit',event=>{event.preventDefault();perform(async()=>{
