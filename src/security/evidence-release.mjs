@@ -8,6 +8,7 @@ import {isArtifactId} from './private-file-store.mjs';
 import {buildProofLockPlan,resolveLocalMilestone} from './prooflock-planner.mjs';
 import {buildFinancialSummary} from './financial-intelligence.mjs';
 import {buildProjectIntelligence} from './project-intelligence.mjs';
+import {buildEvidenceIntelligence} from './evidence-intelligence.mjs';
 import {verifyTrustProofPage} from './trustproof.mjs';
 import {normalizeHandoverConfig} from './handover-templates.mjs';
 import {buildProofLockInsights,validateAlertPolicy} from './prooflock-insights.mjs';
@@ -39,6 +40,9 @@ export function createEvidenceReleaseDatabase(pool,{expectedLogin,verifier,conte
   async prepareSubmission({token,tenantId,projectId,submissionId}){return (await run(token,tenantId,'SELECT verivaro_verification.prepare_submission($1,$2,$3) AS data',[tenantId,projectId,submissionId])).data;},
   async reviewSubmission({token,tenantId,projectId,submissionId,sha256,decision,reason}){return (await run(token,tenantId,'SELECT verivaro_verification.review_submission($1,$2,$3,$4,$5,$6) AS ok',[tenantId,projectId,submissionId,sha256,decision,reason])).ok===true;},
   async authorizeSubmission({token,tenantId,projectId,submissionId,sha256}){return (await run(token,tenantId,'SELECT verivaro_verification.authorize_submission($1,$2,$3,$4) AS ok',[tenantId,projectId,submissionId,sha256])).ok===true;},
+  async evidenceIntelligence({token,tenantId,projectId}){return buildEvidenceIntelligence((await run(token,tenantId,'SELECT verivaro_verification.evidence_intelligence_records($1,$2) AS data',[tenantId,projectId])).data);},
+  async writeEvidenceMetadata({token,tenantId,projectId,versionId,evidenceId,sha256,expectedRevision,kind,identifier,equipment,issuer,issuedOn,expiresOn,reason}){return (await run(token,tenantId,'SELECT verivaro_verification.write_evidence_metadata($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) AS data',[tenantId,projectId,versionId,evidenceId,sha256,expectedRevision,kind,identifier,equipment,issuer,issuedOn,expiresOn,reason])).data;},
+  async reviewEvidenceMetadata({token,tenantId,projectId,versionId,decision,reason}){return (await run(token,tenantId,'SELECT verivaro_verification.review_evidence_metadata($1,$2,$3,$4,$5) AS ok',[tenantId,projectId,versionId,decision,reason])).ok;},
   async lifecycleRecords({token,tenantId,projectId}){return (await run(token,tenantId,'SELECT verivaro_verification.lifecycle_records($1,$2) AS data',[tenantId,projectId])).data;},
   async writeLifecycleEvent({token,tenantId,projectId,eventId,expectedSequence,kind,parentId,reason,retainUntil,backupDays}){return (await run(token,tenantId,'SELECT verivaro_verification.write_lifecycle_event($1,$2,$3,$4,$5,$6,$7,$8,$9) AS data',[tenantId,projectId,eventId,expectedSequence,kind,parentId,reason,retainUntil,backupDays])).data;},
   async portableArchiveInventory({token,tenantId,projectId}){return (await run(token,tenantId,'SELECT verivaro_verification.portable_archive_inventory($1,$2) AS data',[tenantId,projectId])).data;},

@@ -98,7 +98,7 @@ BEGIN
  IF NOT EXISTS(SELECT 1 FROM verivaro.projects x WHERE x.tenant_id=t AND x.id=p AND x.archived_at IS NOT NULL) THEN RAISE EXCEPTION 'archive export requires archived project' USING ERRCODE='42501';END IF;
  r:=verivaro_mutation.project_report(t,p)-'generatedAt';
  IF jsonb_array_length(r->'evidence')>64 OR (r->'summary'->>'bytes')::bigint>16777216 OR EXISTS(SELECT 1 FROM jsonb_array_elements(r->'evidence') x WHERE x->>'storage'<>'encrypted') THEN RAISE EXCEPTION 'portable archive capacity or legacy storage' USING ERRCODE='54000';END IF;
- q:=verivaro_verification.assessment(t,p);
+ q:=verivaro_verification.assessment(t,p)-'evaluatedAt';
  l:=verivaro_verification.lifecycle_records(t,p);
  RETURN jsonb_build_object('version',1,'tenantId',t,'projectId',p,'classification','internal preservation copy; not approval or full database backup','report',r,'assessment',q,'lifecycle',l);
 END $inventory$;
