@@ -229,11 +229,38 @@ jobs:
           VV_RESTORE_APPROVED=1 VV_RESTORE_SPOOL="$backup_root/spool" node services/database-recovery/main.mjs restore "$backup_path" verivaro_restore_ci
           psql -X -v ON_ERROR_STOP=1 -d verivaro_restore_ci -f db/tests/restored_database_gate.sql
           psql -X -v ON_ERROR_STOP=1 -d verivaro_restore_ci -f db/tests/full_security_gate.sql
-          for table in verivaro.tenants verivaro.projects verivaro.evidence verivaro_private.security_incidents verivaro_private.download_leases verivaro_private.project_mutation_receipts verivaro_private.project_mutation_audit verivaro_private.evidence_objects verivaro_private.evidence_access_events verivaro_private.evidence_release_requests verivaro_private.evidence_release_reviews verivaro_private.evidence_release_receipts verivaro_private.project_admin_events verivaro_private.project_archive_receipts verivaro_private.tenant_admin_requests verivaro_private.tenant_transfer_acceptances verivaro_private.tenant_admin_receipts verivaro_private.archive_custody_handover verivaro_private.tenant_invitations verivaro_private.tenant_invitation_cancellations verivaro_private.requirement_versions verivaro_private.requirement_reviews verivaro_private.requirement_evidence_links verivaro_private.requirement_link_reviews verivaro_private.requirement_sources verivaro_private.submission_snapshots verivaro_private.submission_reviews verivaro_private.submission_authorizations verivaro_private.requirement_dependencies verivaro_private.requirement_dependency_reviews verivaro_private.requirement_dependency_removals verivaro_private.requirement_dependency_removal_reviews verivaro_private.prooflock_milestones verivaro_private.prooflock_windows verivaro_private.prooflock_window_reviews verivaro_private.prooflock_capture_receipts verivaro_private.prooflock_alert_policies verivaro_private.prooflock_recovery_proposals verivaro_private.prooflock_recovery_reviews verivaro_private.financial_records verivaro_private.financial_versions verivaro_private.financial_reviews verivaro_private.project_chronology verivaro_private.project_chronology_reviews verivaro_private.acknowledgement_grants verivaro_private.acknowledgement_revocations verivaro_private.acknowledgement_events verivaro_private.resolution_tasks verivaro_private.resolution_task_events verivaro_private.customer_package_grants verivaro_private.customer_package_revocations verivaro_private.customer_package_reads verivaro_private.trustproof_entries verivaro_private.export_template_versions verivaro_private.organisation_template_publications verivaro_private.organisation_template_imports verivaro_private.project_lifecycle_events verivaro_private.evidence_metadata_versions verivaro_private.evidence_metadata_reviews verivaro_private.requirement_document_conditions verivaro_private.evidence_import_lineage; do
-            source_hash="$(psql -X -At -c "SELECT md5(COALESCE(string_agg(row_to_json(t)::text, ',' ORDER BY row_to_json(t)::text),'')) FROM $table t")"
-            restored_hash="$(psql -X -At -d verivaro_restore_ci -c "SELECT md5(COALESCE(string_agg(row_to_json(t)::text, ',' ORDER BY row_to_json(t)::text),'')) FROM $table t")"
+          # Discover all migrated application tables; a new table must not bypass
+          # synthetic restore comparison merely because an allowlist was not updated.
+          table_query="SELECT format('%I.%I', n.nspname, c.relname) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname LIKE 'verivaro%' AND c.relkind IN ('r','p') ORDER BY 1"
+          source_tables="$(psql -X -v ON_ERROR_STOP=1 -At -c "$table_query")"
+          restored_tables="$(psql -X -v ON_ERROR_STOP=1 -At -d verivaro_restore_ci -c "$table_query")"
+          test -n "$source_tables"
+          test "$source_tables" = "$restored_tables"
+          table_count=0
+          while IFS= read -r table; do
+            test -n "$table"
+            source_hash="$(psql -X -v ON_ERROR_STOP=1 -At -c "SELECT md5(COALESCE(string_agg(row_to_json(t)::text, ',' ORDER BY row_to_json(t)::text),'')) FROM $table t")"
+            restored_hash="$(psql -X -v ON_ERROR_STOP=1 -At -d verivaro_restore_ci -c "SELECT md5(COALESCE(string_agg(row_to_json(t)::text, ',' ORDER BY row_to_json(t)::text),'')) FROM $table t")"
             test "$source_hash" = "$restored_hash"
-          done
+            table_count=$((table_count+1))
+          done <<< "$source_tables"
+          # Verify sequence state as well as table rows. A restored identity
+          # sequence at the wrong position can produce duplicate IDs later.
+          sequence_query="SELECT format('%I.%I', n.nspname, c.relname) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname LIKE 'verivaro%' AND c.relkind='S' ORDER BY 1"
+          source_sequences="$(psql -X -v ON_ERROR_STOP=1 -At -c "$sequence_query")"
+          restored_sequences="$(psql -X -v ON_ERROR_STOP=1 -At -d verivaro_restore_ci -c "$sequence_query")"
+          test "$source_sequences" = "$restored_sequences"
+          sequence_count=0
+          if test -n "$source_sequences"; then
+            while IFS= read -r sequence; do
+              test -n "$sequence"
+              source_state="$(psql -X -v ON_ERROR_STOP=1 -At -c "SELECT last_value::text || ':' || is_called::text FROM $sequence")"
+              restored_state="$(psql -X -v ON_ERROR_STOP=1 -At -d verivaro_restore_ci -c "SELECT last_value::text || ':' || is_called::text FROM $sequence")"
+              test "$source_state" = "$restored_state"
+              sequence_count=$((sequence_count+1))
+            done <<< "$source_sequences"
+          fi
+          echo "restore_catalog_verified tables=$table_count sequences=$sequence_count"
           echo "isolated_restore_content_and_security_gate_passed"
           # Independent complete synthetic source using the real schema and real object bytes.
           createdb -w --template=template0 verivaro_bundle_ci
