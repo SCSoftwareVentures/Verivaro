@@ -8,7 +8,6 @@ import {randomUUID,randomBytes,sign,createHash} from 'node:crypto';
 import {local} from '../fixtures/provider-fixture.mjs';
 import {fixturePng} from '../fixtures/evidence-formats-fixture.mjs';
 import {canonicalTextPdf} from '../../src/security/evidence-formats.mjs';
-import {officeFixtures} from '../fixtures/office-evidence-fixture.mjs';
 import {scannerFixture} from '../fixtures/clamd-fixture.mjs';
 import {createClamdScanner} from '../../src/security/clamd-scanner.mjs';
 import {createEvidenceIngestion,createIngestionDatabase,IngestionDenied,IngestionRejected,IngestionConflict,IngestionQuota} from '../../src/security/evidence-ingestion.mjs';
@@ -48,12 +47,11 @@ test('real encrypted evidence registration, required scan, permissions, immutabl
   await assert.rejects(ingest({...input,data:Buffer.from('different')}),IngestionConflict);
   await assert.rejects(admin.query('DELETE FROM verivaro_private.evidence_objects WHERE evidence_id=$1',[id]),e=>e.code==='42501');
   const c=await pool.connect();try{await c.query('SET ROLE verivaro_evidence_ingestor');await assert.rejects(c.query('SELECT * FROM verivaro_private.evidence_objects'),e=>e.code==='42501');await assert.rejects(c.query('INSERT INTO verivaro.evidence(id) VALUES($1)',[randomUUID()]),e=>e.code==='42501');}finally{c.release(true);}
-  for(const [mediaType,data] of [['image/png',fixturePng()],['application/pdf',canonicalTextPdf(['Verified PDF evidence'])],...officeFixtures()]){
+  for(const [mediaType,data] of [['image/png',fixturePng()],['application/pdf',canonicalTextPdf(['Verified PDF evidence'])]]){
    const x=await ingest({...input,data,mediaType,requestId:randomUUID()});
    assert.equal(x.bytes,data.length);
    assert.equal((await admin.query('SELECT media_type FROM verivaro_private.evidence_objects WHERE evidence_id=$1',[x.id])).rows[0].media_type,mediaType);
    const recovered=await source(x.id,{signal:input.signal,maxBytes:262144}),parts=[];for await(const b of recovered)parts.push(Buffer.from(b));assert.deepEqual(Buffer.concat(parts),data);
-   if(mediaType.startsWith('application/vnd.')){await assert.rejects(ingest({...input,data:Buffer.concat([data,Buffer.from('tail')]),mediaType,requestId:randomUUID()}),IngestionRejected);}
 
   }
   // Exact actor storage budget exercised with real encrypted 256 KiB objects.

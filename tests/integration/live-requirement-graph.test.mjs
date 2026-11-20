@@ -7,6 +7,7 @@ import {buildRejectionPreflight} from '../../src/security/rejection-preflight.mj
 import {compareSubmissionGraph} from '../../src/security/change-impact.mjs';
 import {local} from '../fixtures/provider-fixture.mjs';
 import {canonicalPagedTextPdf} from '../../src/security/evidence-formats.mjs';
+import {officeFixtures} from '../fixtures/office-evidence-fixture.mjs';
 import {createContractIQ} from '../../src/security/contractiq-extraction.mjs';
 import {createEvidenceReader} from '../../src/security/evidence-retrieval.mjs';
 import {createEvidenceIngestion,createIngestionDatabase} from '../../src/security/evidence-ingestion.mjs';
@@ -221,6 +222,24 @@ test('persistent graph independently reviews exact versions and links; contradic
    assert.equal(saved.ruleDecision,'pending');assert.equal(saved.source.algorithm,'manual-source-line-v1');assert.equal(saved.source.line,1);
    await assert.rejects(extract({...args,versionId:randomUUID(),requirementId:randomUUID()},{signal,importLine:true}),ReleaseConflict);
    await assert.rejects(extract({...source,token:actors.viewer.token},{signal}),ReleaseDenied);
+   const auditBefore=await graph.trustproofPage(as('owner',{afterSequence:0,pageSize:256}));
+   for(const [mediaType,data] of officeFixtures()){
+    const o=await ingest(as('author',{data,mediaType,requestId:randomUUID(),signal}));
+    const sc=as('author',{evidenceId:o.id,sha256:o.sha256});
+    const recovered=await retrieve(sc);assert.deepEqual(recovered.data,data);recovered.data.fill(0);
+    const result=await extract(sc,{signal});assert.equal(result.candidates.length,1);
+    const c=result.candidates[0],args={...sc,requirementId:randomUUID(),versionId:randomUUID(),line:c.line,quoteSha256:c.quoteSha256,applicability:'unknown'};
+    await assert.rejects(extract({...args,quoteSha256:'0'.repeat(64)},{signal,importLine:true}),ReleaseConflict);
+    await extract({...args,location:{forged:true}},{signal,importLine:true});await extract(args,{signal,importLine:true});
+    const saved=(await graph.assessment(as('viewer'))).requirements.find(q=>q.versionId===args.versionId);
+    assert.deepEqual(saved.source.location,c.location);assert.equal(saved.ruleDecision,'pending');assert.equal(saved.source.algorithm,'office-source-span-v1');
+    await assert.rejects(extract({...args,requirementId:randomUUID(),versionId:randomUUID()},{signal,importLine:true}),ReleaseConflict);
+    await assert.rejects(graph.importSourceLine({...args,quote:c.quote,algorithm:c.algorithm,location:{forged:true}}),ReleaseDenied);
+    await assert.rejects(extract({...sc,token:actors.viewer.token},{signal}),ReleaseDenied);
+   }
+   const auditAfter=await graph.trustproofPage(as('owner',{afterSequence:0,pageSize:256}));
+   assert.ok(auditAfter.entries.every(e=>e.sourceIntact));assert.deepEqual(auditAfter.entries.slice(0,auditBefore.entries.length),auditBefore.entries);
+   await assert.rejects(admin.query('UPDATE verivaro_private.requirement_sources SET office_location=NULL WHERE false'),e=>e.code==='42501');
   }finally{await readerPool.end();}
   await graph.archiveProject(as('owner',{requestId:randomUUID(),revision:0}));
   await assert.rejects(graph.writeRequirement(as('author',{...rule,requirementId:randomUUID(),versionId:randomUUID()})),ReleaseDenied);

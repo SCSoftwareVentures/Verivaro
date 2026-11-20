@@ -695,7 +695,7 @@ async function renderBatchImport(g){
 async function loadGraph(){
  const {base,data}=current,g=await api(base+'/verification'),items=el('graphItems'),metrics=el('graphMetrics');
  el('graphPanel').hidden=false;el('requirementForm').hidden=!g.canWrite;items.replaceChildren();metrics.replaceChildren();
- const sources=data.evidence.filter(e=>['text/plain; charset=utf-8','application/pdf'].includes(e.mediaType));el('contractIQ').hidden=!(g.canWrite&&g.extractionEnabled&&sources.length);el('extractEvidence').replaceChildren();for(const e of sources)option(el('extractEvidence'),e.id,'Document '+e.id.slice(-8));
+ const sources=data.evidence.filter(e=>['text/plain; charset=utf-8','application/pdf','application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'].includes(e.mediaType));el('contractIQ').hidden=!(g.canWrite&&g.extractionEnabled&&sources.length);el('extractEvidence').replaceChildren();for(const e of sources)option(el('extractEvidence'),e.id,'Document '+e.id.slice(-8));
  const status={blocked:'Blocked — unresolved requirements',not_assessed:'Not assessed — no mandatory criteria',criteria_satisfied:'Reviewed mandatory criteria satisfied'};
  el('graphStatus').textContent=status[g.summary.status]||'Assessment unavailable';
  renderPreflight(g);renderCsvImport(g);
@@ -703,7 +703,7 @@ async function loadGraph(){
  for(const [label,value] of [['Requirements',g.summary.requirements],['Mandatory criteria',g.summary.required],['Satisfied mandatory',g.summary.verifiedRequired],['Blockers',g.summary.blockers]]){const tile=node('div',undefined,'metric');tile.append(node('strong',String(value)),node('span',label));metrics.append(tile);}
  for(const q of g.requirements){
   const row=node('article',undefined,'item');row.id='requirement-'+q.requirementId;row.append(node('h3',q.title),node('p',q.criterion),node('p','Revision '+q.revision+' | '+q.applicability+' | Rule '+q.ruleDecision,'meta'),node('p',q.state.replaceAll('_',' '),'state'));
-  if(q.source){row.append(node('p','Source: '+q.source.evidenceId+' | '+(q.source.page?'Page '+q.source.page+' | ':'')+'Line '+q.source.line,'meta'),node('p','Source SHA-256: '+q.source.sha256,'meta'),node('p','Quote SHA-256: '+q.source.quoteSha256,'meta'),link('Download source document',base+'/evidence/'+q.source.evidenceId+'/download'));}
+  if(q.source){row.append(node('p','Source: '+q.source.evidenceId+' | '+(q.source.location?(q.source.location.paragraph?'Paragraph '+q.source.location.paragraph:q.source.location.sheet+'!'+q.source.location.cell)+' | ':q.source.page?'Page '+q.source.page+' | ':'')+'Source ordinal '+q.source.line,'meta'),node('p','Source SHA-256: '+q.source.sha256,'meta'),node('p','Quote SHA-256: '+q.source.quoteSha256,'meta'),link('Download source document',base+'/evidence/'+q.source.evidenceId+'/download'));}
   if(q.ruleReason)row.append(node('p','Rule review: '+q.ruleReason));
   if(q.documentCondition){const c=q.documentCondition;row.append(node('p','Document condition: '+c.kind+' · '+c.identifier+' · '+c.equipment+' · '+c.status.replaceAll('_',' '),'state'),node('p','Exact metadata '+c.metadataVersionId+' · issuer not authenticated','meta'));}
   const pins=q.dependencyPins??[];
@@ -778,7 +778,7 @@ el('extractForm').addEventListener('submit',event=>{event.preventDefault();perfo
  notice.textContent=result.candidates.length+(manual?' source lines on this page; ':' candidates on this page; ')+result.skipped+' skipped in source'+(result.truncated?' (more candidates available)':'')+'. '+result.warning;
  out.append(link('Download original document',base+'/evidence/'+selected.id+'/download'));
  for(const c of result.candidates){const row=node('article',undefined,'item'),app=graphChoice(graphApplicability,'unknown');
-  row.append(node('p',(c.page?'Page '+c.page+' · ':'')+'Line '+c.line,'meta'),node('p',c.quote),node('p',(c.category??'obligation_candidate').replaceAll('_',' ')+' · '+(c.algorithm??result.algorithm),'meta'),graphField('Applicability',app),button('Draft from source',async()=>{
+  row.append(node('p',(c.location?(c.location.paragraph?'Paragraph '+c.location.paragraph:c.location.sheet+'!'+c.location.cell)+' · ':c.page?'Page '+c.page+' · ':'')+'Line '+c.line,'meta'),node('p',c.quote),node('p',(c.category??'obligation_candidate').replaceAll('_',' ')+' · '+(c.algorithm??result.algorithm),'meta'),graphField('Applicability',app),button('Draft from source',async()=>{
    if(!confirm('Create this source-linked draft? An independent reviewer must assess it.'))return;
    const key=base+':source:'+selected.id+':'+c.line+':'+app.value+(manual?':manual':'');
    await graphPost('import-source',{...source,line:c.line,quoteSha256:c.quoteSha256,requirementId:retryId(key+':id'),versionId:retryId(key+':version'),applicability:app.value});

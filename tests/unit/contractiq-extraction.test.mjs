@@ -65,3 +65,15 @@ test('manual review pages expose non-modal lines without interpreting them or ac
  await assert.rejects(run({...inputs,manual:true,quoteSha256:'0'.repeat(64)},{importLine:true,signal}));
  await run({...inputs,manual:true,quote:'forged'},{importLine:true,signal});assert.equal(seen[0].quote,quote);assert.equal(seen[0].algorithm,'manual-source-line-v1');
 });
+
+test('Office source candidates and imports rederive exact coordinates from original encrypted bytes',async()=>{
+ const {officeFixtures}=await import('../fixtures/office-evidence-fixture.mjs');
+ for(const [mediaType,data] of officeFixtures()){
+  const sha256=hash(data),r=extractRequirementCandidates(data,mediaType),c=r.candidates[0],calls=[];
+  assert.equal(r.candidates.length,1);assert.equal(c.algorithm,'office-source-span-v1');assert.match(c.location.partSha256,/^[a-f0-9]{64}$/);
+  const run=createContractIQ({retrieve:async()=>({data:Buffer.from(data),sha256,mediaType}),workflow:{assessment:async()=>({canWrite:true}),importSourceLine:async v=>calls.push(v)}});
+  const signal=new AbortController().signal,args={sha256,line:c.line,quoteSha256:c.quoteSha256,location:{forged:true},page:99};
+  await run(args,{signal,importLine:true});assert.deepEqual(calls[0].location,c.location);assert.equal(calls[0].page,null);
+  await assert.rejects(run({...args,quoteSha256:'0'.repeat(64)},{signal,importLine:true}));
+ }
+});

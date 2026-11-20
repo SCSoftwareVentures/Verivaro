@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {randomBytes,randomUUID,createHash} from 'node:crypto';
 import {validateEvidence,sealEvidence,openEvidence} from '../../src/security/evidence-objects.mjs';
 import {createEvidenceIngestion,IngestionRejected} from '../../src/security/evidence-ingestion.mjs';
-import {extractRequirementCandidates,UnsupportedExtraction} from '../../src/security/contractiq-extraction.mjs';
+import {extractRequirementCandidates} from '../../src/security/contractiq-extraction.mjs';
 import {officeFixtures} from '../fixtures/office-evidence-fixture.mjs';
 import {planBatchImport,encodeBatchCheckpoint,decodeBatchCheckpoint} from '../../src/security/batch-import.mjs';
 const hash=b=>createHash('sha256').update(b).digest('hex');
@@ -14,7 +14,7 @@ test('Office evidence accepts only strict schemas, authenticates original media 
   const m=sealEvidence(data,{tenantId,projectId,key,keyId:'fixture',mediaType});assert.deepEqual(openEvidence(m,key),data);
   assert.throws(()=>openEvidence({...m,mediaType:'application/pdf'},key));
   assert.throws(()=>validateEvidence(Buffer.concat([data,Buffer.from('tail')]),mediaType));
-  assert.throws(()=>extractRequirementCandidates(data,mediaType),UnsupportedExtraction);
+  assert.equal(extractRequirementCandidates(data,mediaType).candidates.length,1);
  }
 });
 test('Office ingestion scans exact original and rejects malformed bytes before commit',async()=>{
