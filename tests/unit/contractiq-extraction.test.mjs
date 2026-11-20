@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {extractRequirementCandidates,createContractIQ} from '../../src/security/contractiq-extraction.mjs';
-import {canonicalTextPdf} from '../../src/security/evidence-formats.mjs';
+import {canonicalTextPdf,canonicalPagedTextPdf} from '../../src/security/evidence-formats.mjs';
 const hash=b=>createHash('sha256').update(b).digest('hex'),type='text/plain; charset=utf-8';
 test('source candidates retain exact trimmed line and negation, deterministic whole-file and quote hashes',()=>{
  const data=Buffer.from('Introduction\r\n  Equipment must carry a label.  \r\nStaff shall not bypass guards.\nMustard is optional.\n');
@@ -38,3 +38,13 @@ test('extended obligation cues retain the exact original and versioned algorithm
  assert.equal(await run({sha256,line:81,quoteSha256:hash(quote),afterLine:999,quote:'forged'},{importLine:true,signal}),'ok');assert.equal(seen[0].quote,quote);
  await assert.rejects(run({sha256,line:80,quoteSha256:hash(quote)},{importLine:true,signal}));await assert.rejects(run({sha256,line:82,quoteSha256:hash(quote)},{importLine:true,signal}));
  });
+
+test('multi-page PDF candidates retain actual page and global line across pagination',async()=>{
+ const pages=[Array(40).fill('Work must comply.'),Array(40).fill('Work is mandatory.'),['Equipment must carry ID.']],data=canonicalPagedTextPdf(pages),sha256=hash(data);
+ const a=extractRequirementCandidates(data,'application/pdf'),b=extractRequirementCandidates(data,'application/pdf',{afterLine:a.nextAfterLine});
+ assert.deepEqual(a.candidates.slice(39,41).map(x=>[x.line,x.page]),[[40,1],[41,2]]);
+ assert.deepEqual(b.candidates.at(-1),{line:81,page:3,quote:pages[2][0],quoteSha256:hash(pages[2][0]),algorithm:'modal-line-v1',category:'obligation_candidate'});
+ assert.equal(b.truncated,false);
+ const seen=[],run=createContractIQ({retrieve:async()=>({data:Buffer.from(data),mediaType:'application/pdf',sha256}),workflow:{assessment:async()=>({canWrite:true}),importSourceLine:async v=>seen.push(v)}});
+ await run({sha256,line:81,quoteSha256:hash(pages[2][0]),page:1},{importLine:true,signal:new AbortController().signal});assert.equal(seen[0].page,3);
+});

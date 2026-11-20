@@ -27,22 +27,38 @@ export function validatePng(b){
  for(let i=0;i<buffer.length;i+=stride)if(buffer[i]>4)throw Error('invalid PNG filter');
  return b;
 }
-// Deliberately narrow canonical PDF subset: one page, Helvetica, plain ASCII
-// text only. Exact reconstruction also verifies all object/xref offsets.
-// General PDF, attachments, images, compressed streams and active content reject.
-export function canonicalTextPdf(lines){
- if(!Array.isArray(lines)||lines.length<1||lines.length>40||lines.some(x=>typeof x!=='string'||!/^[A-Za-z0-9 .,!?_:;@+\/-]{1,90}$/.test(x)))throw Error('unsupported PDF text');
- const stream='BT\n/F1 12 Tf\n50 750 Td\n'+lines.map((s,i)=>(i?'0 -16 Td\n':'')+'('+s+') Tj\n').join('')+'ET\n';
- const objs=['<< /Type /Catalog /Pages 2 0 R >>','<< /Type /Pages /Kids [3 0 R] /Count 1 >>','<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>','<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>','<< /Length '+Buffer.byteLength(stream)+' >>\nstream\n'+stream+'endstream'];
+// Canonical PDF subset: up to 32 pages of uncompressed ASCII text.
+// Existing single-page representation remains byte-for-byte compatible.
+// Byte-exact reconstruction rejects arbitrary object graphs and active content.
+export const PDF_MAX_PAGES=32,PDF_MAX_LINES_PER_PAGE=40;
+const pdfLine=/^[A-Za-z0-9 .,!?_:;@+\/-]{1,90}$/;
+export function canonicalTextPdf(lines){return canonicalPagedTextPdf([lines]);}
+export function canonicalPagedTextPdf(pages){
+ if(!Array.isArray(pages)||pages.length<1||pages.length>PDF_MAX_PAGES||pages.some(lines=>!Array.isArray(lines)||lines.length<1||lines.length>PDF_MAX_LINES_PER_PAGE||Array.from(lines).some(x=>typeof x!=='string'||!pdfLine.test(x))))throw Error('unsupported PDF text');
+ const pageIds=pages.map((_,i)=>i===0?3:4+2*i);
+ const objs=['<< /Type /Catalog /Pages 2 0 R >>','<< /Type /Pages /Kids ['+pageIds.map(id=>id+' 0 R').join(' ')+'] /Count '+pages.length+' >>'];
+ for(let i=0;i<pages.length;i++){
+  const pageId=pageIds[i],contentId=i===0?5:pageId+1,lines=pages[i];
+  const stream='BT\n/F1 12 Tf\n50 750 Td\n'+lines.map((s,j)=>(j?'0 -16 Td\n':'')+'('+s+') Tj\n').join('')+'ET\n';
+  objs[pageId-1]='<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents '+contentId+' 0 R >>';
+  objs[contentId-1]='<< /Length '+Buffer.byteLength(stream)+' >>\nstream\n'+stream+'endstream';
+ }
+ objs[3]='<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';
  let out='%PDF-1.4\n',offsets=[];
  for(let i=0;i<objs.length;i++){offsets.push(Buffer.byteLength(out));out+=(i+1)+' 0 obj\n'+objs[i]+'\nendobj\n';}
- const xref=Buffer.byteLength(out);
- out+='xref\n0 6\n0000000000 65535 f \n'+offsets.map(x=>String(x).padStart(10,'0')+' 00000 n \n').join('')+'trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n'+xref+'\n%%EOF\n';
+ const xref=Buffer.byteLength(out),count=objs.length+1;
+ out+='xref\n0 '+count+'\n0000000000 65535 f \n'+offsets.map(x=>String(x).padStart(10,'0')+' 00000 n \n').join('')+'trailer\n<< /Size '+count+' /Root 1 0 R >>\nstartxref\n'+xref+'\n%%EOF\n';
  return Buffer.from(out);
 }
-export function validatePdf(b){
- if(b.length>16384)throw Error('unsupported PDF size');
- const s=b.toString('latin1'),matches=[...s.matchAll(/^\(([A-Za-z0-9 .,!?_:;@+\/-]{1,90})\) Tj$/gm)].map(x=>x[1]);
- if(!canonicalTextPdf(matches).equals(b))throw Error('unsupported PDF structure');
- return b;
+export function readCanonicalPdfPages(b){
+ if(!Buffer.isBuffer(b)||b.length<1||b.length>262144)throw Error('unsupported PDF size');
+ const s=b.toString('latin1'),pages=[];
+ for(const stream of s.matchAll(/^stream\nBT\n\/F1 12 Tf\n50 750 Td\n([\s\S]*?)^ET\nendstream$/gm)){
+  if(pages.length>=PDF_MAX_PAGES)throw Error('too many PDF pages');
+  const lines=[...stream[1].matchAll(/^\(([A-Za-z0-9 .,!?_:;@+\/-]{1,90})\) Tj$/gm)].map(x=>x[1]);
+  pages.push(lines);
+ }
+ if(!canonicalPagedTextPdf(pages).equals(b))throw Error('unsupported PDF structure');
+ return pages;
 }
+export function validatePdf(b){readCanonicalPdfPages(b);return b;}

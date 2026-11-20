@@ -6,6 +6,9 @@ import {randomUUID,randomBytes,sign} from 'node:crypto';
 import {buildRejectionPreflight} from '../../src/security/rejection-preflight.mjs';
 import {compareSubmissionGraph} from '../../src/security/change-impact.mjs';
 import {local} from '../fixtures/provider-fixture.mjs';
+import {canonicalPagedTextPdf} from '../../src/security/evidence-formats.mjs';
+import {createContractIQ} from '../../src/security/contractiq-extraction.mjs';
+import {createEvidenceReader} from '../../src/security/evidence-retrieval.mjs';
 import {createEvidenceIngestion,createIngestionDatabase} from '../../src/security/evidence-ingestion.mjs';
 import {createEvidenceReleaseDatabase,ReleaseDenied,ReleaseConflict} from '../../src/security/evidence-release.mjs';
 if(process.env.VV_LIVE_TEST!=='1'||process.env.PGDATABASE!=='verivaro_test'||!process.env.VV_TEST_DRIVER_DIR||!process.env.VV_INGEST_PASSWORD)throw Error('disposable CI only');
@@ -27,7 +30,8 @@ test('persistent graph independently reviews exact versions and links; contradic
   }
   await admin.query("INSERT INTO verivaro.project_members(tenant_id,project_id,actor_id,role) VALUES($1,$2,$3,'contributor')",[tenantId,foreignProject,actors.author.a]);
   const contextKey=(await admin.query('SELECT key_bytes FROM verivaro_private.context_key WHERE singleton')).rows[0].key_bytes;
-  const graph=createEvidenceReleaseDatabase(runtime,{expectedLogin:'vv_ci_runtime',verifier,contextKey,mode:'workflow'}),ingest=createEvidenceIngestion({db:createIngestionDatabase(ingestPool,{expectedLogin:'vv_ci_ingest',verifier,contextKey}),scan:async()=> 'clean',key:randomBytes(32),keyId:'graph-fixture'});
+  const graphKey=randomBytes(32);
+  const graph=createEvidenceReleaseDatabase(runtime,{expectedLogin:'vv_ci_runtime',verifier,contextKey,mode:'workflow'}),ingest=createEvidenceIngestion({db:createIngestionDatabase(ingestPool,{expectedLogin:'vv_ci_ingest',verifier,contextKey}),scan:async()=> 'clean',key:graphKey,keyId:'graph-fixture'});
   const as=(who,x={})=>({...scope,token:actors[who].token,...x});
   const status=async()=> (await graph.assessment(as('viewer'))).summary;
   assert.equal((await status()).status,'not_assessed');
@@ -194,6 +198,24 @@ test('persistent graph independently reviews exact versions and links; contradic
   console.log('persistent_prooflock_scope_schedule_review_history_gate_passed');
   const c=await runtime.connect();try{await c.query('SET ROLE verivaro_runtime');await assert.rejects(c.query('SELECT * FROM verivaro_private.requirement_versions'),e=>e.code==='42501');}finally{c.release(true);}
   for(const table of ['requirement_versions','requirement_reviews','requirement_evidence_links','requirement_link_reviews'])await assert.rejects(admin.query('DELETE FROM verivaro_private.'+table+' WHERE false'),e=>e.code==='42501');
+  // Real encrypted retrieval, extraction and persistent page provenance.
+  const readerPool=new Pool({...cfg,user:'vv_ci_evidence_reader',password:process.env.VV_EVIDENCE_READER_PASSWORD});
+  try{
+   const retrieve=createEvidenceReader(readerPool,{expectedLogin:'vv_ci_evidence_reader',verifier,contextKey,readKey:async()=>graphKey});
+   const extract=createContractIQ({retrieve,workflow:graph});
+   const pdf=canonicalPagedTextPdf([Array(40).fill('Introduction'),['Equipment must carry ID.','Inspection is mandatory.']]);
+   const obj=await ingest(as('author',{data:pdf,mediaType:'application/pdf',requestId:randomUUID(),signal}));
+   const source=as('author',{evidenceId:obj.id,sha256:obj.sha256});
+   const result=await extract(source,{signal});assert.deepEqual(result.candidates.map(c=>[c.line,c.page,c.algorithm]),[[41,2,'modal-line-v1'],[42,2,'obligation-line-v2']]);
+   for(const c of result.candidates){
+    const args={...source,requirementId:randomUUID(),versionId:randomUUID(),line:c.line,quoteSha256:c.quoteSha256,applicability:'unknown'};
+    await extract(args,{signal,importLine:true});
+    const saved=(await graph.assessment(as('viewer'))).requirements.find(q=>q.versionId===args.versionId);
+    assert.equal(saved.source.page,2);assert.equal(saved.source.line,c.line);assert.equal(saved.source.algorithm,c.algorithm);
+    await assert.rejects(graph.importSourceLine({...args,page:1,quote:c.quote,algorithm:c.algorithm}),ReleaseDenied);
+   }
+   await assert.rejects(extract({...source,token:actors.viewer.token},{signal}),ReleaseDenied);
+  }finally{await readerPool.end();}
   await graph.archiveProject(as('owner',{requestId:randomUUID(),revision:0}));
   await assert.rejects(graph.writeRequirement(as('author',{...rule,requirementId:randomUUID(),versionId:randomUUID()})),ReleaseDenied);
   assert.equal((await status()).status,'blocked');
