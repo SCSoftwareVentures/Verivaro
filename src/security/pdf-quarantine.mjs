@@ -116,7 +116,7 @@ export function createOriginalPdfQuarantine({root,key,keyId,scan,retentionGate,w
     await directory.sync();
     signal.throwIfAborted();
     const same=await lstat(originalPath);
-    if(same.dev!==before.dev||same.ino!==before.ino||same.size!==before.size||!same.isFile())fail();
+    if(same.dev!==before.dev||same.ino!==before.ino||same.size!==before.size||same.mtimeMs!==before.mtimeMs||same.ctimeMs!==before.ctimeMs||!same.isFile())fail();
     await unlink(originalPath);await directory.sync();
     // Final signing failure leaves an intent tombstone for explicit reconciliation.
     const completed=await deletionLedger.complete(meta,prepared,originalPath,signal);

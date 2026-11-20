@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,rm,readdir,readFile,writeFile} from 'node:fs/promises';
+import {mkdtemp,rm,readdir,readFile,writeFile,lstat,utimes} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {generateKeyPairSync,randomBytes,randomUUID} from 'node:crypto';
@@ -79,4 +79,22 @@ test('journal and signed retention gate deny unknown and active holds, permit ex
   assert.equal((await vault.destroy(m,{authorization,signal})).deleted,true);assert.equal((await ledger.read(m,{signal})).status,'completed');
   await assert.rejects(vault.read(m,{signal}));
  }finally{vault.close();registry.close();ledger.close();replica.close();key.fill(0);holdKey.fill(0);await rm(root,{force:true,recursive:true});await rm(holdRoot,{force:true,recursive:true});await rm(ledgerRoot,{force:true,recursive:true});await rm(replicaRoot,{force:true,recursive:true});}
+});
+
+test('asynchronous source mutation after approval preflight blocks unlink even with matching inode and size',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'vv-race-vault-')),ledgerRoot=await mkdtemp(join(tmpdir(),'vv-race-ledger-')),replicaRoot=await mkdtemp(join(tmpdir(),'vv-race-replica-')),key=randomBytes(32),pairKeys=pair(),signal=new AbortController().signal;
+ const replica=createLocalPdfDeletionReplica({root:replicaRoot,trustedKey:pairKeys.publicKey}),ledger=createLocalPdfDeletionLedger({root:ledgerRoot,privateKey:pairKeys.privateKey,replica});
+ let file;
+ const vault=createOriginalPdfQuarantine({root,key,keyId:'race',scan:async()=> 'clean',
+  retentionGate:async()=>{const b=await readFile(file);try{b[20]^=0x20;await writeFile(file,b);await utimes(file,new Date(0),new Date(0));}finally{b.fill(0);}return true;},
+  withExclusiveHoldLock:async(_m,fn)=>fn(),deletionLedger:ledger});
+ try{
+  const m=await vault.put({source,tenantId:id(),projectId:id(),signal});file=join(root,m.quarantineId+'.vvq');
+  const before=await lstat(file);
+  await assert.rejects(vault.destroy(m,{authorization:{synthetic:true},signal}));
+  const after=await lstat(file);
+  assert.equal(after.ino,before.ino);assert.equal(after.size,before.size);
+  assert.equal((await ledger.read(m,{signal})).status,'prepared');
+  assert.equal((await readdir(root)).some(name=>name.endsWith('.deleted')),false);
+ }finally{vault.close();ledger.close();replica.close();key.fill(0);await rm(root,{recursive:true,force:true});await rm(ledgerRoot,{recursive:true,force:true});await rm(replicaRoot,{recursive:true,force:true});}
 });
