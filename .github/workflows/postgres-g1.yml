@@ -250,11 +250,12 @@ jobs:
           skipped_quarantine_tables=0
           while IFS= read -r table; do
             test -n "$table"
-            # Quarantine revokes/rotates/clears precisely these stateful controls.
+            # Quarantine revokes/rotates/clears precisely these stateful controls,
+            # including actor_share_generations via the disabled_actors INSERT trigger.
             # Compare their post-restore invariants in restored_database_gate.sql,
             # not raw row hashes. Future mutations must update this audited list.
             case "$table" in
-              verivaro_private.identity_sessions|verivaro_private.identity_events|verivaro_private.disabled_actors|verivaro_private.recovery_operators|verivaro_private.login_challenges|verivaro_private.browser_flows|verivaro_private.browser_sessions|verivaro_private.auth_telemetry|verivaro_private.api_rate_keys|verivaro_private.api_rate_state|verivaro_private.share_grants|verivaro_private.share_events|verivaro_private.released_exports|verivaro_private.context_key|verivaro_private.alert_outbox|verivaro_private.monitor_state)
+              verivaro_private.identity_sessions|verivaro_private.identity_events|verivaro_private.disabled_actors|verivaro_private.actor_share_generations|verivaro_private.recovery_operators|verivaro_private.login_challenges|verivaro_private.browser_flows|verivaro_private.browser_sessions|verivaro_private.auth_telemetry|verivaro_private.api_rate_keys|verivaro_private.api_rate_state|verivaro_private.share_grants|verivaro_private.share_events|verivaro_private.released_exports|verivaro_private.context_key|verivaro_private.alert_outbox|verivaro_private.monitor_state)
                 skipped_quarantine_tables=$((skipped_quarantine_tables+1))
                 continue ;;
             esac
