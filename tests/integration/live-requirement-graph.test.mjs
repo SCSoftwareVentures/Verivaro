@@ -214,6 +214,12 @@ test('persistent graph independently reviews exact versions and links; contradic
     assert.equal(saved.source.page,2);assert.equal(saved.source.line,c.line);assert.equal(saved.source.algorithm,c.algorithm);
     await assert.rejects(graph.importSourceLine({...args,page:1,quote:c.quote,algorithm:c.algorithm}),ReleaseDenied);
    }
+   const manual=await extract({...source,manual:true},{signal});
+   const c=manual.candidates[0],args={...source,manual:true,requirementId:randomUUID(),versionId:randomUUID(),line:c.line,quoteSha256:c.quoteSha256,applicability:'unknown'};
+   await extract(args,{signal,importLine:true});await extract(args,{signal,importLine:true});
+   const saved=(await graph.assessment(as('viewer'))).requirements.find(q=>q.versionId===args.versionId);
+   assert.equal(saved.ruleDecision,'pending');assert.equal(saved.source.algorithm,'manual-source-line-v1');assert.equal(saved.source.line,1);
+   await assert.rejects(extract({...args,versionId:randomUUID(),requirementId:randomUUID()},{signal,importLine:true}),ReleaseConflict);
    await assert.rejects(extract({...source,token:actors.viewer.token},{signal}),ReleaseDenied);
   }finally{await readerPool.end();}
   await graph.archiveProject(as('owner',{requestId:randomUUID(),revision:0}));

@@ -53,3 +53,15 @@ test('compressed PDF candidates retain exact escaped text, digest and original p
  const quote='Contractor must retain (signed) C:\\records.',data=canonicalPagedTextPdf([['General'],[quote]],{compressed:true});
  const r=extractRequirementCandidates(data,'application/pdf');assert.equal(r.sha256,hash(data));assert.deepEqual(r.candidates.map(c=>[c.page,c.line,c.quote,c.quoteSha256]),[[2,2,quote,hash(quote)]]);
 });
+
+test('manual review pages expose non-modal lines without interpreting them or accepting blank lines',async()=>{
+ const quote='Provide inspection reports to the principal.',data=Buffer.from(['Introduction','',quote,'Equipment must carry ID.'].join('\n')),sha256=hash(data);
+ assert.deepEqual(extractRequirementCandidates(data,type).candidates.map(x=>x.line),[4]);
+ const r=extractRequirementCandidates(data,type,{manual:true});assert.deepEqual(r.candidates.map(x=>[x.line,x.algorithm,x.category]),[[1,'manual-source-line-v1','manual_review'],[3,'manual-source-line-v1','manual_review'],[4,'manual-source-line-v1','manual_review']]);
+ assert.throws(()=>extractRequirementCandidates(data,type,{manual:'yes'}));
+ const seen=[],run=createContractIQ({retrieve:async()=>({data:Buffer.from(data),mediaType:type,sha256}),workflow:{assessment:async()=>({canWrite:true}),importSourceLine:async v=>seen.push(v)}});
+ const inputs={sha256,line:3,quoteSha256:hash(quote)},signal=new AbortController().signal;
+ await assert.rejects(run(inputs,{importLine:true,signal}));
+ await assert.rejects(run({...inputs,manual:true,quoteSha256:'0'.repeat(64)},{importLine:true,signal}));
+ await run({...inputs,manual:true,quote:'forged'},{importLine:true,signal});assert.equal(seen[0].quote,quote);assert.equal(seen[0].algorithm,'manual-source-line-v1');
+});
