@@ -272,11 +272,13 @@ test('persistent graph independently reviews exact versions and links; contradic
    decoded.png.fill(0);
    const secondPixels=Buffer.alloc(60*301);secondPixels[1]=127;
    const multipage=canonicalMultipageScannedPdf([png,fixturePng({width:100,height:60,pixels:secondPixels})]),multiStored=await ingest(as('author',{data:multipage,mediaType:'application/pdf',requestId:randomUUID(),signal}));
-   const multiSource=as('author',{evidenceId:multiStored.id,sha256:multiStored.sha256}),mp=await scanRecognize({...multiSource,page:2},{signal});
+   const multiSource=as('author',{evidenceId:multiStored.id,sha256:multiStored.sha256});
+   const multiRecognize=createOcrPreview({retrieve,assessment:input=>graph.assessment(input),recognize:async()=>tsv(),importSource:input=>graph.importOcrSource(input)});
+   const mp=await multiRecognize({...multiSource,page:2},{signal});
    assert.equal(mp.pageCount,2);assert.equal(mp.page,2);
    const mr=mp.regions[0],ma={...multiSource,page:2,requirementId:randomUUID(),versionId:randomUUID(),ordinal:mr.ordinal,quoteSha256:mr.quoteSha256,regionDigest:mr.regionDigest,applicability:'unknown',confirm:true};
-   await assert.rejects(scanRecognize({...ma,page:1},{signal,importRegion:true}),ReleaseConflict);
-   await scanRecognize(ma,{signal,importRegion:true});
+   await assert.rejects(multiRecognize({...ma,page:1},{signal,importRegion:true}),ReleaseConflict);
+   await multiRecognize(ma,{signal,importRegion:true});
    const storedMulti=(await graph.assessment(as('viewer'))).requirements.find(q=>q.versionId===ma.versionId);
    assert.equal(storedMulti.source.location.page,2);assert.equal(storedMulti.ruleDecision,'pending');
    const correction={correctionId:randomUUID(),versionId:ma.versionId,sha256:multiStored.sha256,quoteSha256:mr.quoteSha256,regionDigest:mr.regionDigest,expectedRevision:0,correctedText:'Inspect all equipment.',reason:'Original page includes the modifier all.',confirm:true};

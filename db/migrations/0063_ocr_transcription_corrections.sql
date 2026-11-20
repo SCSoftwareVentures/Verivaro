@@ -26,7 +26,7 @@ CREATE TRIGGER correction_archive_guard BEFORE INSERT ON verivaro_private.ocr_tr
 CREATE TRIGGER correction_review_archive_guard BEFORE INSERT ON verivaro_private.ocr_transcription_correction_reviews FOR EACH ROW EXECUTE FUNCTION verivaro_private.guard_project_write();
 CREATE FUNCTION verivaro_verification.propose_ocr_correction(t uuid,p uuid,i uuid,v uuid,h text,qh text,rh text,expected integer,corrected text,why text) RETURNS jsonb
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,verivaro_private AS $propose$
-DECLARE c text[];q verivaro_private.requirement_versions%ROWTYPE;prior verivaro_private.ocr_transcription_corrections%ROWTYPE;last_version record;next_revision integer;
+DECLARE c text[];q verivaro_private.requirement_versions%ROWTYPE;prior verivaro_private.ocr_transcription_corrections%ROWTYPE;last_revision integer;last_decision text;next_revision integer;
 BEGIN
  c:=verivaro_private.graph_actor(t,p,'submitter');q:=verivaro_private.graph_current(t,p,v);
  IF i IS NULL OR q.author_id<>c[2]::uuid OR expected IS NULL OR expected NOT BETWEEN 0 AND 3 OR
@@ -41,9 +41,9 @@ BEGIN
  IF prior.tenant_id<>t OR prior.project_id<>p OR prior.version_id<>v OR prior.source_sha256<>h OR prior.original_quote_sha256<>qh OR prior.region_digest<>rh OR prior.corrected_text<>corrected OR prior.reason<>why OR prior.author_id<>c[2]::uuid OR prior.revision<>expected+1 THEN RAISE EXCEPTION 'OCR correction conflict' USING ERRCODE='23505';END IF;
  RETURN jsonb_build_object('correctionId',i,'revision',prior.revision);
  END IF;
- SELECT z.revision,rv.decision INTO last_version FROM verivaro_private.ocr_transcription_corrections z LEFT JOIN verivaro_private.ocr_transcription_correction_reviews rv USING(correction_id) WHERE z.version_id=v ORDER BY z.revision DESC LIMIT 1;
- next_revision:=COALESCE(last_version.revision,0)+1;
- IF next_revision<>expected+1 OR (next_revision>1 AND last_version.decision IS DISTINCT FROM 'rejected') THEN RAISE EXCEPTION 'OCR correction stale or pending' USING ERRCODE='23505';END IF;
+ SELECT z.revision,rv.decision INTO last_revision,last_decision FROM verivaro_private.ocr_transcription_corrections z LEFT JOIN verivaro_private.ocr_transcription_correction_reviews rv USING(correction_id) WHERE z.version_id=v ORDER BY z.revision DESC LIMIT 1;
+ next_revision:=COALESCE(last_revision,0)+1;
+ IF next_revision<>expected+1 OR (next_revision>1 AND last_decision IS DISTINCT FROM 'rejected') THEN RAISE EXCEPTION 'OCR correction stale or pending' USING ERRCODE='23505';END IF;
  INSERT INTO verivaro_private.ocr_transcription_corrections(correction_id,version_id,tenant_id,project_id,revision,source_sha256,original_quote_sha256,region_digest,corrected_text,corrected_sha256,reason,author_id,session_id)
  VALUES(i,v,t,p,next_revision,h,qh,rh,corrected,encode(verivaro_private.digest(convert_to(corrected,'UTF8'),'sha256'),'hex'),why,c[2]::uuid,c[3]::uuid);
  RETURN jsonb_build_object('correctionId',i,'revision',next_revision);
