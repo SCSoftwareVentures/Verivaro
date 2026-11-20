@@ -10,22 +10,22 @@ CREATE TRIGGER document_condition_immutable BEFORE UPDATE OR DELETE OR TRUNCATE 
 CREATE TRIGGER document_condition_archive_guard BEFORE INSERT ON verivaro_private.requirement_document_conditions FOR EACH ROW EXECUTE FUNCTION verivaro_private.guard_project_write();
 CREATE FUNCTION verivaro_verification.pin_document_condition(t uuid,p uuid,v uuid,m uuid,k text,ident text,equip text,issuer_text text,why text) RETURNS boolean
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,verivaro_private AS $pin$
-DECLARE c text[];q verivaro_private.requirement_versions%ROWTYPE;x verivaro_private.evidence_metadata_versions%ROWTYPE;old verivaro_private.requirement_document_conditions%ROWTYPE;
+DECLARE c text[];q verivaro_private.requirement_versions%ROWTYPE;metadata_row verivaro_private.evidence_metadata_versions%ROWTYPE;old verivaro_private.requirement_document_conditions%ROWTYPE;
 BEGIN
  c:=verivaro_private.graph_actor(t,p,'submitter');q:=verivaro_private.graph_current(t,p,v);
  IF q.author_id<>c[2]::uuid OR q.applicability NOT IN ('required','optional') OR k IS NULL OR k NOT IN ('certificate','warranty','inspection') OR NOT verivaro_private.metadata_field(ident) OR NOT verivaro_private.metadata_field(equip) OR NOT verivaro_private.metadata_field(issuer_text) OR NOT verivaro_private.workflow_reason(why) THEN RAISE EXCEPTION 'condition denied' USING ERRCODE='42501';END IF;
- SELECT * INTO old FROM verivaro_private.requirement_document_conditions x WHERE x.version_id=v;
+ SELECT * INTO old FROM verivaro_private.requirement_document_conditions dc WHERE dc.version_id=v;
  IF FOUND THEN
  IF old.tenant_id<>t OR old.project_id<>p OR old.metadata_version_id<>m OR old.actor_id<>c[2]::uuid OR old.kind<>k OR old.identifier<>ident OR old.equipment<>equip OR old.issuer<>issuer_text OR old.reason<>why THEN RAISE EXCEPTION 'condition conflict' USING ERRCODE='23505';END IF;
  RETURN true;
  END IF;
- IF EXISTS(SELECT 1 FROM verivaro_private.requirement_reviews x WHERE x.version_id=v) THEN RAISE EXCEPTION 'criterion already reviewed' USING ERRCODE='23505';END IF;
- SELECT * INTO x FROM verivaro_private.evidence_metadata_versions e WHERE e.tenant_id=t AND e.project_id=p AND e.version_id=m;
- IF NOT FOUND OR x.kind<>k OR x.identifier<>ident OR x.equipment<>equip OR x.issuer<>issuer_text
- OR x.issued_on IS NULL OR x.expires_on IS NULL OR x.issued_on>(clock_timestamp() AT TIME ZONE 'UTC')::date OR x.expires_on<(clock_timestamp() AT TIME ZONE 'UTC')::date
- OR EXISTS(SELECT 1 FROM verivaro_private.evidence_metadata_versions n WHERE n.evidence_id=x.evidence_id AND n.revision>x.revision)
+ IF EXISTS(SELECT 1 FROM verivaro_private.requirement_reviews rr WHERE rr.version_id=v) THEN RAISE EXCEPTION 'criterion already reviewed' USING ERRCODE='23505';END IF;
+ SELECT e.* INTO metadata_row FROM verivaro_private.evidence_metadata_versions e WHERE e.tenant_id=t AND e.project_id=p AND e.version_id=m;
+ IF NOT FOUND OR metadata_row.kind<>k OR metadata_row.identifier<>ident OR metadata_row.equipment<>equip OR metadata_row.issuer<>issuer_text
+ OR metadata_row.issued_on IS NULL OR metadata_row.expires_on IS NULL OR metadata_row.issued_on>(clock_timestamp() AT TIME ZONE 'UTC')::date OR metadata_row.expires_on<(clock_timestamp() AT TIME ZONE 'UTC')::date
+ OR EXISTS(SELECT 1 FROM verivaro_private.evidence_metadata_versions n WHERE n.evidence_id=metadata_row.evidence_id AND n.revision>metadata_row.revision)
  OR NOT EXISTS(SELECT 1 FROM verivaro_private.evidence_metadata_reviews r WHERE r.version_id=m AND r.decision='approved')
- OR NOT EXISTS(SELECT 1 FROM verivaro_private.evidence_objects o WHERE o.tenant_id=t AND o.project_id=p AND o.evidence_id=x.evidence_id AND o.sha256=x.sha256 AND o.cipher_digest=verivaro_private.digest(o.envelope,'sha256'))
+ OR NOT EXISTS(SELECT 1 FROM verivaro_private.evidence_objects o WHERE o.tenant_id=t AND o.project_id=p AND o.evidence_id=metadata_row.evidence_id AND o.sha256=metadata_row.sha256 AND o.cipher_digest=verivaro_private.digest(o.envelope,'sha256'))
  THEN RAISE EXCEPTION 'document condition source unavailable' USING ERRCODE='42501';END IF;
  INSERT INTO verivaro_private.requirement_document_conditions(version_id,tenant_id,project_id,metadata_version_id,kind,identifier,equipment,issuer,reason,actor_id,session_id)
  VALUES(v,t,p,m,k,ident,equip,issuer_text,why,c[2]::uuid,c[3]::uuid);
