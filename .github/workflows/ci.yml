@@ -55,4 +55,4 @@ jobs:
           pdfinfo "$out/scan.pdf" | grep -Eq '^Pages:[[:space:]]+1$'
           pdftoppm -f 1 -l 1 -singlefile -r 72 -png "$out/scan.pdf" "$out/render"
           test -s "$out/render.png"
-          test "$(pdftotext "$out/scan.pdf" - | wc -c)" -eq 1
+          test "$(pdftotext "$out/scan.pdf" - | tr -d "\\014\\n\\r\\t " | wc -c)" -eq 0

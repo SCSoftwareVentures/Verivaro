@@ -1,5 +1,5 @@
 BEGIN;
--- Strict image-only PDF support; no historical source rows or hashes change.
+-- Extend only OCR location type checks; unchanged historic rows retain exact digests.
 CREATE OR REPLACE FUNCTION verivaro_private.ocr_location_valid(l jsonb) RETURNS boolean LANGUAGE plpgsql IMMUTABLE SET search_path=pg_catalog AS $loc$
 DECLARE k text;b jsonb;w integer;h integer;x integer;y integer;bw integer;bh integer;
 BEGIN
@@ -21,9 +21,7 @@ BEGIN
  END LOOP;
  IF (l ? 'page')<>(l ? 'rasterSha256') THEN RETURN false;END IF;
  IF l ? 'page' THEN
-  IF jsonb_typeof(l->'page') IS DISTINCT FROM 'number' OR l->>'page'<>'1' OR COALESCE(l->>'rasterSha256','')!~'^[a-f0-9]{64}
-END $loc$;
- THEN RETURN false;END IF;
+  IF jsonb_typeof(l->'page') IS DISTINCT FROM 'number' OR l->>'page'<>'1' OR COALESCE(l->>'rasterSha256','')!~'^[a-f0-9]{64}$' THEN RETURN false;END IF;
  END IF;
  RETURN (l->>'minWordConfidence')::numeric<=(l->>'confidence')::numeric;
 END $loc$;
@@ -51,17 +49,7 @@ LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,verivaro_p
 DECLARE d text:='approved';c text[];q verivaro_private.requirement_versions%ROWTYPE;prior verivaro_private.requirement_reviews%ROWTYPE;
 BEGIN
  c:=verivaro_private.graph_actor(t,p,'reviewer');q:=verivaro_private.graph_current(t,p,v);
- IF why IS NULL OR char_length(why) NOT BETWEEN 1 AND 450 OR why<>btrim(why) OR NOT EXISTS(SELECT 1 FROM verivaro_private.requirement_sources s JOIN verivaro_private.evidence_objects o ON o.evidence_id=s.evidence_id AND o.tenant_id=s.tenant_id AND o.project_id=s.project_id WHERE s.version_id=v AND s.tenant_id=t AND s.project_id=p AND s.algorithm='ocr-human-source-v1' AND s.source_sha256=h AND s.quote_sha256=qh AND s.office_location->>'regionDigest'=rh AND o.sha256=h AND ((o.media_type='image/png' AND NOT(s.office_location ? 'page')) OR (o.media_type='application/pdf' AND s.office_location->>'page'='1' AND s.office_location->>'rasterSha256'~'^[a-f0-9]{64}<>c[2]::uuid AND o.cipher_digest=verivaro_private.digest(o.envelope,'sha256') AND qh=encode(verivaro_private.digest(convert_to(q.criterion,'UTF8'),'sha256'),'hex')) THEN RAISE EXCEPTION 'OCR review denied' USING ERRCODE='42501';END IF;
- why:='OCR transcription and criterion independently confirmed: '||why;
- IF q.author_id=c[2]::uuid OR d IS NULL OR d NOT IN ('approved','rejected') OR why IS NULL OR char_length(why) NOT BETWEEN 1 AND 512 OR octet_length(why)>2048 OR why<>btrim(why) OR why~'[[:cntrl:]]' THEN RAISE EXCEPTION 'graph review denied' USING ERRCODE='42501';END IF;
- SELECT * INTO prior FROM verivaro_private.requirement_reviews WHERE version_id=v;
- IF FOUND THEN
- IF prior.reviewer_id<>c[2]::uuid OR prior.decision<>d OR prior.reason<>why THEN RAISE EXCEPTION 'graph conflict' USING ERRCODE='23505';END IF;
- RETURN true;END IF;
- INSERT INTO verivaro_private.requirement_reviews(version_id,reviewer_id,session_id,decision,reason) VALUES(v,c[2]::uuid,c[3]::uuid,d,why);
- RETURN true;
-END $review$;
-)) AND o.actor_id<>c[2]::uuid AND o.cipher_digest=verivaro_private.digest(o.envelope,'sha256') AND qh=encode(verivaro_private.digest(convert_to(q.criterion,'UTF8'),'sha256'),'hex')) THEN RAISE EXCEPTION 'OCR review denied' USING ERRCODE='42501';END IF;
+ IF why IS NULL OR char_length(why) NOT BETWEEN 1 AND 450 OR why<>btrim(why) OR NOT EXISTS(SELECT 1 FROM verivaro_private.requirement_sources s JOIN verivaro_private.evidence_objects o ON o.evidence_id=s.evidence_id AND o.tenant_id=s.tenant_id AND o.project_id=s.project_id WHERE s.version_id=v AND s.tenant_id=t AND s.project_id=p AND s.algorithm='ocr-human-source-v1' AND s.source_sha256=h AND s.quote_sha256=qh AND s.office_location->>'regionDigest'=rh AND o.sha256=h AND ((o.media_type='image/png' AND NOT(s.office_location ? 'page')) OR (o.media_type='application/pdf' AND s.office_location->>'page'='1' AND s.office_location->>'rasterSha256'~'^[a-f0-9]{64}$')) AND o.actor_id<>c[2]::uuid AND o.cipher_digest=verivaro_private.digest(o.envelope,'sha256') AND qh=encode(verivaro_private.digest(convert_to(q.criterion,'UTF8'),'sha256'),'hex')) THEN RAISE EXCEPTION 'OCR review denied' USING ERRCODE='42501';END IF;
  why:='OCR transcription and criterion independently confirmed: '||why;
  IF q.author_id=c[2]::uuid OR d IS NULL OR d NOT IN ('approved','rejected') OR why IS NULL OR char_length(why) NOT BETWEEN 1 AND 512 OR octet_length(why)>2048 OR why<>btrim(why) OR why~'[[:cntrl:]]' THEN RAISE EXCEPTION 'graph review denied' USING ERRCODE='42501';END IF;
  SELECT * INTO prior FROM verivaro_private.requirement_reviews WHERE version_id=v;

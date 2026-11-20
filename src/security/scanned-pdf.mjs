@@ -62,7 +62,7 @@ export function readCanonicalScannedPdf(pdf){
  const s=pdf.toString('latin1'),m=/^%PDF-1\.4\n1 0 obj\n<< \/Type \/Catalog \/Pages 2 0 R >>\nendobj\n2 0 obj\n<< \/Type \/Pages \/Kids \[3 0 R\] \/Count 1 >>\nendobj\n3 0 obj\n<< \/Type \/Page \/Parent 2 0 R \/MediaBox \[0 0 ([1-9][0-9]{0,3}) ([1-9][0-9]{0,3})\] \/Resources << \/XObject << \/Im0 4 0 R >> >> \/Contents 5 0 R >>\nendobj\n4 0 obj\n<< \/Type \/XObject \/Subtype \/Image \/Width ([1-9][0-9]{0,3}) \/Height ([1-9][0-9]{0,3}) \/ColorSpace \/DeviceRGB \/BitsPerComponent 8 \/Filter \/FlateDecode \/Length ([1-9][0-9]{0,5}) >>\nstream\n/.exec(s);
  if(!m||m[1]!==m[3]||m[2]!==m[4])fail();
  const w=Number(m[1]),h=Number(m[2]),n=Number(m[5]),start=m[0].length,end=start+n;
- if(w>2048||h>2048||w*h>MAX_PIXELS||n>LIMIT||end>pdf.length||s.slice(end,end+19)!=='\nendstream\nendobj\n')fail();
+ if(w>2048||h>2048||w*h>MAX_PIXELS||n>LIMIT||end>pdf.length||s.slice(end,end+18)!=='\nendstream\nendobj\n')fail();
  const compressed=pdf.subarray(start,end);
  if(!pack(w,h,compressed).equals(pdf))fail(); // all objects, offsets and bytes, no active extras
  const {buffer,engine}=inflateSync(compressed,{maxOutputLength:w*h*3,info:true});
