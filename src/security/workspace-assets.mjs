@@ -744,13 +744,40 @@ async function loadGraph(){
    }));row.append(box);
   }
   if(q.source?.algorithm==='ocr-human-source-v1'){
+   const correction=q.source.correction;
+   if(correction){
+    row.append(node('p','Raw OCR: '+correction.originalText,'meta'),node('p','Correction revision '+correction.revision+' · '+correction.status,'state'),node('p','Proposed transcription: '+correction.proposedText),node('p','Author reason: '+correction.reason,'meta'));
+    if(correction.reviewReason)row.append(node('p','Independent correction review: '+correction.reviewReason,'meta'));
+   }
+   if(q.canProposeOcrCorrection){
+    const details=node('details'),corrected=node('textarea'),reason=node('textarea'),checked=node('input');
+    corrected.rows=3;corrected.maxLength=1024;corrected.value=correction?.proposedText??q.criterion;
+    reason.rows=2;reason.maxLength=512;checked.type='checkbox';
+    details.append(node('summary',correction?'Propose revised OCR correction':'Correct OCR transcription'),graphField('Corrected transcription',corrected),graphField('Why the OCR text was wrong',reason),graphField('I compared the corrected text against the original image and pixel region.',checked),button('Propose immutable OCR correction',async()=>{
+     const text=corrected.value.trim(),why=reason.value.trim();if(!checked.checked||text===q.source.correction?.originalText||text===q.criterion||why.length<8)throw Error('Confirm an actual correction and give a reason (8+ characters).');
+     if(!confirm('Record a new immutable correction proposal? It cannot be edited. Independent review is required.'))return;
+     const key=base+':ocr-correction:'+q.versionId+':'+JSON.stringify([text,why,correction?.revision??0]);
+     await graphPost('ocr-correction-propose',{correctionId:retryId(key),versionId:q.versionId,sha256:q.source.sha256,quoteSha256:q.source.quoteSha256,regionDigest:q.source.location.regionDigest,expectedRevision:correction?.revision??0,correctedText:text,reason:why,confirm:true});
+     attempts.delete(key);await loadProject();say('OCR correction submitted for independent review.');
+    }));row.append(details);
+   }
+   if(q.canReviewOcrCorrection&&correction){
+    const details=node('details'),decision=graphChoice([['approved','Approve transcription'],['rejected','Reject transcription']]),reason=node('textarea'),checked=node('input');reason.maxLength=512;checked.type='checkbox';
+    details.append(node('summary','Review OCR correction'),graphField('Decision',decision),graphField('Reason for correction review',reason),graphField('I independently compared the proposed transcription, raw OCR and original image.',checked),button('Record independent correction review',async()=>{
+     const why=reason.value.trim();if(!checked.checked||why.length<8)throw Error('Independent original-image comparison and explanation required.');
+     if(!confirm('Record this immutable correction review?'))return;
+     await graphPost('ocr-correction-review',{correctionId:correction.correctionId,decision:decision.value,reason:why,confirm:true});
+     await loadProject();say('Independent correction review recorded.');
+    }));row.append(details);
+   }
    row.append(node('p',q.ruleDecision==='approved'?'Independent OCR transcription and criterion confirmation recorded.':'OCR transcription requires independent comparison against the original image.','meta'),node('p','OCR region digest: '+q.source.location.regionDigest,'meta'));
-   if(q.canReview){graphReview(row,'rule-review','versionId',q.versionId,[['rejected','Reject']]);const reason=node('textarea'),check=node('input');reason.maxLength=450;check.type='checkbox';row.append(graphField('OCR independent review reason',reason),graphField('I compared the exact text and pixel region against the original image and confirm the criterion and applicability.',check),button('Confirm OCR and approve criterion',async()=>{
+   if(q.canReview){graphReview(row,'rule-review','versionId',q.versionId,[['rejected','Reject']]);const reason=node('textarea'),check=node('input');reason.maxLength=450;check.type='checkbox';row.append(graphField('OCR independent review reason',reason),graphField('I compared the original image, OCR region and any independently approved correction; I confirm the effective criterion and applicability.',check),button('Confirm OCR and approve criterion',async()=>{
+    if(correction&&correction.status!=='approved')throw Error('OCR transcription correction requires independent approval first.');
     if(!check.checked||!reason.value.trim())throw Error('Explicit comparison confirmation and reason required.');
     await graphPost('ocr-review',{versionId:q.versionId,sha256:q.source.sha256,quoteSha256:q.source.quoteSha256,regionDigest:q.source.location.regionDigest,reason:reason.value.trim(),confirm:true});await loadProject();say('Independent OCR review recorded.');
    }));}
   }else if(q.canReview)graphReview(row,'rule-review','versionId',q.versionId,[['rejected','Reject'],['approved','Approve']]);
-  if(q.canRevise){const box=node('details'),title=node('input'),criterion=node('textarea'),app=graphChoice(graphApplicability,q.applicability);title.value=q.title;title.maxLength=128;criterion.value=q.criterion;criterion.maxLength=1024;criterion.rows=3;
+  if(q.canRevise&&q.source?.algorithm!=='ocr-human-source-v1'){const box=node('details'),title=node('input'),criterion=node('textarea'),app=graphChoice(graphApplicability,q.applicability);title.value=q.title;title.maxLength=128;criterion.value=q.criterion;criterion.maxLength=1024;criterion.rows=3;
    box.append(node('summary','Draft new revision'),graphField('Requirement title',title),graphField('Verification criterion',criterion),graphField('Applicability',app),button('Save new revision',async()=>{
     const t=title.value.trim(),c=criterion.value.trim(),ap=app.value;if(!t||!c)throw Error('Enter a title and criterion.');if(!confirm('New revision requires independent review and does not inherit assessments. Continue?'))return;
     const key=base+':revise:'+q.versionId+':'+JSON.stringify([t,c,ap]);await graphPost('requirement',{requirementId:q.requirementId,versionId:retryId(key),expectedRevision:q.revision,title:t,criterion:c,applicability:ap});attempts.delete(key);await loadProject();
