@@ -1,6 +1,6 @@
 // Standalone operator-only encrypted quarantine for *untrusted original* PDF bytes.
 // This is NOT an application's public upload store or evidence admission bypass.
-import {open,lstat,unlink,rename} from 'node:fs/promises';
+import {open,lstat,unlink,link} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {join,isAbsolute} from 'node:path';
 import {createCipheriv,createDecipheriv,createHash,randomBytes,randomUUID,timingSafeEqual} from 'node:crypto';
@@ -16,8 +16,8 @@ async function checkRoot(root){
  const s=await lstat(root);
  if(!s.isDirectory()||(s.mode&0o077)!==0||(typeof process.getuid==='function'&&s.uid!==process.getuid()))fail();
 }
-export function createOriginalPdfQuarantine({root,key,keyId,scan,retentionGate}={}){
- if(typeof root!=='string'||!isAbsolute(root)||root.length>250||/[\x00-\x1f]/.test(root)||!Buffer.isBuffer(key)||key.length!==32||typeof scan!=='function'||typeof keyId!=='string'||!/^[a-z][a-z0-9_-]{0,31}$/.test(keyId)||!constants.O_NOFOLLOW||(retentionGate!==undefined&&typeof retentionGate!=='function'))fail();
+export function createOriginalPdfQuarantine({root,key,keyId,scan,retentionGate,withExclusiveHoldLock}={}){
+ if(typeof root!=='string'||!isAbsolute(root)||root.length>250||/[\x00-\x1f]/.test(root)||!Buffer.isBuffer(key)||key.length!==32||typeof scan!=='function'||typeof keyId!=='string'||!/^[a-z][a-z0-9_-]{0,31}$/.test(keyId)||!constants.O_NOFOLLOW||(retentionGate!==undefined&&(typeof retentionGate!=='function'||typeof withExclusiveHoldLock!=='function'))||(withExclusiveHoldLock!==undefined&&typeof withExclusiveHoldLock!=='function'))fail();
  const secret=Buffer.from(key);let busy=false,closed=false;
  async function gate(fn){
   if(closed||busy)fail();busy=true;
@@ -27,7 +27,7 @@ export function createOriginalPdfQuarantine({root,key,keyId,scan,retentionGate}=
  const location=quarantineId=>join(root,quarantineId+'.vvq');
  const deletionIntent=quarantineId=>join(root,quarantineId+'.delete-intent');
  const deletedReceipt=quarantineId=>join(root,quarantineId+'.deleted');
- async function assertNotDeleting(quarantineId){try{await lstat(deletionIntent(quarantineId));fail();}catch(e){if(e.code!=='ENOENT')throw e;}}
+ async function assertNotDeleting(quarantineId){for(const p of [deletionIntent(quarantineId),deletedReceipt(quarantineId)])try{await lstat(p);fail();}catch(e){if(e.code!=='ENOENT')throw e;}}
  async function put({source,tenantId,projectId,signal}){
   return gate(async()=>{
    if(!id.test(tenantId)||!id.test(projectId)||!pdf(source)||!signal)fail();
@@ -75,7 +75,7 @@ export function createOriginalPdfQuarantine({root,key,keyId,scan,retentionGate}=
   });
  }
  async function destroy(meta,{authorization,signal}={}){
-  return gate(async()=>{
+  return gate(()=>withExclusiveHoldLock(meta,async()=>{
    if(!retentionGate||!valid(meta)||meta.keyId!==keyId||!signal)fail();
    signal.throwIfAborted();
    await assertNotDeleting(meta.quarantineId);
@@ -99,10 +99,11 @@ export function createOriginalPdfQuarantine({root,key,keyId,scan,retentionGate}=
     const same=await lstat(originalPath);
     if(same.dev!==before.dev||same.ino!==before.ino||same.size!==before.size||!same.isFile())fail();
     await unlink(originalPath);await directory.sync();
-    await rename(intentPath,deletedReceipt(meta.quarantineId));await directory.sync();
+    await link(intentPath,deletedReceipt(meta.quarantineId));await directory.sync();
+    await unlink(intentPath);await directory.sync();
     return Object.freeze({deleted:true,quarantineId:meta.quarantineId,originalSha256:meta.sha256,receiptName:meta.quarantineId+'.deleted'});
    }finally{await directory.close();}
-  });
+  },signal));
  }
  return Object.freeze({put,read,...(retentionGate?{destroy}:{}),close(){closed=true;secret.fill(0);}});
 }

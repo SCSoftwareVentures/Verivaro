@@ -12,7 +12,7 @@ const id=()=>randomUUID(),source=canonicalTextPdf(['Equipment must carry ID.']),
 test('dual signatures, independent hold and durable deletion receipts',async()=>{
  const root=await mkdtemp(join(tmpdir(),'vv-pdf-life-')),key=randomBytes(32),policyKey=pair(),reviewers=[pair(),pair()],actors=[id(),id()];let hold=true;
  const gate=createPdfRetentionGate({policyPublicKey:policyKey.publicKey,approvers:reviewers.map((k,i)=>({actorId:actors[i],publicKey:k.publicKey})),holdLookup:async()=>hold,clock:()=>new Date(now)});
- const vault=createOriginalPdfQuarantine({root,key,keyId:'lifecycle',scan:async()=> 'clean',retentionGate:gate}),signal=new AbortController().signal;
+ let acquired=0;const vault=createOriginalPdfQuarantine({root,key,keyId:'lifecycle',scan:async()=> 'clean',retentionGate:gate,withExclusiveHoldLock:async(meta,fn,signal)=>{acquired++;signal.throwIfAborted();return fn();}}),signal=new AbortController().signal;
  try{
   const meta=await vault.put({source,tenantId:id(),projectId:id(),signal});
   const scope={tenantId:meta.tenantId,projectId:meta.projectId,quarantineId:meta.quarantineId,sourceSha256:meta.sha256};
@@ -25,12 +25,13 @@ test('dual signatures, independent hold and durable deletion receipts',async()=>
   await assert.rejects(vault.destroy({...meta,tenantId:id()},{authorization,signal}));
   await assert.rejects(vault.destroy(meta,{authorization:{policy,approvals:[approvals[0],{...approvals[1],payload:{...approvals[1].payload,sourceSha256:'0'.repeat(64)}}]},signal}));
   const result=await vault.destroy(meta,{authorization,signal});
-  assert.equal(result.deleted,true);assert.deepEqual(await readdir(root),[meta.quarantineId+'.deleted']);
+  assert.equal(result.deleted,true);assert.ok(acquired>=5);assert.deepEqual(await readdir(root),[meta.quarantineId+'.deleted']);
   const receipt=JSON.parse(await readFile(join(root,result.receiptName),'utf8'));
   assert.equal(receipt.sha256,meta.sha256);
   await assert.rejects(vault.read(meta,{signal}));await assert.rejects(vault.destroy(meta,{authorization,signal}));
  }finally{vault.close();key.fill(0);await rm(root,{force:true,recursive:true});}
 });
+test('retention requires a trusted hold-lock coordinator',()=>{const k=randomBytes(32);try{assert.throws(()=>createOriginalPdfQuarantine({root:'/tmp/test',key:k,keyId:'test',scan:async()=> 'clean',retentionGate:async()=>true}));}finally{k.fill(0);}});
 test('future retention, expired approvals and unavailable legal-hold data deny deletion',async()=>{
  const policyKey=pair(),a=pair(),b=pair(),actors=[id(),id()],meta={tenantId:id(),projectId:id(),quarantineId:id(),sha256:'a'.repeat(64)};
  let held=undefined;
