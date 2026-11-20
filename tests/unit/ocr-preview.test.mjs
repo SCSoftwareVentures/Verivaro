@@ -34,3 +34,12 @@ test('archived assessment blocks the read-only preview before original access',a
  const preview=createOcrPreview({assessment:async()=>({canWrite:true,archived:true}),retrieve:async()=>{throw Error('must not retrieve');},recognize:async()=>{throw Error('must not recognize');}});
  await assert.rejects(preview({sha256:'0'.repeat(64)},{signal:new AbortController().signal}),ReleaseDenied);
 });
+
+test('OCR import rederives exact region and requires explicit author confirmation',async()=>{
+ const data=fixturePng({width:100,height:60,pixels:Buffer.alloc(60*301)}),sha256=hash(data),calls=[],signal=new AbortController().signal;
+ const preview=createOcrPreview({retrieve:async()=>({data:Buffer.from(data),sha256,mediaType:'image/png'}),assessment:async()=>({canWrite:true}),recognize:async()=>tsv(),importSource:async x=>calls.push(x)});
+ const r=(await preview({sha256},{signal})).regions[0],input={sha256,ordinal:r.ordinal,quoteSha256:r.quoteSha256,regionDigest:r.regionDigest,confirm:true,location:{forged:true}};
+ await assert.rejects(preview({...input,confirm:false},{signal,importRegion:true}),ReleaseDenied);
+ await assert.rejects(preview({...input,regionDigest:'0'.repeat(64)},{signal,importRegion:true}),ReleaseConflict);
+ await preview(input,{signal,importRegion:true});assert.equal(calls.length,1);assert.deepEqual(calls[0].location.box,r.box);assert.equal(calls[0].quote,r.quote);assert.equal(calls[0].location.regionDigest,r.regionDigest);
+});

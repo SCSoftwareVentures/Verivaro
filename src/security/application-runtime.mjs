@@ -122,7 +122,7 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
    }
    upload=createEvidenceUploadHandler({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,ingest});
    extract=createContractIQ({retrieve,workflow});
-   if(ocrEnabled){const ocrKey=await readPrivate(cfg.ocr.keyFile,32);rawKeys.push(ocrKey);if(ocrKey.length!==32||rawKeys.slice(0,-1).some(k=>k.equals(ocrKey)))throw Error('invalid or duplicate OCR key');ocrClient=createOcrSocketClient({socketPath:cfg.ocr.socketPath,key:ocrKey});ocrPreview=createOcrPreview({retrieve,assessment:input=>workflow.assessment(input),recognize:ocrClient});}
+   if(ocrEnabled){const ocrKey=await readPrivate(cfg.ocr.keyFile,32);rawKeys.push(ocrKey);if(ocrKey.length!==32||rawKeys.slice(0,-1).some(k=>k.equals(ocrKey)))throw Error('invalid or duplicate OCR key');ocrClient=createOcrSocketClient({socketPath:cfg.ocr.socketPath,key:ocrKey});ocrPreview=createOcrPreview({retrieve,assessment:input=>workflow.assessment(input),recognize:ocrClient,importSource:input=>workflow.importOcrSource(input)});}
    assembleSubmission=createSubmissionPackage({workflow,retrieve});
    assemblePortableArchive=createPortableProjectArchive({workflow,retrieve});
    download=createEvidenceDownloadHandler({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,retrieve});

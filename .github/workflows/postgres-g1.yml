@@ -201,6 +201,7 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/0057_manual_source_lines.sql
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/0058_office_evidence_formats.sql
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/0059_office_requirement_sources.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/0060_ocr_requirement_sources.sql
           VV_LIVE_TEST=1 VV_TEST_DRIVER_DIR="$RUNNER_TEMP/vv-live-driver" node --test tests/integration/live-requirement-graph.test.mjs
           psql -X -v ON_ERROR_STOP=1 -f db/tests/full_security_gate.sql
           # Real encrypted logical backup and isolated recovery; no artifacts uploaded.

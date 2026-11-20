@@ -65,12 +65,12 @@ export function createTesseractEngine({binaryPath='/usr/bin/tesseract',tessdataP
   });}finally{for(const b of chunks)b.fill(0);busy=false;}
  };
 }
-// Read-only preview: deliberately no import method and no persistent OCR text.
+// Preview is read-only by default. Explicit import derives the same region from authenticated original bytes again.
 // The caller must supply a separately isolated, trusted recognition adapter.
-export function createOcrPreview({retrieve,assessment,recognize}){
+export function createOcrPreview({retrieve,assessment,recognize,importSource}){
  if(typeof retrieve!=='function'||typeof assessment!=='function'||typeof recognize!=='function')throw Error('invalid OCR preview configuration');
  let active=false;
- return async(input,{signal}={})=>{
+ return async(input,{signal,importRegion=false}={})=>{
   if(active)throw Error('OCR capacity');active=true;let source,output;
   try{
    signal.throwIfAborted();const initial=await assessment(input);if(!initial.canWrite||initial.archived)throw new ReleaseDenied('OCR denied');
@@ -79,9 +79,15 @@ export function createOcrPreview({retrieve,assessment,recognize}){
    validateEvidence(source.data,'image/png');
    const width=source.data.readUInt32BE(16),height=source.data.readUInt32BE(20);
    output=await recognize(source.data,signal);signal.throwIfAborted();
-   const regions=parseOcrTsv(output,{width,height});
+   const regions=parseOcrTsv(output,{width,height}).map(r=>({...r,regionDigest:sha(JSON.stringify([input.sha256,width,height,r.ordinal,r.block,r.paragraph,r.line,r.quoteSha256,r.box.left,r.box.top,r.box.width,r.box.height,r.confidence,r.minWordConfidence,r.wordCount]))}));
    const final=await assessment(input);if(!final.canWrite||final.archived)throw new ReleaseDenied('OCR denied');
    signal.throwIfAborted();
+   if(importRegion){
+    if(typeof importSource!=='function'||input.confirm!==true)throw new ReleaseDenied('OCR import denied');
+    const r=regions.find(r=>r.ordinal===input.ordinal&&r.regionDigest===input.regionDigest&&r.quoteSha256===input.quoteSha256);
+    if(!r||[...r.quote].length>1024||Buffer.byteLength(r.quote)>4096||/[\x00-\x1f\x7f-\x9f]/u.test(r.quote))throw new ReleaseConflict('OCR region changed');
+    return await importSource({...input,quote:r.quote,location:{algorithm:'tesseract-eng-psm6-tsv-v1',width,height,block:r.block,paragraph:r.paragraph,line:r.line,box:r.box,confidence:r.confidence,minWordConfidence:r.minWordConfidence,wordCount:r.wordCount,regionDigest:r.regionDigest}});
+   }
    return {algorithm:'tesseract-eng-psm6-tsv-v1',sha256:input.sha256,width,height,regions,verified:false,reviewRequired:true,warning:'OCR may misread or omit text. Confidence is an engine score, not calibrated probability. Compare each region with the original. No requirement has been imported.'};
   }finally{source?.data?.fill(0);output?.fill?.(0);active=false;}
  };
