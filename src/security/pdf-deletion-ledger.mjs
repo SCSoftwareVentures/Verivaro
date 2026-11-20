@@ -125,5 +125,5 @@ export function createLocalPdfDeletionLedger({root,privateKey,clock=()=>new Date
   if(replica)await replica.write(meta,saved,signal);
   signal.throwIfAborted();return saved;
  }
- return Object.freeze({root,replicated:replica!==undefined,fingerprint:publicInfo.fingerprint,publicKey:publicInfo.key.export({format:'pem',type:'spki'}),prepare,complete,read,close(){closed=true;}});
+ return Object.freeze({root,replicaRoot:replica?.root??null,replicated:replica!==undefined,fingerprint:publicInfo.fingerprint,publicKey:publicInfo.key.export({format:'pem',type:'spki'}),prepare,complete,read,close(){closed=true;}});
 }

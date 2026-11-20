@@ -7,7 +7,6 @@ import {createHash} from 'node:crypto';
 import {isAbsolute,join} from 'node:path';
 import {verifyPdfDeletionEvidence} from './pdf-deletion-ledger.mjs';
 const fail=()=>{throw Error('PDF deletion replica denied');};
-const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[89ab][a-f0-9]{3}$/; // overwritten below
 const ID=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const HEX=/^[a-f0-9]{64}$/;
 const sha=b=>createHash('sha256').update(b).digest('hex');
@@ -16,7 +15,7 @@ function scope(m){
  return {tenantId:m.tenantId,projectId:m.projectId,quarantineId:m.quarantineId,sourceSha256:m.sha256};
 }
 export function createLocalPdfDeletionReplica({root,trustedKey}={}){
- if(typeof root!=='string'||!isAbsolute(root)||root.length>220||/[\x00-\x1f]/.test(root)||!trustedKey||!constants.O_NOFOLLOW)fail();
+ if(typeof root!=='string'||!isAbsolute(root)||root.length>220||/[\x00-\x1f]/.test(root)||trustedKey?.type!=='public'||!constants.O_NOFOLLOW)fail();
  let closed=false;
  async function check(){
   if(closed)fail();const st=await lstat(root);

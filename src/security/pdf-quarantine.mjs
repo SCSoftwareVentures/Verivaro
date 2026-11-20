@@ -3,6 +3,7 @@
 import {open,lstat,unlink,link} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {join,isAbsolute} from 'node:path';
+import {realpathSync} from 'node:fs';
 import {createCipheriv,createDecipheriv,createHash,randomBytes,randomUUID,timingSafeEqual} from 'node:crypto';
 import {PDF_NORMALIZER_MAX_SOURCE} from './pdf-normalization.mjs';
 const id=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
@@ -17,7 +18,8 @@ async function checkRoot(root){
  if(!s.isDirectory()||(s.mode&0o077)!==0||(typeof process.getuid==='function'&&s.uid!==process.getuid()))fail();
 }
 export function createOriginalPdfQuarantine({root,key,keyId,scan,retentionGate,withExclusiveHoldLock,deletionLedger}={}){
- if(typeof root!=='string'||!isAbsolute(root)||root.length>250||/[\x00-\x1f]/.test(root)||!Buffer.isBuffer(key)||key.length!==32||typeof scan!=='function'||typeof keyId!=='string'||!/^[a-z][a-z0-9_-]{0,31}$/.test(keyId)||!constants.O_NOFOLLOW||(retentionGate!==undefined&&(typeof retentionGate!=='function'||typeof withExclusiveHoldLock!=='function'))||(withExclusiveHoldLock!==undefined&&typeof withExclusiveHoldLock!=='function')||(retentionGate!==undefined&&(!deletionLedger||deletionLedger.root===root||typeof deletionLedger.prepare!=='function'||typeof deletionLedger.complete!=='function'||typeof deletionLedger.read!=='function'||deletionLedger.replicated!==true)))fail();
+ if(typeof root!=='string'||!isAbsolute(root)||root.length>250||/[\x00-\x1f]/.test(root)||!Buffer.isBuffer(key)||key.length!==32||typeof scan!=='function'||typeof keyId!=='string'||!/^[a-z][a-z0-9_-]{0,31}$/.test(keyId)||!constants.O_NOFOLLOW||(retentionGate!==undefined&&(typeof retentionGate!=='function'||typeof withExclusiveHoldLock!=='function'))||(withExclusiveHoldLock!==undefined&&typeof withExclusiveHoldLock!=='function')||(retentionGate!==undefined&&(!deletionLedger||deletionLedger.root===root||typeof deletionLedger.prepare!=='function'||typeof deletionLedger.complete!=='function'||typeof deletionLedger.read!=='function'||deletionLedger.replicated!==true||typeof deletionLedger.replicaRoot!=='string')))fail();
+ if(retentionGate){try{const roots=[root,deletionLedger.root,deletionLedger.replicaRoot].map(x=>realpathSync(x));if(new Set(roots).size!==3)fail();}catch{fail();}}
  const secret=Buffer.from(key);let busy=false,closed=false;
  async function gate(fn){
   if(closed||busy)fail();busy=true;
@@ -85,6 +87,19 @@ export function createOriginalPdfQuarantine({root,key,keyId,scan,retentionGate,w
    try{
     before=await target.stat();
     if(!before.isFile()||(before.mode&0o077)!==0||(typeof process.getuid==='function'&&before.uid!==process.getuid())||before.size!==meta.bytes+28)fail();
+    // Authenticate the *actual encrypted file*, not just its size and inode,
+    // before any signed deletion preparation or legal-hold clearance.
+    const cipherBytes=Buffer.alloc(before.size);let plaintext;
+    try{
+     let n=0;while(n<cipherBytes.length){signal.throwIfAborted();const r=await target.read(cipherBytes,n,cipherBytes.length-n,n);if(r.bytesRead<1)fail();n+=r.bytesRead;}
+     const after=await target.stat();
+     if(after.dev!==before.dev||after.ino!==before.ino||after.size!==before.size||after.mtimeMs!==before.mtimeMs||after.ctimeMs!==before.ctimeMs)fail();
+     const d=createDecipheriv('aes-256-gcm',secret,cipherBytes.subarray(0,12));
+     d.setAAD(aad(meta));d.setAuthTag(cipherBytes.subarray(-16));
+     plaintext=Buffer.concat([d.update(cipherBytes.subarray(12,-16)),d.final()]);
+     if(!pdf(plaintext)||digest(plaintext)!==meta.sha256)fail();
+     signal.throwIfAborted();
+    }finally{cipherBytes.fill(0);plaintext?.fill(0);}
    }finally{await target.close();}
    if(await retentionGate(meta,authorization,signal)!==true)fail();
    signal.throwIfAborted();

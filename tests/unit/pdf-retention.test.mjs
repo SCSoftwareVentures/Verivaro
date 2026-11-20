@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,rm,readdir,readFile} from 'node:fs/promises';
+import {mkdtemp,rm,readdir,readFile,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {generateKeyPairSync,randomBytes,randomUUID} from 'node:crypto';
@@ -23,6 +23,12 @@ test('dual signatures, independent hold and durable deletion receipts',async()=>
   const authorization={policy,approvals};
   await assert.rejects(vault.destroy(meta,{authorization,signal}));assert.equal((await readdir(root)).length,1);
   hold=false;
+  const sealedPath=join(root,meta.quarantineId+'.vvq'),sealed=await readFile(sealedPath),tampered=Buffer.from(sealed);
+  tampered[18]^=0x40;
+  await writeFile(sealedPath,tampered);
+  await assert.rejects(vault.destroy(meta,{authorization,signal}),'tampered encrypted original must not be removed');
+  assert.equal((await ledger.read(meta,{signal})).status,'none','tampered source must not obtain signed deletion authorization');
+  await writeFile(sealedPath,sealed);tampered.fill(0);sealed.fill(0);
   await assert.rejects(vault.destroy(meta,{authorization:{policy,approvals:[approvals[0],approvals[0]]},signal}));
   await assert.rejects(vault.destroy({...meta,tenantId:id()},{authorization,signal}));
   await assert.rejects(vault.destroy(meta,{authorization:{policy,approvals:[approvals[0],{...approvals[1],payload:{...approvals[1].payload,sourceSha256:'0'.repeat(64)}}]},signal}));
