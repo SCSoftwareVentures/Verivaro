@@ -606,7 +606,19 @@ test('HTTPS runtime boots with three TLS-pinned database pools, real browser log
   const release=await lifecycleEvent('hold_release_request',JSON.parse(hold.body).eventId);assert.equal(release.status,200);const releaseId=JSON.parse(release.body).eventId;assert.equal((await lifecycleEvent('hold_release_approved',releaseId)).status,404);assert.equal((await lifecycleEvent('hold_release_approved',releaseId,{},reviewer)).status,200);
   const disposal=await lifecycleEvent('disposal_request',policyId);assert.equal(disposal.status,200);assert.equal((await lifecycleEvent('disposal_approved',JSON.parse(disposal.body).eventId,{},reviewer)).status,200);assert.equal((await lifecycle()).approvalCurrent,true);assert.equal((await lifecycle()).executionEnabled,false);assert.equal((await lifecycleEvent('hold')).status,200);assert.equal((await lifecycle()).approvalCurrent,false);
   assert.equal((await request(graphBase+'/lifecycle-list',{headers:{cookie:viewer}})).status,404);
-  const portable=await g('portable-archive',{confirm:true});assert.equal(portable.status,200);assert.equal(portable.headers['x-archive-sha256'],createHash('sha256').update(portable.raw).digest('hex'));assert.ok(portable.raw.includes(Buffer.from('project-inventory.json')));assert.equal((await g('portable-archive',{confirm:true},reviewer)).status,404);
+  // Earlier bounded-listing fixtures deliberately introduced legacy entries.
+  // Export must refuse the mixed project, never silently omit original evidence.
+  assert.equal((await g('portable-archive',{confirm:true})).status,503);
+  assert.equal((await g('portable-archive',{confirm:true},reviewer)).status,404);
+  await admin.query('DELETE FROM verivaro_private.api_rate_keys');await admin.query('UPDATE verivaro_private.api_rate_state SET bucket=-1,requests=0');
+  const cleanProject=await adminPost(route+'/create',{requestId:randomUUID(),name:'Encrypted-only preservation fixture'});assert.equal(cleanProject.status,200);
+  const cleanProjectId=JSON.parse(cleanProject.body).id,cleanBase=route+'/'+cleanProjectId;
+  const cleanUpload=await request(cleanBase+'/evidence',{method:'POST',headers:{...evidenceHeaders,'idempotency-key':randomUUID()},body:evidenceBody});assert.equal(cleanUpload.status,200);
+  const cleanRevision=JSON.parse((await request(cleanBase,{headers:{cookie:session}})).body).project.revision;
+  assert.equal((await adminPost(cleanBase+'/archive',{requestId:randomUUID(),revision:cleanRevision})).status,200);
+  const portable=await adminPost(cleanBase+'/verification/portable-archive',{confirm:true});
+  assert.equal(portable.status,200);assert.equal(portable.headers['x-archive-sha256'],createHash('sha256').update(portable.raw).digest('hex'));assert.ok(portable.raw.includes(Buffer.from('project-inventory.json')));
+  const {verifyPortableProjectArchive}=await import('../../src/security/portable-project-archive.mjs');assert.equal(verifyPortableProjectArchive(portable.raw,{expectedArchiveSha256:portable.headers['x-archive-sha256'],expectedTenantId:tenant,expectedProjectId:cleanProjectId}).evidenceCount,1);
   await assert.rejects(admin.query('DELETE FROM verivaro_private.project_lifecycle_events WHERE false'),e=>e.code==='42501');
   console.log('https_lifecycle_portable_archive_gate_passed');
   assert.equal((await request('/auth/logout-all',{method:'POST',headers:{origin,cookie:session}})).status,204);
