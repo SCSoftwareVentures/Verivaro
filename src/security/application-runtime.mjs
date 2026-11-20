@@ -10,6 +10,7 @@ import {lstat} from 'node:fs/promises';
 import {isAbsolute} from 'node:path';
 import {workspacePage,workspaceScript,workspaceCss} from './workspace-assets.mjs';
 import {createSubmissionPackage} from './submission-package.mjs';
+import {createAuditCheckpointSigner} from './signed-audit-checkpoint.mjs';
 import {createContractIQ} from './contractiq-extraction.mjs';
 import {createGraphWorkspaceApi,isGraphWorkspaceRequest,isGraphWorkspaceMutation} from './graph-workspace-api.mjs';
 import {createReleaseWorkspaceApi,isReleaseWorkspaceRequest,isReleaseWorkspaceMutation} from './release-workspace-api.mjs';
@@ -51,7 +52,7 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
  const enabled=Object.hasOwn(cfg,'ingestion'),releaseEnabled=Object.hasOwn(cfg,'release');
  if(releaseEnabled&&!enabled)throw Error('release requires ingestion');
  const serviceRoles={...roles,...(enabled?{ingestion:'verivaro_evidence_ingestor',evidenceReader:'verivaro_evidence_reader'}:{}),...(releaseEnabled?{release:'verivaro_release_service',recipient:'verivaro_recipient_gateway'}:{})};
- exact(cfg,['origin','listenHost','listenPort','tlsKeyFile','tlsCertFile','database','logins','provider','local','secrets',...(enabled?['ingestion']:[]),...(releaseEnabled?['release']:[])]);
+ exact(cfg,['origin','listenHost','listenPort','tlsKeyFile','tlsCertFile','database','logins','provider','local','secrets',...(enabled?['ingestion']:[]),...(releaseEnabled?['release']:[]),...(Object.hasOwn(cfg,'auditSigning')?['auditSigning']:[])]);
  if(releaseEnabled){exact(cfg.release,['root']);if(typeof cfg.release.root!=='string'||!isAbsolute(cfg.release.root))throw Error('invalid release root');const s=await lstat(cfg.release.root);if(!s.isDirectory()||(s.mode&0o077)!==0||(typeof process.getuid==='function'&&s.uid!==process.getuid()))throw Error('unsafe release root');}
  if(enabled)exact(cfg.ingestion,['keyId','keyFile','scannerSocket',...(Object.hasOwn(cfg.ingestion,'retiredKeys')?['retiredKeys']:[])]);
  const origin=new URL(cfg.origin);
@@ -79,6 +80,12 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
   if(rawKeys.some((k,i)=>rawKeys.slice(0,i).some(p=>p.equals(k))))throw Error('duplicate application key');
   const [browserKey,contextKey,admissionKey]=rawKeys;
   const privateKey=createPrivateKey(await readText(cfg.local.signingKeyFile)),publicKey=createPublicKey(privateKey);
+  let auditSigner;
+  if(Object.hasOwn(cfg,'auditSigning')){
+   exact(cfg.auditSigning,['keyFile']);const signingKey=createPrivateKey(await readText(cfg.auditSigning.keyFile,4096));
+   if(createPublicKey(signingKey).export({type:'spki',format:'der'}).equals(publicKey.export({type:'spki',format:'der'})))throw Error('duplicate audit signing key');
+   auditSigner=createAuditCheckpointSigner(signingKey);
+  }
   const verifier={publicKey,issuer:cfg.local.issuer,audience:cfg.local.audience};
   const p=cfg.provider,provider=createRotatingProviderVerifier({issuer:p.issuer,audience:p.audience,requiredAcr:p.requiredAcr,requiredAmr:p.requiredAmr,authorityKey:await readText(p.authorityFile),checkpoint:JSON.parse(await readText(p.checkpointFile,4096)),catalogue:await readPrivate(p.catalogueFile,65536),signature:await readPrivate(p.signatureFile,64)});
   const db=createIdentityDatabase(pools.identity,{expectedLogin:cfg.logins.identity.user}),gateway=createAuthenticationGateway({db,provider,localIssuer:verifier.issuer,localAudience:verifier.audience,privateKey});
@@ -113,7 +120,7 @@ export async function createApplicationRuntime({configPath,Pool,fetcher=fetch,re
    assembleSubmission=createSubmissionPackage({workflow,retrieve});
    download=createEvidenceDownloadHandler({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,retrieve});
   }
-  const graph=createGraphWorkspaceApi({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,workflow,extract,assembleSubmission});
+  const graph=createGraphWorkspaceApi({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,workflow,extract,assembleSubmission,auditSigner});
   const workspace=createReleaseWorkspaceApi({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,workflow,publish,uploadsEnabled:enabled});
   const tenantService=createTenantAdministration(pools.runtime,{expectedLogin:cfg.logins.runtime.user,mode:'workspace',verifier,contextKey,trustedIssuer:p.issuer});
   const tenantAdmin=createTenantAdminApi({origin:origin.origin,verifier,admission,resolveSession:browser.resolveSession,administration:tenantService});

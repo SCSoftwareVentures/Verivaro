@@ -385,7 +385,7 @@ async function previewCustomerPackage(){
  }));say('Shared package preview ready.');
 }
 el('customerPackageForm').addEventListener('submit',event=>{event.preventDefault();perform(previewCustomerPackage);});
-function renderTemplateLibrary(root,library){
+function renderTemplateLibrary(root,library,organisation){
  const box=node('details');box.append(node('summary','Reusable export templates'),node('p','Project-scoped immutable presentation revisions. Retiring a template prevents new exports, not access to previous packages. Mandatory evidence is always retained.','meta'));
  function editor(prior){
   const ref=node('input'),heading=node('input'),order=graphChoice([['requirements_first','Requirements first'],['evidence_first','Evidence first']],prior?.configuration.order),workbook=node('input'),status=graphChoice([['active','Active'],['retired','Retired']],prior?.active===false?'retired':'active');
@@ -399,13 +399,18 @@ function renderTemplateLibrary(root,library){
    await graphPost('export-template-write',{...fields,templateId:prior?.templateId??retryId(key+':template'),templateVersionId:retryId(key+':version')});attempts.delete(key+':template');attempts.delete(key+':version');await loadProject();say('Template version saved.');
   }));return form;
  }
- for(const t of library.items){const row=node('article',undefined,'item');row.append(node('h4',t.reference),node('p','Revision '+t.revision+' · '+(t.active?'Active':'Retired'),'state'),node('p',t.configuration.heading+' · '+t.configuration.order.replaceAll('_',' ')+(t.configuration.includeWorkbook?' · XLSX':'')));const h=node('details');h.append(node('summary','Immutable history'));for(const r of t.history)h.append(node('p','r'+r.revision+' · '+(r.active?'Active':'Retired')+' · '+r.configuration.heading+' · '+r.recordedAt,'meta'));row.append(h);if(library.canWrite&&t.revision<16)row.append(editor(t));box.append(row);}
- if(library.canWrite&&library.items.length<32)box.append(editor(null));root.append(box);
+ for(const t of library.items){const row=node('article',undefined,'item');row.append(node('h4',t.reference),node('p','Revision '+t.revision+' · '+(t.active?'Active':'Retired'),'state'),node('p',t.configuration.heading+' · '+t.configuration.order.replaceAll('_',' ')+(t.configuration.includeWorkbook?' · XLSX':'')));const h=node('details');h.append(node('summary','Immutable history'));for(const r of t.history)h.append(node('p','r'+r.revision+' · '+(r.active?'Active':'Retired')+' · '+r.configuration.heading+' · '+r.recordedAt,'meta'));row.append(h);if(library.canWrite&&t.revision<16)row.append(editor(t));
+  if(organisation&&t.active){const pub=organisation.localPublications.find(x=>x.sourceVersionId===t.versionId),published=pub?.published??false;if((pub?.revision??0)<16)row.append(button(published?'Withdraw organisation template':'Publish to organisation',async()=>{if(!confirm(published?'Withdraw this publication? Existing imported copies remain.':'Publish only the presentation configuration to owners in this organisation?'))return;const fields={sourceVersionId:t.versionId,expectedRevision:pub?.revision??0,published:!published},key=current.base+':publication:'+JSON.stringify(fields);await graphPost('organisation-template-publish',{...fields,eventId:retryId(key)});attempts.delete(key);await loadProject();say('Organisation publication updated.');}));}
+  box.append(row);}
+ if(library.canWrite&&library.items.length<32)box.append(editor(null));
+ if(organisation){const catalog=node('details');catalog.append(node('summary','Organisation template catalog'),node('p','Explicitly published configurations only. Import creates an independent project copy; withdrawal does not delete existing copies.','meta'));for(const item of organisation.items){const row=node('article',undefined,'item'),ref=node('input');ref.maxLength=64;ref.value=item.reference;row.append(node('h4',item.reference),node('p',item.configuration.heading),graphField('Local copy reference',ref),button('Import organisation template',async()=>{const reference=ref.value.trim().toLowerCase();if(!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(reference))throw Error('Invalid local reference.');if(!confirm('Create a new local template copy?'))return;const fields={publicationId:item.publicationId,reference},key=current.base+':org-import:'+JSON.stringify(fields);await graphPost('organisation-template-import',{...fields,eventId:retryId(key+':event'),templateId:retryId(key+':template'),templateVersionId:retryId(key+':version')});for(const suffix of [':event',':template',':version'])attempts.delete(key+suffix);await loadProject();say('Organisation template imported.');}));catalog.append(row);}box.append(catalog);}
+ root.append(box);
 }
 async function loadSubmissions(g){
  const {base}=current,root=el('submissionItems'),listing=await api(base+'/verification/submission-list');
  const library=g.templateLibraryEnabled&&((current.data.tenantRole==='owner'&&current.data.projectRole==='owner')||(current.data.tenantRole==='reviewer'&&current.data.projectRole==='reviewer'))?await api(base+'/verification/export-template-list'):null;
- root.replaceChildren();if(library)renderTemplateLibrary(root,library);el('prepareSubmission').hidden=!(g.canWrite&&g.summary.status==='criteria_satisfied'&&g.requirements.every(x=>['satisfied','not_applicable'].includes(x.state)));
+ const organisation=g.organisationTemplateEnabled&&library?.canWrite?await api(base+'/verification/organisation-template-list'):null;
+ root.replaceChildren();if(library)renderTemplateLibrary(root,library,organisation);el('prepareSubmission').hidden=!(g.canWrite&&g.summary.status==='criteria_satisfied'&&g.requirements.every(x=>['satisfied','not_applicable'].includes(x.state)));
  for(const s of listing.items){
   const row=node('article',undefined,'item'),panel=node('div');row.append(node('p','Submission '+s.id,'meta'),node('p',s.authorizedAt?'Authorized (freshness checked on download)':s.decision??'Awaiting independent review','state'),node('p','Snapshot SHA-256: '+s.sha256,'meta'));
   if(s.reason)row.append(node('p',s.reason));
@@ -605,7 +610,9 @@ function renderTrustProof(g){
   head={sequence:page.headSequence,hash:page.headHash};cursor=page.verification.nextSequence;previous=page.verification.nextHash;
   root.replaceChildren(node('p','Retained head sequence: '+head.sequence),node('p',head.hash,'meta'),node('p','Sources reconciled: '+page.sourceCount+' · Checked through '+cursor,'state'),node('p',page.verification.complete?'Reached recorded head. Retain all pages and independent head hash.':'More pages remain.'));
   const blob=new Blob([JSON.stringify(page,null,2)+'\n'],{type:'application/json'}),url=URL.createObjectURL(blob),a=node('a');a.href=url;a.download='trustproof-'+g.projectId+'-'+page.afterSequence+'.json';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);say('Audit page exported.');
- }),root);el('preflightActions').append(box);
+ }),root);
+ if(g.auditSigningEnabled)box.append(button('Export digitally signed audit checkpoint',async()=>{if(!confirm('Verify the full current audit chain and request an application-signed checkpoint?'))return;const result=await api(base+'/verification/trustproof-checkpoint',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true})});if(result.checkpoint?.tenantId!==g.tenantId||result.checkpoint.projectId!==g.projectId||result.checkpoint.algorithm!=='Ed25519')throw Error('Checkpoint scope mismatch.');const blob=new Blob([JSON.stringify(result,null,2)+'\n'],{type:'application/json'}),url=URL.createObjectURL(blob),a=node('a');a.href=url;a.download='trustproof-signed-'+g.projectId+'.json';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);root.replaceChildren(node('p','Signing key fingerprint: '+result.checkpoint.keyFingerprint,'meta'),node('p','Retain the checkpoint and independently trusted public key.'));say('Signed checkpoint exported.');}));else box.append(node('p','Digital signing unavailable until a separate deployment key is configured.','meta'));
+ el('preflightActions').append(box);
 }
 async function loadGraph(){
  const {base,data}=current,g=await api(base+'/verification'),items=el('graphItems'),metrics=el('graphMetrics');
