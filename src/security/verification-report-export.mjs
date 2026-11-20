@@ -21,7 +21,7 @@ function inspect(report){
  const known=new Map(),reviews=new Set(),actual=Object.create(null);let bytes=0,encrypted=0;
  for(const e of report.evidence){
   id(e.id);sha(e.sha256);date(e.registeredAt);if(known.has(e.id))invalid();known.set(e.id,e.sha256);
-  if(e.storage==='encrypted'){encrypted++;const n=count(e.bytes,262144);if(!n)invalid();bytes+=n;if(!['text/plain; charset=utf-8','application/pdf','image/png'].includes(e.mediaType)||!['clamd-instream-text-v1','clamd-instream-format-v2'].includes(e.scanPolicy))invalid();}
+  if(e.storage==='encrypted'){encrypted++;const n=count(e.bytes,262144);if(!n)invalid();bytes+=n;if(!['text/plain; charset=utf-8','application/pdf','image/png','application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'].includes(e.mediaType)||!['clamd-instream-text-v1','clamd-instream-format-v2'].includes(e.scanPolicy))invalid();}
   else if(e.storage!=='legacy'||e.bytes!==null||e.mediaType!==null||e.scanPolicy!==null)invalid();
  }
  for(const r of report.reviews){

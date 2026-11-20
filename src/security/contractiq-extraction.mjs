@@ -8,7 +8,7 @@ export function extractRequirementCandidates(data,mediaType,{afterLine=0,manual=
  if(typeof manual!=='boolean')throw new RangeError('invalid source selection mode');
  if(!Number.isInteger(afterLine)||afterLine<0||afterLine>262144)throw new RangeError('invalid extraction cursor');
  validateEvidence(data,mediaType);
- if(mediaType==='image/png')throw new UnsupportedExtraction('OCR not supported');
+ if(!['text/plain; charset=utf-8','application/pdf'].includes(mediaType))throw new UnsupportedExtraction('Source extraction not yet available for this evidence format');
  const pdf=mediaType==='application/pdf';
  const lines=pdf?readCanonicalPdfPages(data).flatMap((lines,i)=>lines.map(quote=>({quote,page:i+1}))):new TextDecoder('utf-8',{fatal:true}).decode(data).split(/\r\n|\r|\n/).map(quote=>({quote,page:null}));
  let matched=0,skipped=0,remaining=0;const candidates=[];

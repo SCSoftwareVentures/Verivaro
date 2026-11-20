@@ -2,7 +2,7 @@ import {inflateSync,deflateSync} from 'node:zlib';
 const signature=Buffer.from([137,80,78,71,13,10,26,10]);
 const crcTable=Array.from({length:256},(_,i)=>{let c=i;for(let j=0;j<8;j++)c=c&1?0xedb88320^(c>>>1):c>>>1;return c>>>0;});
 export function crc32(b){let c=0xffffffff;for(const v of b)c=crcTable[(c^v)&255]^(c>>>8);return (c^0xffffffff)>>>0;}
-export const TYPES=Object.freeze(['text/plain; charset=utf-8','image/png','application/pdf']);
+export const TYPES=Object.freeze(['text/plain; charset=utf-8','image/png','application/pdf','application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']);
 export function validatePng(b){
  if(!b.subarray(0,8).equals(signature))throw Error('invalid PNG');
  let pos=8,w,h,channels,phase=0,idat=[],size=0;

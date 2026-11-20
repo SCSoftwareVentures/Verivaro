@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import {zip} from './verification-report-export.mjs';
-const hash=b=>createHash('sha256').update(b).digest('hex'),id=x=>typeof x==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(x),sha=x=>typeof x==='string'&&/^[a-f0-9]{64}$/.test(x),types=Object.freeze({'text/plain; charset=utf-8':'txt','application/pdf':'pdf','image/png':'png'}),fail=()=>{throw Error('portable archive invalid');};
+const hash=b=>createHash('sha256').update(b).digest('hex'),id=x=>typeof x==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(x),sha=x=>typeof x==='string'&&/^[a-f0-9]{64}$/.test(x),types=Object.freeze({'text/plain; charset=utf-8':'txt','application/pdf':'pdf','image/png':'png','application/vnd.openxmlformats-officedocument.wordprocessingml.document':'docx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':'xlsx'}),fail=()=>{throw Error('portable archive invalid');};
 const LIMIT=20*1024*1024;
 function inventory(m){
  if(!m||m.version!==1||!id(m.tenantId)||!id(m.projectId)||m.classification!=='internal preservation copy; not approval or full database backup'||m.report?.tenantId!==m.tenantId||m.report?.project?.id!==m.projectId||!m.report.project.archivedAt||m.assessment?.tenantId!==m.tenantId||m.assessment?.projectId!==m.projectId||m.assessment.archived!==true||m.lifecycle?.tenantId!==m.tenantId||m.lifecycle?.projectId!==m.projectId||m.lifecycle.archived!==true||m.lifecycle.executionEnabled!==false||!Array.isArray(m.report.evidence)||m.report.evidence.length>64)fail();
@@ -25,7 +25,7 @@ export function verifyPortableProjectArchive(archive,{expectedArchiveSha256,expe
  while(pos+4<=archive.length&&archive.readUInt32LE(pos)===0x04034b50){
   if(files.length>=66||pos+30>archive.length)fail();const n=archive.readUInt16LE(pos+26),size=archive.readUInt32LE(pos+22);
   if(n<1||n>64||size<1||size>2097152||archive.readUInt16LE(pos+28)!==0||archive.readUInt16LE(pos+6)!==0||archive.readUInt16LE(pos+8)!==0||archive.readUInt32LE(pos+18)!==size||pos+30+n+size>archive.length)fail();
-  const raw=archive.subarray(pos+30,pos+30+n),name=raw.toString('utf8');if(!Buffer.from(name,'ascii').equals(raw)||seen.has(name)||!/^(project-inventory\.json|archive-index\.json|evidence-[a-f0-9-]{36}\.(txt|pdf|png))$/.test(name))fail();seen.add(name);files.push([name,archive.subarray(pos+30+n,pos+30+n+size)]);pos+=30+n+size;
+  const raw=archive.subarray(pos+30,pos+30+n),name=raw.toString('utf8');if(!Buffer.from(name,'ascii').equals(raw)||seen.has(name)||!/^(project-inventory\.json|archive-index\.json|evidence-[a-f0-9-]{36}\.(txt|pdf|png|docx|xlsx))$/.test(name))fail();seen.add(name);files.push([name,archive.subarray(pos+30+n,pos+30+n+size)]);pos+=30+n+size;
  }
  if(files.length<2||files[0][0]!=='project-inventory.json'||files.at(-1)[0]!=='archive-index.json')fail();
  const canonical=zip(files);try{if(!canonical.equals(archive))fail();}finally{canonical.fill(0);}

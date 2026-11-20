@@ -6,21 +6,22 @@ import {createProviderEventReceiver} from '../../src/security/provider-events.mj
 import {issuer,audience,publicKey,privateKey,nonce,token,subject} from '../fixtures/provider-fixture.mjs';
 test('signed keyset rotation rejects rollback, wrong anchor, retired keys and expired snapshots',()=>{
  const authority=generateKeyPairSync('ed25519'),replacement=generateKeyPairSync('rsa',{modulusLength:2048});
- let now=Math.floor(Date.now()/1000);
+ let now=1800000000;
+ const fixedToken=(challenge,header={},key=privateKey)=>token(challenge,{iat:now,auth_time:now,exp:now+300},header,key);
  function snapshot(sequence,kid,key){
   const catalogue=Buffer.from(JSON.stringify({version:1,issuer,audience,sequence,issuedAt:now,expiresAt:now+600,keys:[{kid,pem:key.export({type:'spki',format:'pem'})}]}));
   return {catalogue,signature:sign(null,catalogue,authority.privateKey),checkpoint:{sequence,digest:createHash('sha256').update(catalogue).digest('hex')}};
  }
  const first=snapshot(1,'fixture',publicKey),second=snapshot(2,'next',replacement.publicKey);
  const p=createRotatingProviderVerifier({issuer,audience,requiredAcr:'fixture:mfa',authorityKey:authority.publicKey,...first,now:()=>now});
- assert.equal(p.verify(token(nonce())).issuer,issuer);
+ assert.equal(p.verify(fixedToken(nonce())).issuer,issuer);
  assert.throws(()=>p.rotate(second.catalogue,second.signature,first.checkpoint));
  assert.throws(()=>p.rotate(second.catalogue,Buffer.alloc(64),second.checkpoint));
  p.rotate(second.catalogue,second.signature,second.checkpoint);
- assert.throws(()=>p.verify(token(nonce())));
- assert.equal(p.verify(token(nonce(),{},{kid:'next'},replacement.privateKey)).issuer,issuer);
+ assert.throws(()=>p.verify(fixedToken(nonce())));
+ assert.equal(p.verify(fixedToken(nonce(),{kid:'next'},replacement.privateKey)).issuer,issuer);
  assert.throws(()=>p.rotate(first.catalogue,first.signature,first.checkpoint));
- now+=601;assert.throws(()=>p.verify(token(nonce())));
+ now+=601;assert.throws(()=>p.verify(fixedToken(nonce())));
 });
 test('signed lifecycle messages reject tampering, stale events, wrong audience and ambiguous payloads',async()=>{
  const kp=generateKeyPairSync('ed25519'),calls=[],now=Math.floor(Date.now()/1000);

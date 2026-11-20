@@ -54,7 +54,7 @@ export function createEvidenceDownloadHandler({origin,verifier,admission,resolve
    const [,tenantId,projectId,evidenceId]=route.exec(req.url);
    result=await retrieve({token,tenantId,projectId,evidenceId});
    if(res.destroyed)return;
-   const ext=result.mediaType==='image/png'?'png':result.mediaType==='application/pdf'?'pdf':'txt';
+   const ext=result.mediaType==='image/png'?'png':result.mediaType==='application/pdf'?'pdf':result.mediaType==='application/vnd.openxmlformats-officedocument.wordprocessingml.document'?'docx':result.mediaType==='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'?'xlsx':'txt';
    // Attachment only: never embed or render uploaded content.
    res.writeHead(200,{...base,'Content-Disposition':'attachment; filename="evidence-'+evidenceId+'.'+ext+'"','Content-Length':result.data.length,'X-Evidence-SHA256':result.sha256});
    const data=result.data;

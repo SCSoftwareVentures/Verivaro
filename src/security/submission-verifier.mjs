@@ -6,7 +6,7 @@ import {normalizeTemplateReference} from './template-reference.mjs';
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const digest=s=>typeof s==='string'&&s.length===64&&/^[a-f0-9]{64}$/.test(s);
 const uuid=s=>typeof s==='string'&&s.length===36&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(s);
-const types=Object.freeze({'text/plain; charset=utf-8':'txt','application/pdf':'pdf','image/png':'png'});
+const types=Object.freeze({'text/plain; charset=utf-8':'txt','application/pdf':'pdf','image/png':'png','application/vnd.openxmlformats-officedocument.wordprocessingml.document':'docx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':'xlsx'});
 export const MAX_SUBMISSION_ARCHIVE=20*1024*1024;
 const fail=()=>{throw Error('submission verification failed');};
 const json=b=>{try{return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(b));}catch{fail();}};
@@ -28,7 +28,7 @@ export function verifySubmissionPackage(archive,{expectedPackageSha256,expectedM
    archive.readUInt32LE(pos+18)!==size||pos+30+n+size>archive.length)fail();
   const raw=archive.subarray(pos+30,pos+30+n),name=raw.toString('utf8');
   if(!Buffer.from(name,'ascii').equals(raw)||names.has(name)||
-   !(/^(submission\.json|package-index\.json|handover-cover\.pdf|requirement-register\.csv|evidence-register\.csv|evidence-register\.xlsx|evidence-[a-f0-9-]{36}\.(txt|pdf|png))$/.test(name)))fail();
+   !(/^(submission\.json|package-index\.json|handover-cover\.pdf|requirement-register\.csv|evidence-register\.csv|evidence-register\.xlsx|evidence-[a-f0-9-]{36}\.(txt|pdf|png|docx|xlsx))$/.test(name)))fail();
   names.add(name);files.push([name,archive.subarray(pos+30+n,pos+30+n+size)]);pos+=30+n+size;
  }
  if(files.length<3||files[0][0]!=='submission.json'||files.at(-1)[0]!=='package-index.json')fail();

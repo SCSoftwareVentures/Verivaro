@@ -4,7 +4,7 @@ import {buildHandoverDerivatives,HANDOVER_PROFILES,normalizeHandoverConfig} from
 import {ReleaseConflict} from './evidence-release.mjs';
 import {normalizeTemplateReference} from './template-reference.mjs';
 const hash=b=>createHash('sha256').update(b).digest('hex');
-const types={'text/plain; charset=utf-8':'txt','application/pdf':'pdf','image/png':'png'};
+const types={'text/plain; charset=utf-8':'txt','application/pdf':'pdf','image/png':'png','application/vnd.openxmlformats-officedocument.wordprocessingml.document':'docx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':'xlsx'};
 const id=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 export function createSubmissionPackage({workflow,retrieve}){
  if(typeof workflow?.readSubmission!=='function'||typeof retrieve!=='function')throw Error('invalid submission packager');
