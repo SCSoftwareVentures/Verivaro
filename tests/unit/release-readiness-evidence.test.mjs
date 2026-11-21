@@ -48,7 +48,7 @@ test('release-facing README and status link the audited evidence register and ac
  assert.match(readme,/G1_BUYER_EVIDENCE_MANIFEST_20261121\.json/);
  assert.match(readme,/not a production-ready or sale-validated application/i);
  assert.match(status,/Release status: NOT APPROVED/);
- assert.match(audit,/No independently evidenced demand or valuation range/);
+ assert.match(audit,/no independently evidenced demand or valuation range/i);
 });
 test('maximum recovery capacity CI includes the active unmerged audit branch',()=>{
  const workflow=readFileSync(file('.github/workflows/recovery-capacity.yml'),'utf8');
