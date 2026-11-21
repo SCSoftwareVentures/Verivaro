@@ -13,6 +13,17 @@ const CHECK=String.raw`SELECT
  l.rolsuper OR l.rolbypassrls OR l.rolcreaterole OR l.rolcreatedb OR l.rolreplication OR l.rolinherit OR NOT l.rolcanlogin
  OR (l.rolvaliduntil IS NOT NULL AND l.rolvaliduntil<=clock_timestamp())
  OR g.rolsuper OR g.rolbypassrls OR g.rolcreaterole OR g.rolcreatedb OR g.rolreplication OR g.rolinherit
+ -- The allowed NOLOGIN group must not hold cluster-wide database ownership,
+ -- independent database/schema CREATE, or explicit parameter SET authority.
+ -- These privileges become usable as soon as the login SET ROLEs to g.
+ OR EXISTS(SELECT 1 FROM pg_catalog.pg_database d
+   WHERE d.datdba=g.oid OR has_database_privilege(g.oid,d.oid,'CREATE'))
+ OR EXISTS(SELECT 1 FROM pg_catalog.pg_namespace n
+   WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema'
+     AND has_schema_privilege(g.oid,n.oid,'CREATE'))
+ OR EXISTS(SELECT 1 FROM pg_catalog.pg_parameter_acl p
+   CROSS JOIN LATERAL pg_catalog.aclexplode(p.paracl) a
+   WHERE a.grantee=g.oid)
  OR NOT pg_has_role(l.oid,g.oid,'MEMBER')
  OR EXISTS(SELECT 1 FROM pg_catalog.pg_roles x WHERE x.oid NOT IN (l.oid,g.oid) AND pg_has_role(l.oid,x.oid,'MEMBER'))
  OR EXISTS(SELECT 1 FROM pg_catalog.pg_roles x WHERE x.oid<>g.oid AND pg_has_role(g.oid,x.oid,'MEMBER'))
