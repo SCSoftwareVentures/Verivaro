@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {spawnSync} from 'node:child_process';
+import {spawn,spawnSync} from 'node:child_process';
+import {mkdtemp,rm,writeFile} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {request} from 'node:http';
 import {createPortableBuyerBundle,verifyPortableBuyerBundle} from '../../src/demo/buyer-portable-bundle.mjs';
 import {zip} from '../../src/security/verification-report-export.mjs';
 
@@ -75,4 +79,55 @@ test('ZIP verification fails closed on changed bytes, changed metadata and spoof
  const upgraded=zip(falsified);
  assert.throws(()=>verifyPortableBuyerBundle(upgraded,{expectedArchiveSha256:sha(upgraded)}),
   /verification failed/);
+});
+
+test('packaged preview serves only local read-only synthetic assets',{timeout:20000},async t=>{
+ const built=await createPortableBuyerBundle();
+ const dir=await mkdtemp(join(tmpdir(),'verivaro-buyer-fixture-'));
+ t.after(()=>rm(dir,{recursive:true,force:true}));
+ for(const [name,data] of entries(built.archive))
+  await writeFile(join(dir,name),data,{flag:'wx',mode:0o600});
+ const child=spawn(process.execPath,['preview.mjs'],{
+  cwd:dir,stdio:['ignore','pipe','pipe']
+ });
+ t.after(()=>{if(child.exitCode===null)child.kill('SIGTERM');});
+ const base=await new Promise((resolve,reject)=>{
+  let stdout='',stderr='';
+  const timeout=setTimeout(()=>{
+   child.kill('SIGTERM');
+   reject(Error('local preview startup timeout: '+stderr));
+  },8000);
+  const finish=(fn,value)=>{clearTimeout(timeout);fn(value);};
+  child.stderr.on('data',x=>{stderr+=String(x);});
+  child.on('error',e=>finish(reject,e));
+  child.on('exit',code=>finish(reject,Error('local preview exited '+code+': '+stderr)));
+  child.stdout.on('data',chunk=>{
+   stdout+=String(chunk);
+   const match=stdout.match(/http:\/\/127\.0\.0\.1:\d+\//);
+   if(match)finish(resolve,match[0]);
+  });
+ });
+ const [html,fixture,js,css]=await Promise.all([
+  fetch(base),fetch(base+'buyer-demo.json'),
+  fetch(base+'buyer-showcase.js'),fetch(base+'buyer-showcase.css')
+ ]);
+ assert.deepEqual([html.status,fixture.status,js.status,css.status],[200,200,200,200]);
+ assert.equal(html.headers.get('cache-control'),'no-store');
+ assert.match(html.headers.get('content-security-policy'),/default-src 'none'/);
+ assert.match(await html.text(),/SYNTHETIC WALKTHROUGH/);
+ assert.equal((await fixture.json()).releaseApproved,false);
+ assert.equal((await fetch(base+'hidden',{method:'GET'})).status,404);
+ assert.equal((await fetch(base+'buyer-demo.json',{method:'POST'})).status,405);
+ const spoof=await new Promise((resolve,reject)=>{
+  const parsed=new URL(base);
+  const req=request({
+   host:'127.0.0.1',port:Number(parsed.port),
+   path:'/buyer-demo.json',method:'GET',
+   headers:{host:'remote.example'}
+  },response=>{
+   response.resume();response.on('end',()=>resolve(response.statusCode));
+  });
+  req.on('error',reject);req.end();
+ });
+ assert.equal(spoof,403);
 });
