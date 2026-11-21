@@ -36,6 +36,22 @@ test('live dedicated service identity rejects indirect, direct and administrativ
     'REVOKE USAGE ON SCHEMA public FROM vv_ci_admission_a');
   await rejectAfter('GRANT CONNECT ON DATABASE verivaro_test TO vv_ci_admission_a',
     'REVOKE CONNECT ON DATABASE verivaro_test FROM vv_ci_admission_a');
+  // Direct privileges on pg_catalog are also independent grants, even
+  // when PostgreSQL already gives PUBLIC access to the same object.
+  await rejectAfter('GRANT EXECUTE ON FUNCTION pg_catalog.pg_backend_pid() TO vv_ci_admission_a',
+    'REVOKE EXECUTE ON FUNCTION pg_catalog.pg_backend_pid() FROM vv_ci_admission_a');
+  await rejectAfter('GRANT SELECT ON TABLE pg_catalog.pg_type TO vv_ci_admission_a',
+    'REVOKE SELECT ON TABLE pg_catalog.pg_type FROM vv_ci_admission_a');
+  // A login can own another database without CREATEDB on the currently
+  // connected database; ownership is a cluster-level authority drift.
+  await admin.query('CREATE DATABASE vv_ci_service_login_owned_db OWNER vv_ci_admission_a');
+  try{
+   await assert.rejects(check(),/unsafe service login/);
+   await assert.rejects(adapter.acquire('192.0.2.1',1024,signal),/admission operation failed/);
+  }finally{
+   await admin.query('DROP DATABASE vv_ci_service_login_owned_db');
+  }
+  await check();
   // These grants live in distinct PostgreSQL privilege catalogues and must
   // not bypass an admission audit that otherwise checks schema/table ACLs.
   await rejectAfter('GRANT SET ON PARAMETER session_replication_role TO vv_ci_admission_a',
