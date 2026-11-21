@@ -183,6 +183,7 @@ test('stale witness snapshot or CAS conflict cannot authenticate on divergent tr
  assert.deepEqual(await store.read(),f.first.checkpoint);
  await assert.rejects(v.verify(jwt1()),/witness unavailable/);
  await store.close();
+ f.setMode('healthy'); // Clear the injected CAS conflict before supervised restart.
  const recovered=await f.openStore(),v2=await f.openVerifier(recovered);
  await v2.rotate(f.second.bytes,f.second.signature,f.second.checkpoint);
  f.setMode('stale-read');
