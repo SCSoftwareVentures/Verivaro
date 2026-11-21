@@ -145,7 +145,8 @@ test('serial-bound signer rollover interoperates with real CAS and rejects old-k
  const current=await authority.audit();
  gate.close();await authority.close();
  const fresh=await openReferenceRecoveryFloorAuthority({
-  ...f.config(current),trustedAuthorityKey:undefined,
+  ...f.config({serial:current.serial,headHash:current.headHash,
+   logHash:current.logHash}),trustedAuthorityKey:undefined,
   trustedAuthorityKeySchedule:schedule,signReceipt:signRotated
  });
  assert.deepEqual(verifySignedRecoveryFloorAuthority(
