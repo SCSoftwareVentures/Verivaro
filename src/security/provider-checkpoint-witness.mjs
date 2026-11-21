@@ -23,10 +23,13 @@ export async function openWitnessBoundProviderVerifier({store,witness,issuer,aud
  // Every token check must observe a fresh consistent witness/local pair.
  // A detected mismatch or witness I/O error latches denial until a supervised
  // restart, even if the witness subsequently becomes available again.
- let commitLocal,expected=Object.freeze({...local}),failed=false,rotating=false,epoch=0;
+ let commitLocal,expected=Object.freeze({...local}),failed=false,rotating=false,epoch=0,persistStarted=false;
  const inner=createRotatingProviderVerifier({...config,issuer,audience,checkpoint:local,
   persistCheckpoint:async(previous,next)=>{
    if(typeof commitLocal!=='function')throw Error('provider verifier not bound');
+   // Once trusted persistence was attempted, any subsequent exception leaves
+   // the in-memory verifier unavailable until a supervised restart.
+   persistStarted=true;
    // Detect an independent checkpoint advance before trying to rotate. On any
    // failure the inner verifier enters FAULTED and stops authorising tokens.
    const before=await witness.read(scope);
@@ -74,9 +77,12 @@ export async function openWitnessBoundProviderVerifier({store,witness,issuer,aud
   },
   async rotate(bytes,signature,anchor){
    if(failed||rotating||!store.isOpen())throw Error('provider checkpoint witness unavailable');
-   rotating=true;epoch++;
+   rotating=true;persistStarted=false;epoch++;
    try{return await inner.rotate(bytes,signature,anchor);}
-   finally{rotating=false;epoch++;}
+   catch(e){
+    if(persistStarted)failed=true;
+    throw e;
+   }finally{rotating=false;epoch++;}
   }
  });
 }

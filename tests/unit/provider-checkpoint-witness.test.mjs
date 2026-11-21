@@ -196,3 +196,16 @@ test('a remote read racing an authorised rotation rejects the request without fa
  const newJwt=token(nonce(),{iat:now,auth_time:now,exp:now+300},{kid:'next'},secondKey.privateKey);
  assert.equal((await v.verify(newJwt)).issuer,issuer);
 });
+
+test('a rejected unsigned rotation does not fault the previously trusted witness',async t=>{
+ const authority=generateKeyPairSync('ed25519'),first=catalogue(authority,1,'fixture',publicKey);
+ const {directory}=await fixture(t,first);
+ const witness=fakeWitness(first.checkpoint);
+ const store=await openFileProviderCheckpointStore({directory,issuer,audience});
+ t.after(()=>store.close().catch(()=>{}));
+ const v=await openWitnessBoundProviderVerifier(config(store,witness,authority,first));
+ await assert.rejects(v.rotate(Buffer.from('forged keyset'),Buffer.alloc(64),{sequence:2,digest:'2'.repeat(64)}),/keyset signature denied/);
+ assert.deepEqual(witness.inspect(),first.checkpoint);
+ const jwt=token(nonce(),{iat:now,auth_time:now,exp:now+300});
+ assert.equal((await v.verify(jwt)).issuer,issuer);
+});
