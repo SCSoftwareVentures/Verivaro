@@ -28,6 +28,11 @@ test('real disk persistence survives verifier restart and rejects retired keyset
  t.after(()=>store.close().catch(()=>{}));
  const input={store,issuer,audience,requiredAcr:'fixture:mfa',authorityKey:authority.publicKey,now:()=>now};
  const v=await openFileBackedProviderVerifier({...input,catalogue:first.catalogue,signature:first.signature});
+ // Two independent in-memory verifiers attached to one disk lease would
+ // permit a retired-key verifier to outlive a successful sibling rotation.
+ await assert.rejects(openFileBackedProviderVerifier({...input,catalogue:first.catalogue,signature:first.signature}),/already bound/);
+ await assert.rejects(store.compareAndSwap(first.checkpoint,{sequence:99,digest:'9'.repeat(64)}),/reserved for bound verifier/);
+ assert.deepEqual(await store.read(),first.checkpoint);
  assert.equal(v.verify(token(nonce(),{iat:now,auth_time:now,exp:now+300})).issuer,issuer);
  assert.deepEqual(await v.rotate(second.catalogue,second.signature,second.checkpoint),second.checkpoint);
  assert.deepEqual(await store.read(),second.checkpoint);
@@ -39,6 +44,21 @@ test('real disk persistence survives verifier restart and rejects retired keyset
  await assert.rejects(openFileBackedProviderVerifier({store:restarted,issuer,audience,requiredAcr:'fixture:mfa',authorityKey:authority.publicKey,catalogue:first.catalogue,signature:first.signature,now:()=>now}),/keyset scope or freshness/);
  const newVerifier=await openFileBackedProviderVerifier({store:restarted,issuer,audience,requiredAcr:'fixture:mfa',authorityKey:authority.publicKey,catalogue:second.catalogue,signature:second.signature,now:()=>now});
  assert.equal(newVerifier.verify(token(nonce(),{iat:now,auth_time:now,exp:now+300},{kid:'next'},replacement.privateKey)).issuer,issuer);
+});
+
+test('parallel verifier creation on one store admits exactly one active owner',async t=>{
+ const authority=generateKeyPairSync('ed25519');
+ const first=snapshot(authority,1,'fixture',publicKey);
+ const {directory}=await seeded(t,first);
+ const store=await openFileProviderCheckpointStore({directory,issuer,audience});
+ t.after(()=>store.close().catch(()=>{}));
+ const opts={store,issuer,audience,requiredAcr:'fixture:mfa',authorityKey:authority.publicKey,now:()=>now,
+  catalogue:first.catalogue,signature:first.signature};
+ const attempts=await Promise.allSettled([openFileBackedProviderVerifier(opts),openFileBackedProviderVerifier(opts)]);
+ assert.equal(attempts.filter(x=>x.status==='fulfilled').length,1);
+ assert.equal(attempts.filter(x=>x.status==='rejected'&&/already bound/.test(x.reason?.message)).length,1);
+ const accepted=attempts.find(x=>x.status==='fulfilled').value;
+ assert.equal(accepted.verify(token(nonce(),{iat:now,auth_time:now,exp:now+300})).issuer,issuer);
 });
 test('checkpoint CAS and live lock fail closed across instances',async t=>{
  const authority=generateKeyPairSync('ed25519'),first=snapshot(authority,1,'fixture',publicKey);

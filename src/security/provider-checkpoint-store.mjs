@@ -52,7 +52,8 @@ export async function openFileProviderCheckpointStore({directory,issuer,audience
  if(typeof directory!=='string'||!isAbsolute(directory)||!scopeOk(issuer)||!scopeOk(audience))
   throw Error('invalid checkpoint store configuration');
  const absolute=resolve(directory),dir=await open(absolute,directoryFlags);
- let session,closed=false,busy=false;
+ let session,closed=false,busy=false,bound=false;
+ const verifierCapability=Symbol('bound provider checkpoint verifier');
  const dataPath=join(absolute,'provider-keyset-checkpoint.json');
  const lockPath=join(absolute,'.provider-keyset-instance.lock');
  try{
@@ -66,8 +67,12 @@ export async function openFileProviderCheckpointStore({directory,issuer,audience
     if(closed)throw Error('checkpoint store closed');
     return readStrict(dataPath,issuer,audience);
    },
-   async compareAndSwap(previous,next){
+   async compareAndSwap(previous,next,capability){
     if(closed)throw Error('checkpoint store closed');
+    // Once a verifier is bound, only its private persistence closure can
+    // change the checkpoint. Otherwise a second caller could advance disk
+    // while the active verifier keeps trusting a stale in-memory keyset.
+    if(bound&&capability!==verifierCapability)throw Error('checkpoint store reserved for bound verifier');
     if(busy)throw Error('checkpoint store busy');
     if(!checkpointOk(previous)||!checkpointOk(next)||next.sequence<=previous.sequence)
      throw Error('invalid checkpoint advance');
@@ -87,6 +92,11 @@ export async function openFileProviderCheckpointStore({directory,issuer,audience
      return committed;
     }finally{if(tmp)await unlink(pending).catch(()=>{});}
     }finally{busy=false;}
+   },
+   bindVerifier(){
+    if(closed||busy||bound)throw Error('checkpoint verifier already bound or store unavailable');
+    bound=true;
+    return (previous,next)=>store.compareAndSwap(previous,next,verifierCapability);
    },
    isOpen(){return !closed;},
    async close(){
@@ -113,12 +123,20 @@ export async function openFileProviderCheckpointStore({directory,issuer,audience
 // A new process MUST read its operator-provisioned trusted checkpoint from disk.
 // A stale catalogue or unverified checkpoint cannot be passed as an API argument.
 export async function openFileBackedProviderVerifier({store,...config}){
- if(!store||typeof store.read!=='function'||typeof store.compareAndSwap!=='function'||
+ if(!store||typeof store.read!=='function'||typeof store.bindVerifier!=='function'||
     typeof store.isOpen!=='function'||!store.isOpen())
   throw Error('active checkpoint store required');
  const checkpoint=await store.read();
+ // Validate the signed catalogue BEFORE claiming the one allowed verifier.
+ // A rejected stale catalogue may then be retried safely against the same
+ // checkpoint; a successfully bound verifier cannot be duplicated.
+ let persist;
  const inner=createRotatingProviderVerifier({...config,checkpoint,
-  persistCheckpoint:(previous,next)=>store.compareAndSwap(previous,next)});
+  persistCheckpoint:(previous,next)=>{
+   if(typeof persist!=='function')throw Error('checkpoint verifier not bound');
+   return persist(previous,next);
+  }});
+ persist=store.bindVerifier();
  return Object.freeze({
   issuer:inner.issuer,audience:inner.audience,
   verify(token,now){
