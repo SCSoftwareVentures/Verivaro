@@ -31,6 +31,24 @@ test('every buyer-readiness gate has a unique identifier, grounded source and un
   }
  }
 });
+test('P0-D buyer handover cannot silently pass while exact-head tests are unverified',()=>{
+ const gate=manifest.states.find(x=>x.id==='G1_P0D_HANDOVER');
+ assert.ok(gate,'Missing G1 handover gate');
+ assert.equal(gate.status,'NOT_VERIFIED');
+ for(const name of [
+  'tests/unit/buyer-portable-bundle.test.mjs',
+  'tests/browser/offline-buyer-browser.test.mjs',
+  'tests/integration/live-requirement-graph.test.mjs',
+  'docs/engineering/G1_P0D_HANDOVER_OFFLINE_GATE_20261121.md',
+  '.github/workflows/buyer-bundle.yml'
+ ]){
+  assert.ok(gate.sources.includes(name),'Missing P0-D evidence path '+name);
+ }
+ assert.match(gate.blocker,/exact-head CI/i);
+ assert.equal(manifest.productReleaseApproved,false);
+ assert.equal(manifest.commercialDemandValidated,false);
+});
+
 test('production, sale and automated recovery claims are blocked while unresolved gates remain',()=>{
  const unresolved=manifest.states.filter(x=>x.status!=='INDEPENDENTLY_VERIFIED');
  assert.ok(unresolved.length>0);
