@@ -25,6 +25,49 @@ test('live PostgreSQL TLS rejects wrong CA, hostname and plaintext; credential r
   await rejected(await loadServicePoolConfig({env:env(oldLogin,'old',{PGHOST:'vv-wrong.test'}),role}),/hostname|altnames|certificate/i);
   await rejected({...oldCfg,ssl:false},/pg_hba|reject|encryption/i);
   const replacement=createMonitorDatabase(newPool,{mode:'reader',expectedLogin:newLogin});assert.ok((await replacement.snapshot()).health);
+  // Incident regression: the existing credential MUST remain usable while an
+  // unexpected elevated replacement is rejected without any retirement DDL.
+  await admin.query('GRANT pg_read_all_data TO vv_ci_tls_new');
+  try{
+   const c=await admin.connect();
+   try{await assert.rejects(retireServiceCredential(c,{role,oldLogin,newLogin,confirm:oldLogin}),/credential retirement failed/);}
+   finally{c.release(true);}
+   assert.equal((await oldPool.query('SELECT 1 AS ok')).rows[0].ok,1);
+  }finally{await admin.query('REVOKE pg_read_all_data FROM vv_ci_tls_new');}
+  await admin.query('GRANT verivaro_monitor_reader TO vv_ci_tls_new WITH ADMIN OPTION');
+  try{
+   const c=await admin.connect();
+   try{await assert.rejects(retireServiceCredential(c,{role,oldLogin,newLogin,confirm:oldLogin}),/credential retirement failed/);}
+   finally{c.release(true);}
+   assert.equal((await oldPool.query('SELECT 1 AS ok')).rows[0].ok,1);
+  }finally{await admin.query('REVOKE ADMIN OPTION FOR verivaro_monitor_reader FROM vv_ci_tls_new');}
+  // A replacement with unexpected *direct* ACLs must never trigger
+  // old-login retirement. Membership checks alone are insufficient.
+  async function rejectDirectGrant(grant,revoke){
+   await admin.query(grant);
+   try{
+    const c=await admin.connect();
+    try{await assert.rejects(
+     retireServiceCredential(c,{role,oldLogin,newLogin,confirm:oldLogin}),
+     /credential retirement failed/);
+    }finally{c.release(true);}
+    // Old login remains authenticated, including during denied retirement.
+    assert.equal((await oldPool.query('SELECT 1 AS ok')).rows[0].ok,1);
+   }finally{await admin.query(revoke);}
+   assert.ok((await replacement.snapshot()).health);
+  }
+  await rejectDirectGrant(
+   'GRANT USAGE ON SCHEMA verivaro_private TO vv_ci_tls_new',
+   'REVOKE USAGE ON SCHEMA verivaro_private FROM vv_ci_tls_new');
+  await rejectDirectGrant(
+   'GRANT SELECT ON TABLE verivaro_private.context_key TO vv_ci_tls_new',
+   'REVOKE SELECT ON TABLE verivaro_private.context_key FROM vv_ci_tls_new');
+  await rejectDirectGrant(
+   'GRANT EXECUTE ON FUNCTION verivaro.bound_context() TO vv_ci_tls_new',
+   'REVOKE EXECUTE ON FUNCTION verivaro.bound_context() FROM vv_ci_tls_new');
+  await rejectDirectGrant(
+   'ALTER DEFAULT PRIVILEGES IN SCHEMA verivaro_private GRANT SELECT ON TABLES TO vv_ci_tls_new',
+   'ALTER DEFAULT PRIVILEGES IN SCHEMA verivaro_private REVOKE SELECT ON TABLES FROM vv_ci_tls_new');
   held=await oldPool.connect();held.on('error',()=>{});
   await held.query('SET ROLE verivaro_monitor_reader');
   const pid=held.processID;
