@@ -21,3 +21,23 @@
 Select and separately authorise a real monotonic witness outside the verifier's security domain; configure distinct nonexportable credentials, atomic compare-and-swap semantics, consistent reads, tamper-evident audit trail, incident recovery, high availability and partition behaviour. Independently test post-crash and restored snapshots before declaring production anti-rollback. A signed provider-key catalogue alone cannot provide monotonicity when both checkpoint and catalogue can be rolled back together.
 
 Keep PR review open and do not deploy, purchase, activate a cloud service, or handle production keys without owner approval.
+
+## Deadline and admission hardening (21 November 2026)
+
+The adapter now accepts `checkpointIoTimeoutMs` (default **5000**, allowed 25–30000 ms) and
+`maxConcurrentCheckpointReads` (default **8**, allowed 1–32). Startup, per-token
+disk+witness reads, witness pre-rotation reads, monotonic CAS and local checkpoint
+commit all have explicit application deadlines. Per-token verification denies
+requests beyond the admission limit without faulting a healthy verifier; an
+I/O timeout, failed remote read or uncertain persistence faults the verifier
+closed. Tests use deliberately never-resolving reads and CAS operations.
+
+The deadline uses an abort signal handed to `witness.read(scope,{signal})`,
+`witness.compareAndSwap(request,{signal})` and `store.read({signal})`
+(and the local commit). **This bounds the application's await, but does not
+prove that an uncooperative transport has closed its socket**: production
+adapters MUST enforce their own network connect/read deadlines, observe abort,
+cap sockets and outstanding requests across processes, and instrument
+latency/error budgets. Late completion after an I/O timeout must not restore a
+faulted verifier; operator-led checkpoint reconciliation remains mandatory.
+The 5-second default is provisional and requires measured SLO testing.

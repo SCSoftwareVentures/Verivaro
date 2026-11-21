@@ -209,3 +209,68 @@ test('a rejected unsigned rotation does not fault the previously trusted witness
  const jwt=token(nonce(),{iat:now,auth_time:now,exp:now+300});
  assert.equal((await v.verify(jwt)).issuer,issuer);
 });
+
+test('never-settling witness reads time out and permanently fail closed',async t=>{
+ const authority=generateKeyPairSync('ed25519'),first=catalogue(authority,1,'fixture',publicKey);
+ const {directory}=await fixture(t,first),base=fakeWitness(first.checkpoint);
+ let stall=false;
+ const witness={
+  read:scope=>stall?new Promise(()=>{}):base.read(scope),
+  compareAndSwap:args=>base.compareAndSwap(args)
+ };
+ const store=await openFileProviderCheckpointStore({directory,issuer,audience});
+ t.after(()=>store.close().catch(()=>{}));
+ const v=await openWitnessBoundProviderVerifier({...config(store,witness,authority,first),checkpointIoTimeoutMs:40});
+ stall=true;
+ const jwt=token(nonce(),{iat:now,auth_time:now,exp:now+300});
+ await assert.rejects(v.verify(jwt),/witness unavailable/);
+ stall=false;
+ await assert.rejects(v.verify(jwt),/witness unavailable/);
+});
+test('limits concurrent checkpoint reads without poisoning a healthy witness',async t=>{
+ const authority=generateKeyPairSync('ed25519'),first=catalogue(authority,1,'fixture',publicKey);
+ const {directory}=await fixture(t,first),base=fakeWitness(first.checkpoint);
+ let blocked=false,release;
+ const gate=new Promise(resolve=>{release=resolve;});
+ const witness={
+  read:scope=>blocked?gate.then(()=>base.read(scope)):base.read(scope),
+  compareAndSwap:args=>base.compareAndSwap(args)
+ };
+ const store=await openFileProviderCheckpointStore({directory,issuer,audience});
+ t.after(()=>store.close().catch(()=>{}));
+ const v=await openWitnessBoundProviderVerifier({...config(store,witness,authority,first),
+  maxConcurrentCheckpointReads:1,checkpointIoTimeoutMs:2000});
+ blocked=true;
+ const jwt=token(nonce(),{iat:now,auth_time:now,exp:now+300});
+ const pending=v.verify(jwt);
+ await assert.rejects(v.verify(jwt),/witness saturated/);
+ release();
+ assert.equal((await pending).issuer,issuer);
+ blocked=false;
+ assert.equal((await v.verify(jwt)).issuer,issuer);
+});
+test('stalled witness CAS denies future verification after rotation deadline',async t=>{
+ const authority=generateKeyPairSync('ed25519'),second=generateKeyPairSync('rsa',{modulusLength:2048});
+ const first=catalogue(authority,1,'fixture',publicKey),next=catalogue(authority,2,'next',second.publicKey);
+ const {directory}=await fixture(t,first),base=fakeWitness(first.checkpoint);
+ const witness={
+  read:scope=>base.read(scope),
+  compareAndSwap:()=>new Promise(()=>{})
+ };
+ const store=await openFileProviderCheckpointStore({directory,issuer,audience});
+ t.after(()=>store.close().catch(()=>{}));
+ const v=await openWitnessBoundProviderVerifier({...config(store,witness,authority,first),checkpointIoTimeoutMs:40});
+ await assert.rejects(v.rotate(next.catalogue,next.signature,next.checkpoint),/update unconfirmed/);
+ await assert.rejects(v.verify(token(nonce(),{iat:now,auth_time:now,exp:now+300})),/witness unavailable/);
+ assert.deepEqual(await store.read(),first.checkpoint);
+ assert.deepEqual(base.inspect(),first.checkpoint);
+});
+test('witness adapter must meet a finite startup deadline',async t=>{
+ const authority=generateKeyPairSync('ed25519'),first=catalogue(authority,1,'fixture',publicKey);
+ const {directory}=await fixture(t,first);
+ const store=await openFileProviderCheckpointStore({directory,issuer,audience});
+ t.after(()=>store.close().catch(()=>{}));
+ const witness={read:()=>new Promise(()=>{}),compareAndSwap:()=>new Promise(()=>{})};
+ await assert.rejects(openWitnessBoundProviderVerifier({...config(store,witness,authority,first),
+  checkpointIoTimeoutMs:40}),/I\/O deadline exceeded/);
+});
