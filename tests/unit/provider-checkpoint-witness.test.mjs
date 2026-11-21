@@ -55,11 +55,11 @@ test('independent witness catches local disk snapshot rollback on verifier resta
  const witness=fakeWitness(first.checkpoint),store=await openFileProviderCheckpointStore({directory,issuer,audience});
  t.after(()=>store.close().catch(()=>{}));
  const v=await openWitnessBoundProviderVerifier(config(store,witness,authority,first));
- assert.equal(v.verify(token(nonce(),{iat:now,auth_time:now,exp:now+300})).issuer,issuer);
+ assert.equal((await v.verify(token(nonce(),{iat:now,auth_time:now,exp:now+300}))).issuer,issuer);
  await v.rotate(next.catalogue,next.signature,next.checkpoint);
  assert.deepEqual(await store.read(),next.checkpoint);
  assert.deepEqual(witness.inspect(),next.checkpoint);
- assert.throws(()=>v.verify(token(nonce(),{iat:now,auth_time:now,exp:now+300})),/unsupported provider header/);
+ await assert.rejects(v.verify(token(nonce(),{iat:now,auth_time:now,exp:now+300})),/unsupported provider header/);
  await store.close();
  // Simulate rollback of ONLY local storage, without rewriting the separate
  // witness. The checkpoint directory is already single-owner-unlocked.
@@ -112,7 +112,7 @@ test('witness conflict or incomplete persistence blocks all further token checks
   }};
  const verifier=await openWitnessBoundProviderVerifier(config(store,witness,authority,first));
  await assert.rejects(verifier.rotate(next.catalogue,next.signature,next.checkpoint),/update unconfirmed/);
- assert.throws(()=>verifier.verify(token(nonce(),{iat:now,auth_time:now,exp:now+300})),/unavailable/);
+ await assert.rejects(verifier.verify(token(nonce(),{iat:now,auth_time:now,exp:now+300})),/unavailable/);
  assert.deepEqual(await real.read(),first.checkpoint);
  assert.deepEqual(witness.inspect(),next.checkpoint);
  await real.close();
@@ -133,5 +133,66 @@ test('requires an independently supplied witness and rejects stale external stat
  // A failed pre-bind witness check must not permanently consume the store's
  // single authorised verifier lease.
  const accepted=await openWitnessBoundProviderVerifier(config(real,fakeWitness(first.checkpoint),authority,first));
- assert.equal(accepted.verify(token(nonce(),{iat:now,auth_time:now,exp:now+300})).issuer,issuer);
+ assert.equal((await accepted.verify(token(nonce(),{iat:now,auth_time:now,exp:now+300}))).issuer,issuer);
+});
+
+test('out-of-band witness advance denies a running verifier and latches denial',async t=>{
+ const authority=generateKeyPairSync('ed25519'),first=catalogue(authority,1,'fixture',publicKey);
+ const {directory}=await fixture(t,first);
+ const witness=fakeWitness(first.checkpoint);
+ const store=await openFileProviderCheckpointStore({directory,issuer,audience});
+ t.after(()=>store.close().catch(()=>{}));
+ const v=await openWitnessBoundProviderVerifier(config(store,witness,authority,first));
+ const jwt=token(nonce(),{iat:now,auth_time:now,exp:now+300});
+ assert.equal((await v.verify(jwt)).issuer,issuer);
+ witness.setForTest({sequence:2,digest:'2'.repeat(64)});
+ await assert.rejects(v.verify(jwt),/witness disagreement/);
+ witness.setForTest(first.checkpoint);
+ await assert.rejects(v.verify(jwt),/witness unavailable/);
+});
+test('witness read failure after startup permanently denies verification',async t=>{
+ const authority=generateKeyPairSync('ed25519'),first=catalogue(authority,1,'fixture',publicKey);
+ const {directory}=await fixture(t,first);
+ const base=fakeWitness(first.checkpoint);
+ let failReads=false;
+ const witness={
+  read:async scope=>{if(failReads)throw Error('unavailable witness storage');return base.read(scope);},
+  compareAndSwap:args=>base.compareAndSwap(args)
+ };
+ const store=await openFileProviderCheckpointStore({directory,issuer,audience});
+ t.after(()=>store.close().catch(()=>{}));
+ const v=await openWitnessBoundProviderVerifier(config(store,witness,authority,first));
+ const jwt=token(nonce(),{iat:now,auth_time:now,exp:now+300});
+ assert.equal((await v.verify(jwt)).issuer,issuer);
+ failReads=true;
+ await assert.rejects(v.verify(jwt),/witness unavailable/);
+ failReads=false;
+ await assert.rejects(v.verify(jwt),/witness unavailable/);
+});
+test('a remote read racing an authorised rotation rejects the request without false rollback latch',async t=>{
+ const authority=generateKeyPairSync('ed25519'),secondKey=generateKeyPairSync('rsa',{modulusLength:2048});
+ const first=catalogue(authority,1,'fixture',publicKey),next=catalogue(authority,2,'next',secondKey.publicKey);
+ const {directory}=await fixture(t,first);
+ const base=fakeWitness(first.checkpoint);
+ let suspend=false,finish;
+ const witness={
+  read:async scope=>{
+   if(suspend)return new Promise(resolve=>{finish=()=>resolve(base.read(scope));});
+   return base.read(scope);
+  },
+  compareAndSwap:args=>base.compareAndSwap(args)
+ };
+ const store=await openFileProviderCheckpointStore({directory,issuer,audience});
+ t.after(()=>store.close().catch(()=>{}));
+ const v=await openWitnessBoundProviderVerifier(config(store,witness,authority,first));
+ suspend=true;
+ const pending=v.verify(token(nonce(),{iat:now,auth_time:now,exp:now+300}));
+ assert.equal(typeof finish,'function');
+ suspend=false;
+ await v.rotate(next.catalogue,next.signature,next.checkpoint);
+ finish();
+ await assert.rejects(pending,/changed during verification/);
+ assert.deepEqual(await store.read(),next.checkpoint);
+ const newJwt=token(nonce(),{iat:now,auth_time:now,exp:now+300},{kid:'next'},secondKey.privateKey);
+ assert.equal((await v.verify(newJwt)).issuer,issuer);
 });

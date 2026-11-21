@@ -20,7 +20,10 @@ export async function openWitnessBoundProviderVerifier({store,witness,issuer,aud
  const local=await store.read();
  const witnessState=await witness.read(scope);
  if(!equal(local,witnessState))throw Error('provider checkpoint witness disagreement');
- let commitLocal;
+ // Every token check must observe a fresh consistent witness/local pair.
+ // A detected mismatch or witness I/O error latches denial until a supervised
+ // restart, even if the witness subsequently becomes available again.
+ let commitLocal,expected=Object.freeze({...local}),failed=false,rotating=false,epoch=0;
  const inner=createRotatingProviderVerifier({...config,issuer,audience,checkpoint:local,
   persistCheckpoint:async(previous,next)=>{
    if(typeof commitLocal!=='function')throw Error('provider verifier not bound');
@@ -35,6 +38,7 @@ export async function openWitnessBoundProviderVerifier({store,witness,issuer,aud
    if(!equal(confirmed,next))throw Error('independent checkpoint commit unconfirmed');
    const saved=await commitLocal(previous,next);
    if(!equal(saved,next))throw Error('local checkpoint commit unconfirmed');
+   expected=Object.freeze({...next});
    return saved;
   }});
  commitLocal=store.bindVerifier();
@@ -46,16 +50,33 @@ export async function openWitnessBoundProviderVerifier({store,witness,issuer,aud
   throw Error('provider checkpoint changed during verifier binding');
  return Object.freeze({
   issuer:inner.issuer,audience:inner.audience,
-  verify(token,now){
-   if(!store.isOpen())throw Error('checkpoint store closed');
-   // This synchronous API does not poll the remote witness for every token.
-   // A single-active-service boundary is mandatory until a real multi-node
-   // invalidation protocol has been independently engineered and validated.
+  async verify(token,now){
+   if(failed||rotating||!store.isOpen())throw Error('provider checkpoint witness unavailable');
+   const observedEpoch=epoch;
+   let localNow,witnessNow;
+   try{
+    // Require strongly consistent, current witness reads: cached or
+    // eventually consistent responses are not production-safe.
+    [localNow,witnessNow]=await Promise.all([store.read(),witness.read(scope)]);
+   }catch{
+    failed=true;
+    throw Error('provider checkpoint witness unavailable');
+   }
+   // A rotation may start or finish while the remote read is pending.
+   // Reject that attempt without falsely latching a rollback fault.
+   if(rotating||observedEpoch!==epoch)throw Error('provider checkpoint changed during verification');
+   if(!equal(localNow,expected)||!equal(witnessNow,expected)){
+    failed=true;
+    throw Error('provider checkpoint witness disagreement');
+   }
+   if(failed||!store.isOpen())throw Error('provider checkpoint witness unavailable');
    return inner.verify(token,now);
   },
-  rotate(bytes,signature,anchor){
-   if(!store.isOpen())throw Error('checkpoint store closed');
-   return inner.rotate(bytes,signature,anchor);
+  async rotate(bytes,signature,anchor){
+   if(failed||rotating||!store.isOpen())throw Error('provider checkpoint witness unavailable');
+   rotating=true;epoch++;
+   try{return await inner.rotate(bytes,signature,anchor);}
+   finally{rotating=false;epoch++;}
   }
  });
 }

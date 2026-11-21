@@ -10,11 +10,11 @@
 - Signed catalogue validation happens before the store is bound. Any rejected signature or stale catalogue cannot claim the verifier lease.
 - Every keyset rotation checks the current witnessed checkpoint, then advances witness via independent atomic compare-and-swap *before* writing the local fsynced disk checkpoint. On a crash between commits, the witness is ahead and restart **fails closed**. This is intentional: operational reconciliation is required rather than silent rollback.
 - Any indeterminate witness result, CAS error, local storage failure, disagreement or concurrency failure causes the active verifier to deny subsequent token validation. The witness must never claim a checkpoint is durable before it actually is.
-- `verify()` is **synchronous** and only checks the witness at startup and rotation, not per request; this is explicitly a **single-active-service** mechanism, *not* a multi-node key-revocation protocol.
+- `verify()` is now **asynchronous**, reading both disk and the independently governed witness on **each token verification**. Missing, stale, inconsistent or unreadable witness state permanently denies that verifier until supervised restart. A read racing this process's authorised rotation rejects that token attempt but permits a fresh verification afterward. Production witnesses must deliver strongly consistent reads; availability failures reject authentication. Per-token I/O adds latency and availability dependencies. This remains a **single-active-service** mechanism; it is *not* a multi-node key-revocation protocol.
 
 ## Synthetic tests
 
-`tests/unit/provider-checkpoint-witness.test.mjs` uses real disk checkpoints plus a separate in-memory fake witness to simulate external monotonic state. It checks local snapshot rollback detection, restart denial, witness-before-disk ordering, absent/stale witness, and a simulated local fsync failure. This proves application handling, **not** independent custody, durability, Byzantine resistance, networking, failover, TLS, secure clock, power-loss resilience or multi-host consensus.
+`tests/unit/provider-checkpoint-witness.test.mjs` uses real disk checkpoints plus a separate in-memory fake witness to simulate external monotonic state. It checks local snapshot rollback detection, restart denial, witness-before-disk ordering, absent/stale witness, a simulated local fsync failure, post-startup external checkpoint advance, witness unavailability and verification/rotation races. This proves application handling, **not** independent custody, durability, Byzantine resistance, networking, failover, TLS, secure clock, power-loss resilience or multi-host consensus.
 
 ## Operational acceptance still required
 
