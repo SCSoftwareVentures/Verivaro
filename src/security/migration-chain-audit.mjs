@@ -53,21 +53,24 @@ export function verifyMigrationChainSnapshot({
  // Require a dedicated preflight in its own CI step before the *first*
  // migration application. Refuse any unrecognised migration command.
  const preflight='node scripts/verify-migration-chain.mjs';
- const first=workflowText.indexOf('psql -X -v ON_ERROR_STOP=1 -f db/migrations/');
- const pre=workflowText.indexOf(preflight);
- if(pre<0||first<0||pre>=first)fail();
+ const runner='node scripts/ci-migration-ledger.mjs apply ';
+ const first=workflowText.indexOf(runner+'db/migrations/');
+ const pre=workflowText.indexOf('node scripts/verify-migration-chain.mjs');
+ const init=workflowText.indexOf('node scripts/ci-migration-ledger.mjs init');
+ const finished=workflowText.indexOf('node scripts/ci-migration-ledger.mjs verify');
+ if(pre<0||init<=pre||first<=init||finished<=first)fail();
  const applied=[];
  for(const line of workflowText.split('\n')){
   if(!line.includes('db/migrations/'))continue;
-  const match=/^\s*psql -X -v ON_ERROR_STOP=1 -f (db\/migrations\/[0-9]{4}_[a-z0-9_]+\.sql)\s*$/.exec(line);
+  const match=/^\s*node scripts\/ci-migration-ledger\.mjs apply (db\/migrations\/[0-9]{4}_[a-z0-9_]+\.sql)\s*$/.exec(line);
   if(!match)fail();
   applied.push(match[1]);
  }
  if(JSON.stringify(applied)!==JSON.stringify(expected))fail();
  const finalGate=workflowText.lastIndexOf(
   'psql -X -v ON_ERROR_STOP=1 -f db/tests/full_security_gate.sql');
- if(finalGate<first||finalGate<workflowText.lastIndexOf(
-  'psql -X -v ON_ERROR_STOP=1 -f '+expected.at(-1)))fail();
+ const last=workflowText.lastIndexOf(runner+expected.at(-1));
+ if(last<first||finished<last||finalGate<finished)fail();
  return Object.freeze({
   checkedCount:expected.length,
   first:expected[0],last:expected.at(-1),

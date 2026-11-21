@@ -17,12 +17,14 @@ function fixture(){
   baselineCommit:baseline,hashAlgorithm:'git-blob-sha1',
   sourceScope:'repository-migrations-only',productionMigrationApproved:false,
   independentlySigned:false,migrations};
- const cmd=i=>'          psql -X -v ON_ERROR_STOP=1 -f '+name(i)+'\n';
+ const cmd=i=>'          node scripts/ci-migration-ledger.mjs apply '+name(i)+'\n';
  const workflowText='name: test\njobs:\n  test:\n    steps:\n'+
   '      - name: Check migrations\n        run: |\n'+
   '          node scripts/verify-migration-chain.mjs\n'+
+  '      - name: Init ledger\n        run: |\n          node scripts/ci-migration-ledger.mjs init\n'+
   '      - name: Apply schema and adversarial checks\n        run: |\n'+
   cmd(1)+cmd(2)+
+  '          node scripts/ci-migration-ledger.mjs verify\n'+
   '          psql -X -v ON_ERROR_STOP=1 -f db/tests/full_security_gate.sql\n';
  return {files,manifest,workflowText};
 }
@@ -63,7 +65,7 @@ test('modified migration, removed file and unexpected migration all reject',()=>
  }
 });
 test('reordered, skipped, duplicate and unapproved CI application reject',()=>{
- const cmd=i=>'          psql -X -v ON_ERROR_STOP=1 -f '+name(i)+'\n';
+ const cmd=i=>'          node scripts/ci-migration-ledger.mjs apply '+name(i)+'\n';
  for(const change of [
   s=>s.replace(cmd(1)+cmd(2),cmd(2)+cmd(1)),
   s=>s.replace(cmd(2),''),
