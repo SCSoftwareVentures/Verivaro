@@ -50,6 +50,7 @@ export function verifyReferenceRecoveryApprovalLog(bytes,{issuer,audience,truste
  const lines=raw.slice(0,-1).split('\n');
  if(lines.length<1||lines.length>MAX_RECORDS)throw fail();
  let serial=-1,previousHash=ZERO;
+ const usedIds=new Set();
  for(let i=0;i<lines.length;i++){
   if(!lines[i]||lines[i].length>2048)throw fail();
   let e;
@@ -64,7 +65,9 @@ export function verifyReferenceRecoveryApprovalLog(bytes,{issuer,audience,truste
   }else{
    if(e.kind!=='consume'||e.serial!==serial+1||
     typeof e.approvalId!=='string'||!IDENT.test(e.approvalId)||
-    typeof e.evidenceHash!=='string'||!HEX.test(e.evidenceHash))throw fail();
+    typeof e.evidenceHash!=='string'||!HEX.test(e.evidenceHash)||
+    usedIds.has(e.approvalId))throw fail();
+   usedIds.add(e.approvalId);
   }
   const expected=makeRecord({issuer,audience},e.kind,e.serial,e.approvalId,
    e.evidenceHash,previousHash);
@@ -133,6 +136,8 @@ export async function openReferenceRecoveryApprovalConsumption({
   if(!same(pinned,verified))throw fail();
   const identity=initial.identity;
   let expected=Object.freeze({...verified});
+  const usedIds=new Set(second.bytes.toString('utf8').trimEnd().split('\n')
+   .slice(1).map(line=>JSON.parse(line).approvalId));
   async function validateLease(){
    const ds=await dir.stat(),link=await lstat(root);
    const ld=await lease.stat(),lock=await lstat(lockPath);
@@ -181,6 +186,10 @@ export async function openReferenceRecoveryApprovalConsumption({
       // A rejected request did not touch disk or external authority.
       throw Error('recovery approval consumption conflict');
      }
+     // Serial progression alone is insufficient: one incident approval ID
+     // must not become reusable under a fresh signed serial.
+     if(usedIds.has(approval.approvalId))
+      throw Error('recovery approval consumption conflict');
      if(before.count>=MAX_RECORDS)throw fail();
      const entry=makeRecord(scope,'consume',approval.serial,approval.approvalId,
       approval.evidenceHash,before.headHash);
@@ -200,6 +209,7 @@ export async function openReferenceRecoveryApprovalConsumption({
      expected=Object.freeze({serial:approval.serial,headHash:entry.hash,
       count:before.count+1});
      await checked();
+     usedIds.add(approval.approvalId);
      return Object.freeze({
       decision:'REVIEW_APPROVAL_CONSUMED_ONLY',serial:approval.serial,
       registerHeadHash:entry.hash,approvalId:approval.approvalId,

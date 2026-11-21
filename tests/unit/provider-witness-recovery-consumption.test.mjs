@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {generateKeyPairSync,sign} from 'node:crypto';
+import {generateKeyPairSync,sign,createHash} from 'node:crypto';
 import {mkdtemp,mkdir,rm,readFile,writeFile,unlink,readdir} from 'node:fs/promises';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
@@ -226,4 +226,36 @@ test('unexpected file and abandoned lock deny startup without automatic removal'
  await writeFile(lock,'reserved\n',{mode:0o600});
  await assert.rejects(f.open(),/unavailable/);
  assert.equal(await readFile(lock,'utf8'),'reserved\n');
+});
+
+
+test('approval ID cannot be signed and reused under a new serial',async t=>{
+ const f=await lab(t),reg=await f.open();
+ await reg.consume(f.request());
+ await assert.rejects(reg.consume(f.request(8,firstId)),/conflict/);
+ assert.equal((await reg.audit()).serial,7);
+ const accepted=await reg.consume(f.request(8,secondId));
+ assert.equal(accepted.serial,8);
+ assert.equal(accepted.automaticRecoveryPermitted,false);
+ await reg.close();
+});
+
+test('duplicate IDs are denied even in a canonical, rehashed forged chain',async t=>{
+ const f=await lab(t),reg=await f.open();
+ await reg.consume(f.request());
+ await reg.consume(f.request(8,secondId));
+ await reg.close();
+ const original=(await readFile(f.path,'utf8')).trimEnd().split('\n');
+ const last=JSON.parse(original.at(-1));
+ const body={version:1,kind:'consume',issuer:scope.issuer,audience:scope.audience,
+  serial:last.serial,approvalId:firstId,evidenceHash:last.evidenceHash,
+  previousHash:last.previousHash};
+ const forgedHash=createHash('sha256')
+  .update('verivaro-g1-consumed-review-v1\0')
+  .update(Buffer.from(JSON.stringify(body),'utf8')).digest('hex');
+ const forged={...body,hash:forgedHash};
+ const tampered=original.slice(0,-1).concat(JSON.stringify(forged)).join('\n')+'\n';
+ await writeFile(f.path,tampered,{mode:0o600});
+ await assert.rejects(f.open({serial:8,headHash:forgedHash}),/unavailable/);
+ assert.equal((await readdir(f.directory)).includes('.recovery-review-consumption.lock'),false);
 });
