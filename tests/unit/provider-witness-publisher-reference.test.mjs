@@ -160,3 +160,15 @@ test('ACK loss after publisher commit is uncertain, never retried; operator can 
  assert.deepEqual(await guard2.read(scope),second);
  await guard2.close();await recoveredPublisher.close();
 });
+
+test('mutating a live signed receipt permanently faults the publisher even after restoring its bytes',async t=>{
+ const f=await lab(t),publisher=await openReferenceWitnessReceiptPublisher(f.publisherConfig());
+ const original=await readFile(f.receiptPath);
+ await writeFile(f.receiptPath,Buffer.from(original.toString('utf8').replace('"sequence":1','"sequence":2')));
+ await assert.rejects(publisher.read(scope),/unavailable/);
+ await writeFile(f.receiptPath,original);
+ await assert.rejects(publisher.read(scope),/unavailable/);
+ await publisher.close();
+ // A fault must retain the lock to force an operator review before reopening.
+ await assert.rejects(openReferenceWitnessReceiptPublisher(f.publisherConfig()),/unavailable/);
+});

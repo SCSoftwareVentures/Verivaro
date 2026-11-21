@@ -180,6 +180,7 @@ export async function openReferenceWitnessReceiptPublisher({
  }catch(e){
   if(lease)await lease.close().catch(()=>{});
   await dir.close().catch(()=>{});
-  throw e;
+  // Caller must not distinguish malformed or rolled-back signed records.
+  throw fail();
  }
 }
