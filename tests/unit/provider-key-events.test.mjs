@@ -61,6 +61,38 @@ test('unconfirmed checkpoint persists a fail-closed keyset state; concurrent rot
  await assert.rejects(mismatched.rotate(second.catalogue,second.signature,second.checkpoint),/update unconfirmed/);
  assert.throws(()=>mismatched.verify('not-a-token'),/unavailable/);
 });
+
+test('signed keyset snapshots reject duplicate, escaped, and noncanonical JSON before trust',async()=>{
+ const authority=generateKeyPairSync('ed25519'),now=1800000000;
+ const base={version:1,issuer,audience,sequence:1,issuedAt:now,expiresAt:now+600,keys:[{kid:'fixture',pem:publicKey.export({type:'spki',format:'pem'})}]};
+ const canonical=JSON.stringify(base);
+ const signed=raw=>{
+  const catalogue=Buffer.from(raw);
+  return {catalogue,signature:sign(null,catalogue,authority.privateKey),
+   checkpoint:{sequence:1,digest:createHash('sha256').update(catalogue).digest('hex')}};
+ };
+ const config={issuer,audience,requiredAcr:'fixture:mfa',authorityKey:authority.publicKey,now:()=>now};
+ assert.equal(createRotatingProviderVerifier({...config,...signed(canonical)}).verify(token(nonce(),{iat:now,auth_time:now,exp:now+300})).issuer,issuer);
+ const bad=[
+  canonical.replace('"issuer":','"issuer":"https://shadow.invalid","issuer":'),
+  canonical.replace('"issuer":','"\\u0069ssuer":"https://shadow.invalid","issuer":'),
+  canonical.replace('"sequence":1','"sequence":1,"sequence":1'),
+  ' '+canonical,
+  canonical.replace('"version":1','"version":1.0'),
+  canonical+'\\n'
+ ];
+ for(const raw of bad){
+  const payload=signed(raw);
+  assert.throws(()=>createRotatingProviderVerifier({...config,...payload}),/noncanonical provider keyset/);
+ }
+ const first=signed(canonical);
+ let writes=0;
+ const verifier=createRotatingProviderVerifier({...config,...first,persistCheckpoint:async()=>{writes++;throw Error('unexpected write');}});
+ const candidate=signed(canonical.replace('"sequence":1','"sequence":2,"sequence":2'));
+ await assert.rejects(verifier.rotate(candidate.catalogue,candidate.signature,{sequence:2,digest:candidate.checkpoint.digest}),/noncanonical provider keyset/);
+ assert.equal(writes,0);
+});
+
 test('signed lifecycle messages reject tampering, stale events, wrong audience and ambiguous payloads',async()=>{
  const kp=generateKeyPairSync('ed25519'),calls=[],now=Math.floor(Date.now()/1000);
  const receive=createProviderEventReceiver({issuer,audience,publicKey:kp.publicKey,db:{apply:async x=>{calls.push(x);return true;}},now:()=>now});

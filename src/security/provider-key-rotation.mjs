@@ -9,7 +9,16 @@ export function createRotatingProviderVerifier({issuer,audience,requiredAcr,requ
  let current,state='ready';
  function accept(bytes,sig,anchor){
   if(!Buffer.isBuffer(bytes)||bytes.length>65536||!Buffer.isBuffer(sig)||sig.length!==64||!verify(null,bytes,authority,sig))throw Error('keyset signature denied');
-  const m=JSON.parse(bytes.toString('utf8')),digest=createHash('sha256').update(bytes).digest('hex'),n=now();
+  // Signed bytes are authenticated, but JSON.parse silently discards duplicate
+  // names and normalises escapes. Refuse multiple possible interpretations.
+  const raw=bytes.toString('utf8');
+  if(!Buffer.from(raw,'utf8').equals(bytes))throw Error('noncanonical provider keyset');
+  const m=JSON.parse(raw);
+  if(!m||typeof m!=='object'||Array.isArray(m)||
+     !Buffer.from(JSON.stringify(m),'utf8').equals(bytes))
+   throw Error('noncanonical provider keyset');
+  const digest=createHash('sha256').update(bytes).digest('hex'),n=now();
+  if(!Number.isSafeInteger(n)||n<1)throw Error('invalid keyset clock');
   if(!m||m.version!==1||m.issuer!==issuer||m.audience!==audience||!Number.isSafeInteger(m.sequence)||m.sequence!==anchor?.sequence||digest!==anchor?.digest||
    !Number.isSafeInteger(m.issuedAt)||!Number.isSafeInteger(m.expiresAt)||m.issuedAt>n||m.expiresAt<=n||m.expiresAt-m.issuedAt>86400||m.expiresAt<=m.issuedAt||
    !Array.isArray(m.keys)||m.keys.length<1||m.keys.length>8)throw Error('keyset scope or freshness denied');
