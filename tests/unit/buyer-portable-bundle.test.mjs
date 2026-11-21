@@ -26,25 +26,36 @@ test('buyer ZIP is reproducible, portable and always labelled synthetic',async()
  assert.ok(a.archive.equals(b.archive));
  assert.equal(a.synthetic,true);
  assert.equal(a.authenticityVerified,false);
- assert.equal(a.fileCount,7);
+ assert.equal(a.fileCount,8);
  const valid=verifyPortableBuyerBundle(a.archive,{expectedArchiveSha256:a.archiveSha256});
  assert.equal(valid.integrityVerified,true);
  assert.equal(valid.authenticityVerified,false);
  const files=entries(a.archive);
  assert.deepEqual(files.map(x=>x[0]),[
   'index.html','buyer-showcase.css','buyer-showcase.js',
-  'buyer-demo.json','README.txt','preview.mjs','manifest.json'
+  'buyer-demo.json','README.txt','preview.mjs','buyer-offline.html','manifest.json'
  ]);
  const html=files[0][1].toString(),script=files[2][1].toString();
  assert.match(html,/href="\.\/buyer-showcase\.css"/);
  assert.match(html,/src="\.\/buyer-showcase\.js"/);
  assert.match(script,/new URL\('\.\/buyer-demo\.json',document\.baseURI\)/);
- const fixture=JSON.parse(files[3][1].toString()),m=JSON.parse(files[6][1].toString());
+ const fixture=JSON.parse(files[3][1].toString()),m=JSON.parse(files[7][1].toString());
  assert.deepEqual(fixture.stages.map(x=>x.blockers),[1,1,1,0]);
  assert.equal(fixture.handover.authenticityVerified,false);
  assert.equal(m.releaseApproved,false);
- assert.equal(m.files.length,6);
+ assert.equal(m.files.length,7);
  assert.ok(files[4][1].toString().includes('No real users'));
+ const offline=files[6][1].toString('utf8');
+ assert.match(offline,/Content-Security-Policy/);
+ assert.match(offline,/connect-src 'none'/);
+ assert.match(offline,/script-src 'sha256-/);
+ assert.match(offline,/style-src 'sha256-/);
+ assert.match(offline,/const offlinePayload=/);
+ assert.match(offline,/const response=\{ok:true,json:async\(\)=>offlinePayload\}/);
+ assert.doesNotMatch(offline,/<script[^>]*src=/);
+ assert.doesNotMatch(offline,/<link[^>]*href=/);
+ assert.doesNotMatch(offline,/fetch\('\/buyer-demo\.json'/);
+
  const syntax=spawnSync(process.execPath,['--check','--input-type=module','-'],{
   input:files[5][1],encoding:'utf8'
  });
@@ -71,11 +82,11 @@ test('ZIP verification fails closed on changed bytes, changed metadata and spoof
   /verification failed/);
  // A refreshed, internally consistent manifest is still rejected if it
  // attempts to upgrade the synthetic release status.
- const manifest=JSON.parse(falsified[6][1].toString());
+ const manifest=JSON.parse(falsified[7][1].toString());
  manifest.files[3].bytes=falsified[3][1].length;
  manifest.files[3].sha256=sha(falsified[3][1]);
  manifest.releaseApproved=true;
- falsified[6][1]=Buffer.from(JSON.stringify(manifest));
+ falsified[7][1]=Buffer.from(JSON.stringify(manifest));
  const upgraded=zip(falsified);
  assert.throws(()=>verifyPortableBuyerBundle(upgraded,{expectedArchiveSha256:sha(upgraded)}),
   /verification failed/);
