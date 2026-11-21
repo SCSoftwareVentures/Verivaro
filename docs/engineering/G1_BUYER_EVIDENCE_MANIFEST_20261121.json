@@ -59,7 +59,7 @@
     {
       "id": "G1_P0D_HANDOVER",
       "label": "Portable offline buyer handover and real scoped evidence assembly",
-      "status": "NOT_VERIFIED",
+      "status": "PARTIAL_CI",
       "sources": [
         "src/demo/buyer-portable-bundle.mjs",
         "tests/unit/buyer-portable-bundle.test.mjs",
@@ -68,7 +68,7 @@
         "docs/engineering/G1_P0D_HANDOVER_OFFLINE_GATE_20261121.md",
         ".github/workflows/buyer-bundle.yml"
       ],
-      "blocker": "The new real-database and offline buyer regression gates have no independently confirmed exact-head CI outcome yet; physical iPhone compatibility, trusted custody, genuine reviewer identity and buyer desirability remain unverified."
+      "blocker": "All six CI workflows passed on the preceding immutable baseline 86b9977f322761ba98beb5583e01e8573d793f9a (core, scoped PostgreSQL, Chromium/WebKit, antivirus, maximum recovery and synthetic buyer ZIP). Requalification is required after any source change; this does not verify physical iPhone operation, independent custody, external reviewer identities or actual buyer demand."
     },
     {
       "id": "G1_WITNESS",
@@ -119,9 +119,12 @@
       "status": "NOT_CLEARED",
       "sources": [
         "README.md",
-        "docs/product/MASTER_BLUEPRINT.md"
+        "docs/product/MASTER_BLUEPRINT.md",
+        "src/security/buyer-ip-inventory.mjs",
+        "tests/unit/buyer-ip-inventory.test.mjs",
+        "docs/engineering/G1_P0E_IP_DUE_DILIGENCE_20261121.md"
       ],
-      "blocker": "Brand clearance, copyright/provenance chain, third-party dependency license review and transfer agreement not completed."
+      "blocker": "Lockfile licence metadata and pinned action references now have a deterministic inventory, but licence texts, component obligations, external tools/transitive packages, contributors, source authorship, brand/trademark clearance, ownership and transferable title remain unverified. Legal/IP clearance must not be inferred from package hashes."
     },
     {
       "id": "BUYER_DEMAND",

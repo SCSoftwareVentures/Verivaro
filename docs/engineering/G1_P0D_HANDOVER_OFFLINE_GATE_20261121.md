@@ -2,7 +2,7 @@
 
 **21 November 2026 · engineering review only · PR #4 (draft)**
 
-**Decision:** The code increment exists on the review branch. Passing exact-head CI has not yet been independently established in this record. This is a synthetic buyer demonstration plus a disposable PostgreSQL regression, **not** a production release, compliance certificate, genuine buyer pilot or verified purchase intent.
+**Decision:** Six exact-head workflows were independently confirmed green on Git SHA `86b9977f322761ba98beb5583e01e8573d793f9a`; future commits require requalification. This is a synthetic buyer demonstration plus a disposable PostgreSQL regression, **not** a production release, compliance certificate, genuine buyer pilot or verified purchase intent.
 
 ## What changed
 

@@ -42,6 +42,15 @@ jobs:
           unzip -p "$RUNNER_TEMP/verivaro-synthetic-buyer.zip" buyer-offline.html > "$RUNNER_TEMP/buyer-offline.html"
           test -s "$RUNNER_TEMP/buyer-offline.html"
           sha256sum "$RUNNER_TEMP/verivaro-synthetic-buyer.zip"
+      - name: Inventory locked source dependencies and pinned actions
+        env:
+          VV_SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          node buyer-ip-inventory.mjs "$RUNNER_TEMP/buyer-ip-inventory.json" | tee "$RUNNER_TEMP/buyer-ip-receipt.json"
+          test -s "$RUNNER_TEMP/buyer-ip-inventory.json"
+          test -s "$RUNNER_TEMP/buyer-ip-receipt.json"
+          sha256sum "$RUNNER_TEMP/buyer-ip-inventory.json"
       - name: Upload review artifact only (not deploy)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -50,6 +59,8 @@ jobs:
             ${{ runner.temp }}/verivaro-synthetic-buyer.zip
             ${{ runner.temp }}/buyer-bundle-receipt.json
             ${{ runner.temp }}/buyer-offline.html
+            ${{ runner.temp }}/buyer-ip-inventory.json
+            ${{ runner.temp }}/buyer-ip-receipt.json
           if-no-files-found: error
           retention-days: 14
           compression-level: 0

@@ -9,7 +9,7 @@
 - **G1 storage and evidence slices:** quarantine, scanner integration, bounded parsing/normalization, encrypted artifact and backup/recovery components; scoped read/write and retrieval tests for exercised paths. Tested scanners are not malware certification.
 - **G2–G4 partial engineering:** OCR, document/requirement analysis, proof planning, handover/export and browser workspace components with test fixtures. Their presence does **not** demonstrate full V4.0 acceptance or market usability.
 - **G1 witness and recovery reference:** signed publisher, hash-chained journal, read-only three-way reconciliation, two-reviewer REVIEW_ONLY approval, single-host consumption register, signed floor publication gate and file-backed reference authority. Synthetic tests include process exits, races, stale heads and simulated partitions; **no independent service, custody, physical power cycle or cross-host consensus**.
-- **CI:** Node test, PostgreSQL G1, Chromium/WebKit and ClamAV gates on the review branch. Maximum-recovery matrix was not triggered by this audit branch before the branch coverage correction and must have exact-head results before it may be called verified.
+- **CI:** The exact immutable SHA `86b9977f322761ba98beb5583e01e8573d793f9a` passed **six of six** tracked workflows: Node core, PostgreSQL G1, Chromium/WebKit, ClamAV, maximum encrypted recovery and synthetic buyer packaging. These are historical evidence for **that SHA only**; subsequent code changes require a new full matrix. None is a production penetration assessment, independent custody proof or buyer pilot.
 
 ## Acceptance and asset-sale decision
 

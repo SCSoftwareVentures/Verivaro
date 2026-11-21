@@ -36,9 +36,19 @@ The command refuses to overwrite an existing file. The archive contains the stan
 
 The [buyer handover workflow](.github/workflows/buyer-bundle.yml) packages the same ZIP and build receipt as short-retention GitHub Actions artifacts after verification, without a paid host, public deployment or real customer data. These artifacts are for source-code acquisition review and do **not** certify demand, licensing, product completeness or transfer readiness.
 
-The existing disposable-PostgreSQL integration test now also exercises real encrypted ingestion → distinct reviewer approval → owner-authorised submission → canonical package bytes → SHA-256 verification → stale-graph rejection. These are **CI assertions pending exact-head qualification**, not real buyer acts or independent release signoff.
+The existing disposable-PostgreSQL integration test now also exercises real encrypted ingestion → distinct reviewer approval → owner-authorised submission → canonical package bytes → SHA-256 verification → stale-graph rejection. These passed the six-workflow CI matrix at immutable baseline `86b9977f322761ba98beb5583e01e8573d793f9a`; later changes require their own verification. They are not real buyer acts or independent release signoff.
 
 Detailed test contracts, limitations and local reproduction: [G1/P0-D offline buyer and handover acceptance record](docs/engineering/G1_P0D_HANDOVER_OFFLINE_GATE_20261121.md).
+
+## Third-party and source-IP due diligence
+
+The [P0-E licence and ownership audit](docs/engineering/G1_P0E_IP_DUE_DILIGENCE_20261121.md) separates repository-declared dependencies from actual legal clearance. An automated, deterministic **lockfile/workflow inventory** is available with:
+
+```sh
+node buyer-ip-inventory.mjs ./buyer-ip-inventory.json
+```
+
+The inventory covers four local npm lockfiles, pinned GitHub Actions references and a small explicit set of external CI tools. The buyer artifact workflow includes the resulting JSON and its hash receipt. **It is not a complete SBOM, a proof of source ownership, a legal licence audit or authority to sell/transfer third-party rights.** No customer data or paid service is needed to generate it.
 
 ## Components
 

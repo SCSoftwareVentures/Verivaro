@@ -31,10 +31,10 @@ test('every buyer-readiness gate has a unique identifier, grounded source and un
   }
  }
 });
-test('P0-D buyer handover cannot silently pass while exact-head tests are unverified',()=>{
+test('P0-D buyer handover claims only scoped historical CI, never production clearance',()=>{
  const gate=manifest.states.find(x=>x.id==='G1_P0D_HANDOVER');
  assert.ok(gate,'Missing G1 handover gate');
- assert.equal(gate.status,'NOT_VERIFIED');
+ assert.equal(gate.status,'PARTIAL_CI');
  for(const name of [
   'tests/unit/buyer-portable-bundle.test.mjs',
   'tests/browser/offline-buyer-browser.test.mjs',
@@ -44,11 +44,19 @@ test('P0-D buyer handover cannot silently pass while exact-head tests are unveri
  ]){
   assert.ok(gate.sources.includes(name),'Missing P0-D evidence path '+name);
  }
- assert.match(gate.blocker,/exact-head CI/i);
+ assert.match(gate.blocker,/86b9977f|Requalification is required/i);
  assert.equal(manifest.productReleaseApproved,false);
  assert.equal(manifest.commercialDemandValidated,false);
 });
 
+test('IP and license inventory remain explicitly NOT_CLEARED',()=>{
+ const gate=manifest.states.find(x=>x.id==='BUYER_IP');
+ assert.equal(gate.status,'NOT_CLEARED');
+ assert.ok(gate.sources.includes('src/security/buyer-ip-inventory.mjs'));
+ assert.ok(gate.sources.includes('tests/unit/buyer-ip-inventory.test.mjs'));
+ assert.ok(gate.sources.includes('docs/engineering/G1_P0E_IP_DUE_DILIGENCE_20261121.md'));
+ assert.match(gate.blocker,/legal|licence|ownership|trademark/i);
+});
 test('production, sale and automated recovery claims are blocked while unresolved gates remain',()=>{
  const unresolved=manifest.states.filter(x=>x.status!=='INDEPENDENTLY_VERIFIED');
  assert.ok(unresolved.length>0);
