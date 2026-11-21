@@ -77,9 +77,12 @@
       "sources": [
         "src/security/provider-witness-recovery-floor-authority.mjs",
         "src/security/provider-witness-recovery-floor-publication.mjs",
-        "tests/unit/provider-witness-recovery-floor-authority.test.mjs"
+        "tests/unit/provider-witness-recovery-floor-authority.test.mjs",
+        "src/security/provider-witness-authority-key-schedule.mjs",
+        "tests/unit/provider-witness-authority-key-schedule.test.mjs",
+        "docs/engineering/G1_REVIEW_FLOOR_AUTHORITY_REFERENCE_20261121.md"
       ],
-      "blocker": "Only same-host/reference tests. Independent custody, authenticated remote atomic CAS, distributed fencing and power-loss assurance missing."
+      "blocker": "Reference authority now tests pinned serial-based signer-key rollover and rejects old-key post-advance signatures. No independent key administration, emergency revocation at one serial, authenticated remote atomic CAS, distributed fencing, independent trusted clock, physical power loss or rollback-resistant floor has been demonstrated."
     },
     {
       "id": "G1_BACKUP",

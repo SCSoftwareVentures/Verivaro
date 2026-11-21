@@ -7,6 +7,7 @@ import {promisify} from 'node:util';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {encodeReferenceRecoveryApprovalGenesis} from '../../src/security/provider-witness-recovery-consumption.mjs';
+import {recoveryFloorAuthorityKeyId,createTrustedRecoveryFloorAuthorityKeySchedule} from '../../src/security/provider-witness-authority-key-schedule.mjs';
 import {
  canonicalRecoveryFloorPublicationStatement,
  createUnsignedRecoveryFloorPublicationStatement,
@@ -107,6 +108,78 @@ test('real file-backed reference authority interoperates with signed publication
  }),f.next);
  await reopened.close();
 });
+
+test('serial-bound signer rollover interoperates with real CAS and rejects old-key downgrade',async t=>{
+ const f=await lab(t);
+ const successor=generateKeyPairSync('ed25519');
+ const schedule=createTrustedRecoveryFloorAuthorityKeySchedule({epochs:[
+  {firstSerial:0,lastSerial:6,
+   keyId:recoveryFloorAuthorityKeyId(f.authorityKeys.publicKey),
+   publicKey:f.authorityKeys.publicKey},
+  {firstSerial:7,lastSerial:null,
+   keyId:recoveryFloorAuthorityKeyId(successor.publicKey),
+   publicKey:successor.publicKey}
+ ]});
+ const signRotated=(bytes,statement)=>signedBytes(bytes,
+  statement.serial<=6?f.authorityKeys.privateKey:successor.privateKey);
+ const authority=await openReferenceRecoveryFloorAuthority({
+  ...f.config(),trustedAuthorityKey:undefined,
+  trustedAuthorityKeySchedule:schedule,signReceipt:signRotated
+ });
+ const gate=await openReferenceRecoveryFloorPublicationGate({
+  ...scope,trustedFloor:f.prior,trustedAuthorityKeySchedule:schedule,
+  trustedCustodianKeys:f.trustedKeys,authority,
+  ioTimeoutMs:600,clock:()=>new Date(now)
+ });
+ const initial=await authority.read(scope,{requestNonce:testNonce});
+ assert.deepEqual(verifySignedRecoveryFloorAuthority(initial,{
+  ...scope,trustedAuthorityKeySchedule:schedule,
+  expectedRequestNonce:testNonce,now
+ }),f.prior);
+ const result=await gate.publish({
+  publication:f.make(),consumptionLog:f.log
+ });
+ assert.equal(result.status,'REVIEW_FLOOR_PUBLISHED_ONLY');
+ assert.equal(result.automaticRecoveryPermitted,false);
+ assert.deepEqual(await gate.audit(),f.next);
+ const current=await authority.audit();
+ gate.close();await authority.close();
+ const fresh=await openReferenceRecoveryFloorAuthority({
+  ...f.config(current),trustedAuthorityKey:undefined,
+  trustedAuthorityKeySchedule:schedule,signReceipt:signRotated
+ });
+ assert.deepEqual(verifySignedRecoveryFloorAuthority(
+  await fresh.read(scope,{requestNonce:otherNonce}),{
+   ...scope,trustedAuthorityKeySchedule:schedule,
+   expectedRequestNonce:otherNonce,now
+  }),f.next);
+ await fresh.close();
+});
+
+test('wrong signer after a durable serial advance faults and retains forensic lock',async t=>{
+ const f=await lab(t);
+ const successor=generateKeyPairSync('ed25519');
+ const schedule=createTrustedRecoveryFloorAuthorityKeySchedule({epochs:[
+  {firstSerial:0,lastSerial:6,
+   keyId:recoveryFloorAuthorityKeyId(f.authorityKeys.publicKey),
+   publicKey:f.authorityKeys.publicKey},
+  {firstSerial:7,lastSerial:null,
+   keyId:recoveryFloorAuthorityKeyId(successor.publicKey),
+   publicKey:successor.publicKey}
+ ]});
+ const authority=await openReferenceRecoveryFloorAuthority({
+  ...f.config(),trustedAuthorityKey:undefined,
+  trustedAuthorityKeySchedule:schedule,
+  // A stale signer keeps signing with the retired key after serial 7.
+  signReceipt:(bytes)=>signedBytes(bytes,f.authorityKeys.privateKey)
+ });
+ await assert.rejects(authority.compareAndSwap(f.request()),/unavailable/);
+ assert.equal((await readFile(f.path,'utf8')).trimEnd().split('\n').length,2);
+ await assert.rejects(authority.read(scope,{requestNonce:otherNonce}),/unavailable/);
+ await authority.close();
+ assert.ok((await readdir(f.directory)).includes('.recovery-floor-authority.lock'));
+});
+
 test('16 concurrent CAS requests permit exactly one durable authority commit',async t=>{
  const f=await lab(t),a=await f.open();
  const results=await Promise.allSettled(Array.from({length:16},

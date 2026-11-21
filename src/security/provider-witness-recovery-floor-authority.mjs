@@ -148,13 +148,15 @@ async function signBounded(signReceipt,statement,timeoutMs,externalSignal){
 }
 export async function openReferenceRecoveryFloorAuthority({
  directory,issuer,audience,trustedAuthorityState,
- trustedAuthorityKey,trustedCustodianKeys,signReceipt,
+ trustedAuthorityKey,trustedAuthorityKeySchedule,
+ trustedCustodianKeys,signReceipt,
  clock=()=>new Date(),signTimeoutMs=2000,receiptValidityMs=10000,
  enableTestFaultInjection=false,faultInjection
 }={}){
  if(typeof directory!=='string'||!isAbsolute(directory)||
   !scopeOk(issuer)||!scopeOk(audience)||!stateValid(trustedAuthorityState)||
-  !trustedAuthorityKey||!exact(trustedCustodianKeys,'primary,secondary')||
+  Boolean(trustedAuthorityKey)===Boolean(trustedAuthorityKeySchedule)||
+  !exact(trustedCustodianKeys,'primary,secondary')||
   typeof signReceipt!=='function'||typeof clock!=='function'||
   !Number.isSafeInteger(signTimeoutMs)||signTimeoutMs<25||
   signTimeoutMs>30000||!Number.isSafeInteger(receiptValidityMs)||
@@ -230,7 +232,8 @@ export async function openReferenceRecoveryFloorAuthority({
    });
    const response=await signBounded(signReceipt,statement,signTimeoutMs,signal);
    verifySignedRecoveryFloorAuthority(response,{
-    ...scope,trustedAuthorityKey,expectedRequestNonce:requestNonce,
+    ...scope,trustedAuthorityKey,trustedAuthorityKeySchedule,
+    expectedRequestNonce:requestNonce,
     now:timestamp(),maxReceiptAgeMs:receiptValidityMs
    });
    return response;

@@ -4,6 +4,7 @@
 // atomic compare-and-swap authority; never treat a local fake as production.
 import {createHash,createPublicKey,verify,randomBytes} from 'node:crypto';
 import {verifyReferenceRecoveryApprovalLog} from './provider-witness-recovery-consumption.mjs';
+import {resolveTrustedRecoveryFloorAuthorityPublicKey} from './provider-witness-authority-key-schedule.mjs';
 
 const HEX=/^[a-f0-9]{64}$/;
 const IDENT=/^[a-f0-9]{32}$/;
@@ -102,7 +103,8 @@ export function createUnsignedRecoveryFloorAuthorityStatement({
  return Object.freeze(s);
 }
 export function verifySignedRecoveryFloorAuthority(envelope,{
- issuer,audience,trustedAuthorityKey,expectedRequestNonce,now,
+ issuer,audience,trustedAuthorityKey,trustedAuthorityKeySchedule,
+ expectedRequestNonce,now,
  maxReceiptAgeMs=10000
 }={}){
  if(!keys(envelope,'statement,signature')||!validNonce(expectedRequestNonce)||
@@ -115,7 +117,17 @@ export function verifySignedRecoveryFloorAuthority(envelope,{
   s.requestNonce!==expectedRequestNonce||
   age<0||age>maxReceiptAgeMs||
   Date.parse(now)>=Date.parse(s.expiresAt))throw invalid();
- signature(envelope.signature,bytes,pubkey(trustedAuthorityKey));
+ const legacy=trustedAuthorityKey!==undefined&&trustedAuthorityKey!==null;
+ const scheduled=trustedAuthorityKeySchedule!==undefined&&
+  trustedAuthorityKeySchedule!==null;
+ if(legacy===scheduled)throw invalid();
+ let authorityKey;
+ try{
+  authorityKey=scheduled?
+   resolveTrustedRecoveryFloorAuthorityPublicKey(
+    trustedAuthorityKeySchedule,s.serial):pubkey(trustedAuthorityKey);
+ }catch{throw invalid();}
+ signature(envelope.signature,bytes,authorityKey);
  return Object.freeze({serial:s.serial,headHash:s.headHash});
 }
 // Verifies the entire canonical consumed-review ledger, its last entry and
@@ -184,11 +196,13 @@ async function withDeadline(task,ms){
 // Independent authority must authenticate/authorize CAS, persist its own
 // monotonic record and fence every competing writer. This gate cannot do that.
 export async function openReferenceRecoveryFloorPublicationGate({
- issuer,audience,trustedFloor,trustedAuthorityKey,trustedCustodianKeys,
+ issuer,audience,trustedFloor,trustedAuthorityKey,trustedAuthorityKeySchedule,
+ trustedCustodianKeys,
  authority,ioTimeoutMs=2000,clock=()=>new Date(),receiptMaxAgeMs=10000
 }={}){
  if(!scopeOk(issuer)||!scopeOk(audience)||!validHead(trustedFloor)||
-  !trustedAuthorityKey||!keys(trustedCustodianKeys,'primary,secondary')||
+  Boolean(trustedAuthorityKey)===Boolean(trustedAuthorityKeySchedule)||
+  !keys(trustedCustodianKeys,'primary,secondary')||
   !authority||typeof authority.read!=='function'||
   typeof authority.compareAndSwap!=='function'||
   !Number.isSafeInteger(ioTimeoutMs)||ioTimeoutMs<25||ioTimeoutMs>30000||
@@ -199,7 +213,8 @@ export async function openReferenceRecoveryFloorPublicationGate({
   const stamp=clock();
   if(!(stamp instanceof Date)||!Number.isFinite(stamp.getTime()))throw fail();
   return verifySignedRecoveryFloorAuthority(envelope,{
-   ...scope,trustedAuthorityKey,expectedRequestNonce,now:stamp.toISOString(),
+   ...scope,trustedAuthorityKey,trustedAuthorityKeySchedule,
+   expectedRequestNonce,now:stamp.toISOString(),
    maxReceiptAgeMs:receiptMaxAgeMs
   });
  };

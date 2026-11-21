@@ -59,6 +59,8 @@ The inventory covers four local npm lockfiles, pinned GitHub Actions references 
 
 ## Engineering slices currently in the repository
 
+The G1 recovery-floor signer now supports a [reference-only, serial-bound Ed25519 key schedule](docs/engineering/G1_REVIEW_FLOOR_AUTHORITY_REFERENCE_20261121.md), with old-signer rejection after a serial transition. The schedule must be pinned outside the authority's trust domain; this is **not** external key custody or a deployed revocation service.
+
 The original domain-function demo remains limited. Additional **synthetic CI-tested engineering slices** now include a PostgreSQL 16 migration and tenant-isolation gate; identity/session and scoped-transaction code; a local TLS application runtime; evidence quarantine/retrieval/recovery; browser workspace checks in Chromium and WebKit; and reference G1 signed witness, two-reviewer approval and floor-publication components. Consult `docs/engineering/` and the workflows for precise coverage. These pieces **are not evidence of a fully integrated customer product**.
 
 ## Security and commercial boundary

@@ -57,6 +57,17 @@ test('IP and license inventory remain explicitly NOT_CLEARED',()=>{
  assert.ok(gate.sources.includes('docs/engineering/G1_P0E_IP_DUE_DILIGENCE_20261121.md'));
  assert.match(gate.blocker,/legal|licence|ownership|trademark/i);
 });
+test('P0-A signer rotation is reference-only and never implies independent custody',()=>{
+ const gate=manifest.states.find(x=>x.id==='G1_WITNESS');
+ assert.equal(gate.status,'REFERENCE_ONLY');
+ assert.ok(gate.sources.includes('src/security/provider-witness-authority-key-schedule.mjs'));
+ assert.ok(gate.sources.includes('tests/unit/provider-witness-authority-key-schedule.test.mjs'));
+ assert.ok(gate.sources.includes('docs/engineering/G1_REVIEW_FLOOR_AUTHORITY_REFERENCE_20261121.md'));
+ assert.match(gate.blocker,/independent key administration|remote atomic CAS/i);
+ assert.equal(manifest.productionSecurityCertified,false);
+ assert.equal(manifest.approvedForAutomaticRecovery,false);
+});
+
 test('production, sale and automated recovery claims are blocked while unresolved gates remain',()=>{
  const unresolved=manifest.states.filter(x=>x.status!=='INDEPENDENTLY_VERIFIED');
  assert.ok(unresolved.length>0);
