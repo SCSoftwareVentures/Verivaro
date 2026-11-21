@@ -79,7 +79,7 @@ test('signed keyset snapshots reject duplicate, escaped, and noncanonical JSON b
   canonical.replace('"sequence":1','"sequence":1,"sequence":1'),
   ' '+canonical,
   canonical.replace('"version":1','"version":1.0'),
-  canonical+'\\n'
+  canonical+' '
  ];
  for(const raw of bad){
   const payload=signed(raw);
