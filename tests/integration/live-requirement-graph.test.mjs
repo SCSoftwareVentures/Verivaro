@@ -103,7 +103,7 @@ test('persistent graph independently reviews exact versions and links; contradic
    readKey:async keyId=>{assert.equal(keyId,'graph-fixture');return graphKey;}
   });
   const assemble=createSubmissionPackage({workflow:graph,retrieve:handoverReader});
-  let handover;
+  let handover,second;
   try{
    await assert.rejects(assemble(as('author',submission),{signal}),ReleaseDenied);
    await assert.rejects(assemble(as('owner',{...submission,projectId:foreignProject}),{signal}),ReleaseDenied);
@@ -115,7 +115,7 @@ test('persistent graph independently reviews exact versions and links; contradic
    assert.equal(verified.integrityVerified,true);
    assert.equal(verified.authenticityVerified,false);
    assert.equal(verified.evidenceCount,1);
-   assert.equal(verified.evidenceBytes,good.bytes);
+   assert.equal(verified.evidenceBytes,Buffer.byteLength('Serial A123'));
    assert.equal(verified.submissionId,submissionId);
    const tampered=Buffer.from(handover);tampered[52]^=1;
    assert.throws(()=>verifySubmissionPackage(tampered,{
@@ -123,18 +123,17 @@ test('persistent graph independently reviews exact versions and links; contradic
    }),/verification failed/);
    tampered.fill(0);
    console.log('real_scoped_handover_package_integrity_gate_passed');
+   // Invalidate the submitted graph after successful byte-level packaging,
+   // then prove the same package builder refuses the now-stale authorisation.
+   second=link(bad);await graph.linkEvidence(as('author',second));
+   const linkedImpact=await impact();assert.equal(linkedImpact.changedCount,1);assert.ok(linkedImpact.changes[0].reasons.includes('evidence_links_changed'));assert.equal(linkedImpact.currentStatus,'blocked');
+   assert.equal((await status()).status,'blocked');
+   await assert.rejects(graph.readSubmission(as('owner',submission)),ReleaseConflict);
+   await assert.rejects(assemble(as('owner',submission),{signal}),ReleaseConflict);
   }finally{
    handover?.fill(0);
+   await handoverReaderPool.end();
   }
-  const second=link(bad);await graph.linkEvidence(as('author',second));
-  const linkedImpact=await impact();assert.equal(linkedImpact.changedCount,1);assert.ok(linkedImpact.changes[0].reasons.includes('evidence_links_changed'));assert.equal(linkedImpact.currentStatus,'blocked');
-  assert.equal((await status()).status,'blocked');
-  await assert.rejects(graph.readSubmission(as('owner',submission)),ReleaseConflict);
-  // A newly attached, unreviewed link invalidates the prior manifest. Do
-  // not let the packager re-use authorisation from the earlier assessment.
-  try{
-   await assert.rejects(assemble(as('owner',submission),{signal}),ReleaseConflict);
-  }finally{await handoverReaderPool.end();}
   await graph.reviewLink(as('reviewer2',{linkId:second.linkId,decision:'fail',reason:'Conflicting identifier'}));
   const conflicting=await graph.assessment(as('owner'));assert.equal(conflicting.requirements[0].state,'conflict');assert.equal(conflicting.summary.blockers,1);assert.equal(buildRejectionPreflight(conflicting).issues[0].code,'CONFLICTING_EVIDENCE');
   const selfLink=link(self);await graph.linkEvidence(as('author',selfLink));
