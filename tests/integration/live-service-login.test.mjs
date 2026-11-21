@@ -36,6 +36,14 @@ test('live dedicated service identity rejects indirect, direct and administrativ
     'REVOKE USAGE ON SCHEMA public FROM vv_ci_admission_a');
   await rejectAfter('GRANT CONNECT ON DATABASE verivaro_test TO vv_ci_admission_a',
     'REVOKE CONNECT ON DATABASE verivaro_test FROM vv_ci_admission_a');
+  // These grants live in distinct PostgreSQL privilege catalogues and must
+  // not bypass an admission audit that otherwise checks schema/table ACLs.
+  await rejectAfter('GRANT SET ON PARAMETER session_replication_role TO vv_ci_admission_a',
+    'REVOKE SET ON PARAMETER session_replication_role FROM vv_ci_admission_a');
+  await rejectAfter('GRANT USAGE ON LANGUAGE plpgsql TO vv_ci_admission_a',
+    'REVOKE USAGE ON LANGUAGE plpgsql FROM vv_ci_admission_a');
+  await rejectAfter('GRANT CREATE ON TABLESPACE pg_default TO vv_ci_admission_a',
+    'REVOKE CREATE ON TABLESPACE pg_default FROM vv_ci_admission_a');
   await admin.query('CREATE SEQUENCE verivaro_private.vv_ci_direct_grant_seq');
   try{
    await rejectAfter('GRANT USAGE ON SEQUENCE verivaro_private.vv_ci_direct_grant_seq TO vv_ci_admission_a',
