@@ -10,6 +10,7 @@ const hash=b=>createHash('sha256').update(b).digest('hex');
 const expected=['index.html','buyer-showcase.css','buyer-showcase.js',
  'buyer-demo.json','README.txt','preview.mjs','buyer-offline.html','manifest.json'];
 const strictHash=h=>typeof h==='string'&&/^[a-f0-9]{64}$/.test(h);
+const strictRevision=h=>typeof h==='string'&&/^[a-f0-9]{40}$/.test(h);
 const fail=()=>{throw Error('portable buyer bundle verification failed');};
 const utf8=b=>new TextDecoder('utf-8',{fatal:true}).decode(b);
 const guide=[
@@ -110,7 +111,8 @@ function createOfflineViewer({rawHtml,rawCss,rawJs,payload}){
  return html;
 }
 
-export async function createPortableBuyerBundle(){
+export async function createPortableBuyerBundle({sourceRevision=null}={}){
+ if(sourceRevision!==null&&!strictRevision(sourceRevision))fail();
  const p=await buildBuyerShowcasePayload();
  syntheticOnly(p);
  const [rawHtml,rawCss,rawJs]=await Promise.all([
@@ -140,14 +142,15 @@ export async function createPortableBuyerBundle(){
   dataClass:'SYNTHETIC_ONLY',releaseApproved:false,
   commercialDemandValidated:false,independentCustodyVerified:false,
   archiveAuthenticityVerified:false,
+  sourceRevision,
   files:files.map(([name,b])=>({name,bytes:b.length,sha256:hash(b)}))
  },null,2)+'\n');
  files.push(['manifest.json',manifest]);
  const archive=zip(files);
  const archiveSha256=hash(archive);
- const verified=verifyPortableBuyerBundle(archive,{expectedArchiveSha256:archiveSha256});
+ const verified=verifyPortableBuyerBundle(archive,{expectedArchiveSha256:archiveSha256,expectedSourceRevision:sourceRevision});
  if(!verified.integrityVerified||verified.authenticityVerified)fail();
- return {archive,archiveSha256,manifestSha256:hash(manifest),
+ return {archive,archiveSha256,manifestSha256:hash(manifest),sourceRevision,
   fileCount:files.length,integrityVerified:true,
   authenticityVerified:false,synthetic:true};
 }
@@ -155,7 +158,8 @@ export async function createPortableBuyerBundle(){
 // Verifies the exact canonical STORE ZIP bytes, entries, directory and CRC
 // against a supplied digest. The caller must acquire that digest through an
 // independently trusted channel for external tamper/authorship assurance.
-export function verifyPortableBuyerBundle(archive,{expectedArchiveSha256}={}){
+export function verifyPortableBuyerBundle(archive,{expectedArchiveSha256,expectedSourceRevision}={}){
+ if(expectedSourceRevision!==undefined&&expectedSourceRevision!==null&&!strictRevision(expectedSourceRevision))fail();
  if(!Buffer.isBuffer(archive)||archive.length<22||archive.length>524288||
   !strictHash(expectedArchiveSha256)||hash(archive)!==expectedArchiveSha256)fail();
  let pos=0;const files=[];
@@ -188,6 +192,8 @@ export function verifyPortableBuyerBundle(archive,{expectedArchiveSha256}={}){
   manifest.commercialDemandValidated!==false||
   manifest.independentCustodyVerified!==false||
   manifest.archiveAuthenticityVerified!==false||
+  !(manifest.sourceRevision===null||strictRevision(manifest.sourceRevision))||
+  (expectedSourceRevision!==undefined&&manifest.sourceRevision!==expectedSourceRevision)||
   !Array.isArray(manifest.files)||manifest.files.length!==expected.length-1)fail();
  for(let i=0;i<files.length-1;i++){
   const x=manifest.files[i], [name,b]=files[i];
@@ -223,5 +229,5 @@ export function verifyPortableBuyerBundle(archive,{expectedArchiveSha256}={}){
   !utf8(files[2][1]).includes("fetch(new URL('./buyer-demo.json',document.baseURI),"))fail();
  return Object.freeze({integrityVerified:true,authenticityVerified:false,
   archiveSha256:hash(archive),fileCount:files.length,
-  manifestSha256:hash(files.at(-1)[1]),dataClass:'SYNTHETIC_ONLY'});
+  manifestSha256:hash(files.at(-1)[1]),sourceRevision:manifest.sourceRevision,dataClass:'SYNTHETIC_ONLY'});
 }
