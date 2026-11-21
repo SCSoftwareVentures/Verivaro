@@ -40,3 +40,16 @@ The machine-readable register at `docs/engineering/G1_INDEPENDENT_SIGNING_ACCEPT
 `scripts/rehearse-migration-signing-acceptance.mjs` uses **only ephemeral in-memory keys**, makes an unsigned manifest from the real checkout, verifies both signatures through the offline API and rejects wrong pin, missing reviewer and duplicated signature. It does not generate a real approval.
 
 **Status:** `G1_TENANCY=PARTIAL_CI`; `productReleaseApproved=false`; no deployment, merge, spending, automatic privileged provisioning or independent signoff. A separately audited deployment implementation and change-control decision remain outside this reference package.
+
+
+## Additional existing-schema staging upgrade rehearsal
+
+The restricted-login CI fixture now constructs a **second, separate PostgreSQL 16 database** with all original locked migrations 0001–0062 applied under the restricted executor. It seeds a synthetic tenant record, then makes a PostgreSQL physical template clone. Only the clone undergoes the final version-63 migration.
+
+On the clone, the fixture deliberately terminates the PostgreSQL backend after the version-63 DDL and history INSERT but **before COMMIT**. It verifies that the history still contains only 62 records, the version-63 correction table is absent, and the synthetic tenant fingerprint is unchanged. A fresh session safely applies version 63, verifies all 63 source-bound hashes, replays version 63 without creating duplicate history, and confirms that the original version-62 database remains unmodified. Restricted ledger UPDATE and DELETE privileges remain denied. All databases and scratch cluster-global roles are dropped at fixture completion.
+
+This is a **production-shaped, isolated CI upgrade/recovery proof**, not a live production-equivalent environment. It has no real deployment keys, customer dataset, real production topology, multi-node failover, active API workloads, connection pooling stress, backup operator custody, remote witness or independent DBA approval. Actual staging verification must repeat the authorised migration under separately controlled production-like identity and network boundaries, using approved scrubbed or synthetic representative data, real app compatibility checks, monitored lock budgets, rollback decision points and independent change review.
+
+The browser CI now executes browser test files sequentially with an explicit per-file failure watchdog; the previous Chromium run exhausted its five-minute workflow step and did not pass. Browser tests remain blocking and are **not** skipped.
+
+Independent review acceptance cannot be self-attested: all nine externally controlled evidence requirements in the machine-readable register remain NOT_VERIFIED until specific dated, independently authenticated evidence is reviewed.

@@ -67,5 +67,19 @@
     "Independent custodian publishes monotonic witness and checks ledger head, DB identity and nonce",
     "DBA obtains explicit change approval for any privileged provisioning; never automatically upgrade",
     "Collect signed evidence, negative test results, restored DB outcome and final independent acceptance"
-  ]
+  ],
+  "stagingSimulation": {
+    "sourceSchemaVersion": 62,
+    "targetSchemaVersion": 63,
+    "usesRealLockedMigrationSql": true,
+    "isolatedPostgreSQL16": true,
+    "cloneWithSyntheticApplicationRecord": true,
+    "backendInterruptionBeforeCommit": true,
+    "retryAndReplayRequired": true,
+    "productionEquivalent": false,
+    "independentOperatorApproved": false,
+    "externallySigned": false,
+    "lastVerifiedCommit": null,
+    "verificationState": "PENDING_EXACT_SHA_CI"
+  }
 }

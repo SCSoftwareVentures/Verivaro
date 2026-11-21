@@ -5,7 +5,7 @@ import {spawnSync} from 'node:child_process';
 import {randomBytes,createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import {TextDecoder} from 'node:util';
-import {assertDisposableDatabase,createMigrationSql,createExpectedLedger}
+import {assertDisposableDatabase,createMigrationSql,createExpectedLedger,checkLedgerRows}
  from './ci-migration-ledger.mjs';
 import {auditRepositoryMigrationChain} from '../src/security/migration-chain-audit.mjs';
 import {createLegacyReconciliationPlan,privilegedBootstrapSql,ROLE_DDL_ATTRIBUTES}
@@ -71,6 +71,84 @@ export function restrictedReconcileSql(items,version,transformedSql){
  script=script.replace(insert,'SET LOCAL ROLE '+EXECUTOR+';\n'+insert);
  return script+'RESET ROLE;\n';
 }
+
+function inspect(env,sql){
+ return exec('psql',['-X','-A','-t','-v','ON_ERROR_STOP=1','-c',sql],env);
+}
+const UPGRADE_SOURCE='verivaro_upgrade_source_ci',UPGRADE_TARGET='verivaro_upgrade_target_ci';
+const upgradeHashSql="SELECT md5(COALESCE(string_agg(id::text||':'||name,',' ORDER BY id),'')) FROM verivaro.tenants";
+const upgradeHistorySql='SELECT version,migration_path,file_sha256,previous_hash,entry_hash FROM verivaro_migration.history ORDER BY version';
+
+export function assertInterruptedUpgradeState({historyCount,changedTableAbsent,sourceFingerprint,restoredFingerprint}){
+ if(historyCount!=='62'||changedTableAbsent!=='t'||!(/^[a-f0-9]{32}$/.test(sourceFingerprint))||
+  sourceFingerprint!==restoredFingerprint)
+  refuse('interrupted staged upgrade advanced ledger, retained DDL or altered data');
+ return Object.freeze({interruptedBeforeCommit:true,ledgerRolledBack:true,dataPreserved:true});
+}
+// The source remains at v62; only a physical clone is upgraded to v63.
+// Both scratch DBs and all roles are removed before the workflow ends.
+function rehearseStagedUpgrade(test,ledger,admin,client){
+ let sourceCreated=false,targetCreated=false;
+ try{
+  exec('createdb',['-w','--template=template0',UPGRADE_SOURCE],admin);
+  sourceCreated=true;
+  const sourceAdmin={...admin,PGDATABASE:UPGRADE_SOURCE};
+  const sourceClient={...client,PGDATABASE:UPGRADE_SOURCE};
+  psql(sourceAdmin,'REVOKE CREATE ON DATABASE '+UPGRADE_SOURCE+' FROM PUBLIC;\n'+
+   'GRANT CREATE ON DATABASE '+UPGRADE_SOURCE+' TO '+OWNER+';\n');
+  psql(sourceAdmin,fixtureLedgerSql());
+  for(const m of test.migrations.slice(0,62))
+   psql(sourceClient,restrictedReconcileSql(ledger,m.version,m.transformedSql));
+  if(inspect(sourceAdmin,'SELECT count(*) FROM verivaro_migration.history')!=='62')
+   refuse('stage source did not reach version 62');
+  // The privileged fixture inserts synthetic application data, not customer data.
+  psql(sourceAdmin,"INSERT INTO verivaro.tenants(id,name) VALUES"+
+   "('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','Synthetic staged upgrade tenant');");
+  const before=inspect(sourceAdmin,upgradeHashSql);
+  exec('createdb',['-w','--template='+UPGRADE_SOURCE,UPGRADE_TARGET],admin);
+  targetCreated=true;
+  const targetAdmin={...admin,PGDATABASE:UPGRADE_TARGET};
+  const targetClient={...client,PGDATABASE:UPGRADE_TARGET};
+  const migration=restrictedReconcileSql(ledger,63,test.migrations[62].transformedSql);
+  const last='\\endif\nCOMMIT;\nRESET ROLE;\n';
+  if(migration.split(last).length!==2)refuse('migration transaction injection anchor missing');
+  const killed=migration.replace(last,
+   '\\endif\nSELECT pg_terminate_backend(pg_backend_pid());\nCOMMIT;\nRESET ROLE;\n');
+  exec('psql',['-X','-q','-v','ON_ERROR_STOP=1','-f','-'],targetClient,killed,false);
+  assertInterruptedUpgradeState({
+   historyCount:inspect(targetAdmin,'SELECT count(*) FROM verivaro_migration.history'),
+   changedTableAbsent:inspect(targetAdmin,
+    "SELECT to_regclass('verivaro_private.ocr_transcription_corrections') IS NULL"),
+   sourceFingerprint:before,
+   restoredFingerprint:inspect(targetAdmin,upgradeHashSql)
+  });
+  psql(targetClient,migration);
+  const verified=checkLedgerRows(ledger,inspect(targetAdmin,upgradeHistorySql).split('\n'));
+  if(verified.verifiedVersions!==63||verified.head!==ledger[62].entry_hash||
+   inspect(targetAdmin,upgradeHashSql)!==before||
+   inspect(sourceAdmin,'SELECT count(*) FROM verivaro_migration.history')!=='62'||
+   inspect(targetAdmin,
+    "SELECT to_regclass('verivaro_private.ocr_transcription_corrections') IS NOT NULL")!=='t')
+   refuse('staged upgrade did not preserve source, dataset, schema and history');
+  // A separate process replay of the final migration must be idempotent.
+  psql(targetClient,migration);
+  if(inspect(targetAdmin,'SELECT count(*) FROM verivaro_migration.history')!=='63')
+   refuse('replayed upgrade mutated the history');
+  const acl=inspect(targetAdmin,
+   "SELECT has_table_privilege('"+LOGIN+"','verivaro_migration.history','UPDATE')"+
+   ",has_table_privilege('"+LOGIN+"','verivaro_migration.history','DELETE')");
+  if(acl!=='f|f')refuse('staged upgrade exposed ledger write-back');
+  return Object.freeze({sourceVersion:62,targetVersion:63,cloneFromExistingSchema:true,
+   realMigrationInterrupted:true,rollbackVerified:true,safeRestartVerified:true,
+   originalSourceUnchanged:true,syntheticTenantRecordsPreserved:true,
+   persistedHistoryVerified:true,replaySafe:true,ledgerPrivilegeRestricted:true,
+   productionEquivalentEnvironment:false,independentSignoff:false,productionApproved:false});
+ }finally{
+  if(targetCreated)exec('dropdb',['-w','--if-exists','--force',UPGRADE_TARGET],admin);
+  if(sourceCreated)exec('dropdb',['-w','--if-exists','--force',UPGRADE_SOURCE],admin);
+ }
+}
+
 async function run(){
  assertDisposableDatabase();
  if(process.env.PGDATABASE!=='verivaro_test'||process.env.VV_CI_ROLE_RECONCILE!=='1')
@@ -122,10 +200,11 @@ async function run(){
    ",has_table_privilege('"+LOGIN+"','verivaro_migration.history','DELETE')"+
    ",has_table_privilege('"+EXECUTOR+"','verivaro_migration.history','INSERT')"],root);
   if(denied!=='f|f|t')refuse('persistent ledger privilege leak');
+  const stagedUpgrade=rehearseStagedUpgrade(test,ledger,admin,client);
   return {restrictedMigrationsApplied:63,serviceRolesProvisioned:21,
    schemaExecutorCreateRoleDenied:true,unprivilegedLoginSchemaCreateDenied:true,
    ledgerWriteOnlyToExecutor:true,historyVerified:true,
-   head:ledger.at(-1).entry_hash,productionApproved:false};
+   head:ledger.at(-1).entry_hash,stagedUpgrade,productionApproved:false};
  }finally{
   if(created){
    exec('dropdb',['-w','--if-exists','--force',DB],admin);

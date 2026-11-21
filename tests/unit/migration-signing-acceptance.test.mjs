@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createExpectedLedger} from '../../scripts/ci-migration-ledger.mjs';
-import {restrictedReconcileSql} from '../../scripts/rehearse-privileged-migration-reconciliation.mjs';
+import {restrictedReconcileSql,assertInterruptedUpgradeState} from '../../scripts/rehearse-privileged-migration-reconciliation.mjs';
 import {ADDITIONAL_SIGNED_PATHS} from '../../scripts/migration-release-cli.mjs';
 
 test('restricted SQL enforces explicit executor/owner transaction boundaries',()=>{
@@ -43,4 +43,15 @@ test('independent acceptance register never asserts completed external signing o
   assert.ok(r.required.length>50);
  }
  assert.equal(register.approvalEvidence.length,0);
+});
+
+test('staged upgrade rejects any partial commit, leftover DDL or altered seeded data',()=>{
+ const good={historyCount:'62',changedTableAbsent:'t',
+  sourceFingerprint:'a'.repeat(32),restoredFingerprint:'a'.repeat(32)};
+ assert.equal(assertInterruptedUpgradeState(good).dataPreserved,true);
+ for(const partial of [
+  {historyCount:'63'},{changedTableAbsent:'f'},
+  {sourceFingerprint:'bad'},{restoredFingerprint:'b'.repeat(32)}
+ ])assert.throws(()=>assertInterruptedUpgradeState({...good,...partial}),
+  /restricted reconciliation rehearsal failed/);
 });

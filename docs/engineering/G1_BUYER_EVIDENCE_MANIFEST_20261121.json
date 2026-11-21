@@ -57,7 +57,7 @@
         "tests/unit/legacy-role-reconciliation.test.mjs",
         "tests/unit/migration-signing-acceptance.test.mjs"
       ],
-      "blocker": "The CI-only 63-migration and 21-role deterministic privileged bootstrap/reconciliation rehearsal is implemented with a separate non-superuser schema migrator and ledger custodian; source-bound dual-Ed25519 signing acceptance uses ephemeral CI keys only. Actual external owner and reviewer signatures, independent custody/trust-policy pin and monotonic witness, production migrator identity, a separately approved privileged DBA bootstrap, actual existing-install reconciliation, production recovery witness, TLS/IdP/HA disaster recovery and security review remain NOT VERIFIED. Production release approval denied."
+      "blocker": "A restricted non-superuser runner with 21 independently scoped reference service roles and all 63 locked migrations is CI-verified. A new version-62 to version-63 cloned-database interruption/restart test is staged for exact-head CI qualification. Production-like remote identity, real API load, signed release custody, external monotonic ledger witness, independent DBA and security approvals, genuine deployment/HA DR, real staged upgrade and validated commercial buyer demand remain NOT VERIFIED. Production release approval denied."
     },
     {
       "id": "G1_EVIDENCE",
