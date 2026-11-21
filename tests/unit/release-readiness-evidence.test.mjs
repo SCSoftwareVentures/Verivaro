@@ -63,7 +63,7 @@ test('P0-A signer rotation is reference-only and never implies independent custo
  assert.ok(gate.sources.includes('src/security/provider-witness-authority-key-schedule.mjs'));
  assert.ok(gate.sources.includes('tests/unit/provider-witness-authority-key-schedule.test.mjs'));
  assert.ok(gate.sources.includes('docs/engineering/G1_REVIEW_FLOOR_AUTHORITY_REFERENCE_20261121.md'));
- assert.match(gate.blocker,/independent key administration|remote atomic CAS/i);
+ assert.match(gate.blocker,/independently administered governance signer|atomic authority-side revocation\+CAS/i);
  for(const p of [
   'src/security/provider-witness-authority-trust-policy.mjs',
   'tests/unit/provider-witness-authority-trust-policy.test.mjs',
