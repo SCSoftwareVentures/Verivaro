@@ -1,9 +1,9 @@
 // Single-host, single-active-verifier durable checkpoint store.
 // A separately trusted, operator-provisioned starting checkpoint is mandatory.
 // Disk persistence does NOT protect against privileged rollback of the volume.
-import {open,realpath,rename,unlink,lstat} from 'node:fs/promises';
+import {open,realpath,rename,unlink} from 'node:fs/promises';
 import {constants} from 'node:fs';
-import {createHash,randomUUID} from 'node:crypto';
+import {randomUUID} from 'node:crypto';
 import {isAbsolute,resolve,join} from 'node:path';
 import {createRotatingProviderVerifier} from './provider-key-rotation.mjs';
 
@@ -15,7 +15,6 @@ const canonical=(v)=>JSON.stringify(v)+'\n';
 const checkpointOk=c=>c&&Number.isSafeInteger(c.sequence)&&c.sequence>=1&&typeof c.digest==='string'&&/^[0-9a-f]{64}$/.test(c.digest);
 const scopeOk=s=>typeof s==='string'&&s.length>0&&s.length<=512&&!/[\x00-\x1f\x7f]/.test(s);
 const same=(a,b)=>a.sequence===b.sequence&&a.digest===b.digest;
-const missing=e=>e?.code==='ENOENT';
 function validateDirectory(stat){
  if(!stat.isDirectory()||(stat.mode&0o077)!==0||
     (typeof process.getuid==='function'&&stat.uid!==process.getuid()))
@@ -48,15 +47,12 @@ async function writeExclusive(path,contents){
  const fh=await open(path,openExclusive,0o600);
  try{await fh.writeFile(contents);await fh.sync();}finally{await fh.close();}
 }
-async function isPresent(path){
- try{await lstat(path);return true;}catch(e){if(missing(e))return false;throw e;}
-}
 
 export async function openFileProviderCheckpointStore({directory,issuer,audience}){
  if(typeof directory!=='string'||!isAbsolute(directory)||!scopeOk(issuer)||!scopeOk(audience))
   throw Error('invalid checkpoint store configuration');
  const absolute=resolve(directory),dir=await open(absolute,directoryFlags);
- let session,closed=false;
+ let session,closed=false,busy=false;
  const dataPath=join(absolute,'provider-keyset-checkpoint.json');
  const lockPath=join(absolute,'.provider-keyset-instance.lock');
  try{
@@ -72,8 +68,11 @@ export async function openFileProviderCheckpointStore({directory,issuer,audience
    },
    async compareAndSwap(previous,next){
     if(closed)throw Error('checkpoint store closed');
+    if(busy)throw Error('checkpoint store busy');
     if(!checkpointOk(previous)||!checkpointOk(next)||next.sequence<=previous.sequence)
      throw Error('invalid checkpoint advance');
+    busy=true;
+    try{
     const actual=await readStrict(dataPath,issuer,audience);
     if(!same(actual,previous))throw Error('checkpoint conflict or rollback');
     const pending=join(absolute,'.provider-keyset-'+randomUUID()+'.pending');
@@ -87,10 +86,12 @@ export async function openFileProviderCheckpointStore({directory,issuer,audience
      if(!same(committed,next))throw Error('checkpoint persistence mismatch');
      return committed;
     }finally{if(tmp)await unlink(pending).catch(()=>{});}
+    }finally{busy=false;}
    },
    isOpen(){return !closed;},
    async close(){
     if(closed)return;
+    if(busy)throw Error('checkpoint rotation pending');
     closed=true;
     // Keep lock on any unsafe cleanup error. Operators must verify state.
     await session.close();session=undefined;

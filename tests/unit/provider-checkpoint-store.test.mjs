@@ -38,7 +38,7 @@ test('real disk persistence survives verifier restart and rejects retired keyset
  t.after(()=>restarted.close().catch(()=>{}));
  await assert.rejects(openFileBackedProviderVerifier({store:restarted,issuer,audience,requiredAcr:'fixture:mfa',authorityKey:authority.publicKey,catalogue:first.catalogue,signature:first.signature,now:()=>now}),/keyset scope or freshness/);
  const newVerifier=await openFileBackedProviderVerifier({store:restarted,issuer,audience,requiredAcr:'fixture:mfa',authorityKey:authority.publicKey,catalogue:second.catalogue,signature:second.signature,now:()=>now});
- assert.equal(newVerifier.verify(token(nonce(),{iat:now,auth_time:now,exp:now+300},{kid:'next'},replacement.privateKey).issuer,issuer);
+ assert.equal(newVerifier.verify(token(nonce(),{iat:now,auth_time:now,exp:now+300},{kid:'next'},replacement.privateKey)).issuer,issuer);
 });
 test('checkpoint CAS and live lock fail closed across instances',async t=>{
  const authority=generateKeyPairSync('ed25519'),first=snapshot(authority,1,'fixture',publicKey);
