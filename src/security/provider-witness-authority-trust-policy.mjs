@@ -144,3 +144,35 @@ export function trustedRecoveryFloorTrustPolicyCheckpoint(policy){
  if(!records.has(policy))fail();
  return Object.freeze({revision:policy.revision,digest:policy.digest});
 }
+
+// A governance-policy revision is an externally authenticated *candidate*.
+// These checks are pure: the authority must atomically compare-and-swap its
+// pinned checkpoint alongside the floor under an independently fenced lock.
+// An app-side call cannot establish linearizability or remote key custody.
+export function advanceTrustedRecoveryFloorTrustPolicy({
+ previousPolicy,envelope,trustedGovernanceKey,trustedNextCheckpoint,
+ trustedAuthorityKeySchedule,issuer,audience,now
+}={}){
+ const old=records.get(previousPolicy);
+ if(!old||old.issuer!==issuer||old.audience!==audience||!stamp(now)||
+  previousPolicy.revision>=Number.MAX_SAFE_INTEGER-3||
+  Date.parse(now)<old.issuedAtMs||Date.parse(now)>=old.expiresAtMs)fail();
+ const next=createTrustedRecoveryFloorTrustPolicy({
+  envelope,trustedGovernanceKey,trustedCheckpoint:trustedNextCheckpoint,
+  trustedAuthorityKeySchedule,issuer,audience,now
+ });
+ const newer=records.get(next);
+ if(next.revision!==previousPolicy.revision+1||
+  newer.scheduleDigest!==old.scheduleDigest||
+  newer.minimumFloor.serial<old.minimumFloor.serial||
+  newer.minimumFloor.serial===old.minimumFloor.serial&&
+   newer.minimumFloor.headHash!==old.minimumFloor.headHash||
+  old.revoked.some(id=>!newer.revoked.includes(id)))fail();
+ return next;
+}
+
+export function trustedRecoveryFloorTrustPolicyMinimumFloor(policy){
+ const state=records.get(policy);
+ if(!state)fail();
+ return Object.freeze({...state.minimumFloor});
+}

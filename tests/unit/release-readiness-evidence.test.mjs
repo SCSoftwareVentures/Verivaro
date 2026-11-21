@@ -74,6 +74,33 @@ test('P0-A signer rotation is reference-only and never implies independent custo
  assert.equal(manifest.approvedForAutomaticRecovery,false);
 });
 
+test('P0-A buyer contract lists all unsupported production trust requirements',()=>{
+ const contract=JSON.parse(readFileSync(file(
+  'docs/engineering/G1_P0A_BUYER_ACCEPTANCE_REGISTER_20261121.json'),'utf8'));
+ assert.equal(contract.schemaVersion,1);
+ assert.equal(contract.productReleaseApproved,false);
+ assert.equal(contract.productionAuthorityDeployed,false);
+ assert.equal(contract.independentCustodyProven,false);
+ assert.equal(contract.distributedCASProven,false);
+ assert.equal(contract.automaticRecoveryPermitted,false);
+ assert.equal(contract.requirements.length,8);
+ for(const requirement of contract.requirements){
+  assert.match(requirement.id,/^P0A-0[1-8]$/);
+  assert.equal(requirement.status,'NOT_VERIFIED');
+  assert.ok(requirement.externalProof.length>45);
+ }
+ for(const source of contract.auditedReferenceSource){
+  assert.ok(existsSync(file(source)), 'Missing P0-A source '+source);
+ }
+ const gate=manifest.states.find(x=>x.id==='G1_WITNESS');
+ assert.equal(gate.status,'REFERENCE_ONLY');
+ for(const name of [
+  'src/security/provider-witness-reference-atomic-floor-model.mjs',
+  'tests/unit/provider-witness-reference-atomic-floor-model.test.mjs',
+  'docs/engineering/G1_P0A_BUYER_ACCEPTANCE_REGISTER_20261121.json'
+ ])assert.ok(gate.sources.includes(name),'Missing P0-A reference evidence '+name);
+});
+
 test('production, sale and automated recovery claims are blocked while unresolved gates remain',()=>{
  const unresolved=manifest.states.filter(x=>x.status!=='INDEPENDENTLY_VERIFIED');
  assert.ok(unresolved.length>0);

@@ -42,3 +42,14 @@ An **actual production authority** would additionally need all of the following,
 Before production clearance, obtain independent evidence for the complete protocol above and confirm that protected floor/policy state cannot be rolled back by the application operator. Verify the governance signer is not under the same administrative authority, assess emergency-revocation propagation and atomicity, and document who may clear a permanently faulted incident and on what proof.
 
 **Status:** `G1_WITNESS=REFERENCE_ONLY`, `productionSecurityCertified=false`, `approvedForAutomaticRecovery=false`. Draft PR only; no deployment, external credentials, paid service or automatic recovery action.
+
+
+## Bounded authority-side ordering model and buyer proof register
+
+`src/security/provider-witness-reference-atomic-floor-model.mjs` now implements a **strictly synchronous, in-memory reference transition model**. It checks exact old floor and approved evidence ledger, verifies two existing custodian signatures, checks the externally pinned trust-policy checkpoint, rejects a simulated stale writer/fenced epoch, and atomically changes its in-memory floor with no await between guard and mutation. When a lost acknowledgement is injected **after** commit, the floor remains advanced and a replay fails. Simulated partitions deny model writes. The model is not a storage service and its epoch numbers are **not authenticated distributed leases**.
+
+Signed governance policy updates are compared to the current checkpoint in that same bounded transition model. They must increase the policy revision by exactly one, preserve all revoked key IDs, retain the same independently pinned signer schedule, and not lower the previously trusted minimum floor. The model permits a policy minimum only when it matches the previous minimum or the exact current head. This protects the simulation against a fabricated intermediate head; it does not establish off-host history continuity or independent governance.
+
+The machine-readable [P0-A buyer acceptance register](G1_P0A_BUYER_ACCEPTANCE_REGISTER_20261121.json) enumerates **eight unresolved external proof requirements**, including independently custodied keys, atomic policy and CAS ordering, real two-host fencing, network partitions, time assurance, physical power-loss recovery, independent rollback floor and buyer/IP handover. Every requirement is explicitly `NOT_VERIFIED` regardless of green synthetic CI. A buyer must commission or provide independent evidence for each applicable operational claim.
+
+**Critical distinction:** the reference model is synchronous JavaScript executing in one process. It does **not** test distributed consensus, a remote atomic store, real failover or the authority's administrative independence. No changes to the production trust gate or automatic recovery permission are authorized.

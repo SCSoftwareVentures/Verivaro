@@ -83,9 +83,12 @@
         "docs/engineering/G1_REVIEW_FLOOR_AUTHORITY_REFERENCE_20261121.md",
         "src/security/provider-witness-authority-trust-policy.mjs",
         "tests/unit/provider-witness-authority-trust-policy.test.mjs",
-        "docs/engineering/G1_P0A_REMOTE_AUTHORITY_CONTRACT_20261121.md"
+        "docs/engineering/G1_P0A_REMOTE_AUTHORITY_CONTRACT_20261121.md",
+        "src/security/provider-witness-reference-atomic-floor-model.mjs",
+        "tests/unit/provider-witness-reference-atomic-floor-model.test.mjs",
+        "docs/engineering/G1_P0A_BUYER_ACCEPTANCE_REGISTER_20261121.json"
       ],
-      "blocker": "New reference trust-policy verifier supports separately signed policy revisions, explicit same-serial signer revocation and externally supplied checkpoint pre/post reads. No independently administered governance signer, actual monotonic checkpoint service, atomic authority-side revocation+CAS, multi-host fencing, secure clock, remote operator identity or physical power-cycle evidence has been provided."
+      "blocker": "An additional synchronous reference model tests single-process policy/CAS ordering, synthetic writer fencing, partition refusal and lost-ACK replay. Independently administered governance, external durable policy/floor high-water marks, actual atomic authority-side revocation+CAS, mutually authenticated multi-host fencing, independent time and hardware power-loss verification remain absent."
     },
     {
       "id": "G1_BACKUP",
