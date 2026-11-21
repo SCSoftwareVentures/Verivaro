@@ -36,6 +36,42 @@ export async function retireServiceCredential(client,{role,oldLogin,newLogin,con
     AND NOT EXISTS(
       SELECT 1 FROM pg_catalog.pg_roles x
       WHERE x.oid<>g.oid AND pg_catalog.pg_has_role(g.oid,x.oid,'MEMBER'))
+    AND NOT EXISTS(
+      -- Explicit direct grants and ownership are not removed by revoking
+      -- the service group. Exclude PostgreSQL system schemas and public
+      -- grants; default PUBLIC privileges are not direct grants to l.oid.
+      SELECT 1 FROM pg_catalog.pg_namespace n
+      LEFT JOIN LATERAL pg_catalog.aclexplode(n.nspacl) a ON true
+      WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema'
+        AND (n.nspowner=l.oid OR a.grantee=l.oid))
+    AND NOT EXISTS(
+      SELECT 1 FROM pg_catalog.pg_class c
+      JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+      LEFT JOIN LATERAL pg_catalog.aclexplode(c.relacl) a ON true
+      WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema'
+        AND (c.relowner=l.oid OR a.grantee=l.oid))
+    AND NOT EXISTS(
+      SELECT 1 FROM pg_catalog.pg_proc p
+      JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+      LEFT JOIN LATERAL pg_catalog.aclexplode(p.proacl) a ON true
+      WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema'
+        AND (p.proowner=l.oid OR a.grantee=l.oid))
+    AND NOT EXISTS(
+      SELECT 1 FROM pg_catalog.pg_type t
+      JOIN pg_catalog.pg_namespace n ON n.oid=t.typnamespace
+      LEFT JOIN LATERAL pg_catalog.aclexplode(t.typacl) a ON true
+      WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema'
+        AND (t.typowner=l.oid OR a.grantee=l.oid))
+    AND NOT EXISTS(
+      -- Future grants issued from ALTER DEFAULT PRIVILEGES can become
+      -- exploitable after a later login restoration or role transition.
+      SELECT 1 FROM pg_catalog.pg_default_acl d
+      LEFT JOIN LATERAL pg_catalog.aclexplode(d.defaclacl) a ON true
+      WHERE a.grantee=l.oid)
+    AND NOT EXISTS(
+      SELECT 1 FROM pg_catalog.pg_database d
+      LEFT JOIN LATERAL pg_catalog.aclexplode(d.datacl) a ON true
+      WHERE a.grantee=l.oid)
     AS safe
    FROM pg_catalog.pg_roles l CROSS JOIN pg_catalog.pg_roles g
    WHERE l.rolname::text IN ($1,$2) AND g.rolname::text=$3`,[oldLogin,newLogin,role]);
