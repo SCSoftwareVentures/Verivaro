@@ -187,6 +187,9 @@ test('a remote read racing an authorised rotation rejects the request without fa
  const v=await openWitnessBoundProviderVerifier(config(store,witness,authority,first));
  suspend=true;
  const pending=v.verify(token(nonce(),{iat:now,auth_time:now,exp:now+300}));
+ // Deadline-wrapped I/O dispatches asynchronously; allow the witness read
+ // microtask to enter before asserting the deliberately suspended fixture.
+ await Promise.resolve();
  assert.equal(typeof finish,'function');
  suspend=false;
  await v.rotate(next.catalogue,next.signature,next.checkpoint);
