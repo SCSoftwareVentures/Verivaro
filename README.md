@@ -34,7 +34,7 @@ npm run demo:buyer:bundle -- ./verivaro-synthetic-buyer.zip
 
 The command refuses to overwrite an existing file. The archive contains a standalone static-browser demonstration, the exact four synthetic proof stages, a private-loopback Node preview (`node preview.mjs`), a manifest of every bundled file with SHA-256 and byte counts, and a text guide. It is **not** a production installer, authenticated release, signed provenance or independent custody attestation. The printed archive digest is a **self-held** value unless separately delivered by a trusted channel.
 
-The [buyer handover workflow](../../.github/workflows/buyer-bundle.yml) packages the same ZIP and build receipt as short-retention GitHub Actions artifacts after verification, without a paid host, public deployment or real customer data. These artifacts are for source-code acquisition review and do **not** certify demand, licensing, product completeness or transfer readiness.
+The [buyer handover workflow](.github/workflows/buyer-bundle.yml) packages the same ZIP and build receipt as short-retention GitHub Actions artifacts after verification, without a paid host, public deployment or real customer data. These artifacts are for source-code acquisition review and do **not** certify demand, licensing, product completeness or transfer readiness.
 
 ## Components
 
