@@ -1,10 +1,10 @@
 // Single-host REFERENCE signed receipt publisher; NOT an independent service.
 // Production needs a separately administered, durable remote trust domain.
 // Signing is delegated to a caller-provided capability; no private key stored.
-import {open,rename,unlink,realpath} from 'node:fs/promises';
+import {open,rename,unlink,realpath,lstat,readdir} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {randomUUID} from 'node:crypto';
-import {isAbsolute,join,resolve} from 'node:path';
+import {isAbsolute,join,resolve,basename} from 'node:path';
 import {
  canonicalWitnessAuditStatement,verifyExternallySignedWitnessAuditReceipt
 } from './provider-witness-audit-receipt.mjs';
@@ -92,6 +92,10 @@ async function strictRead(path,identity){
   let value;
   try{value=JSON.parse(bytes.toString('utf8'));}catch{throw fail();}
   if(!canonicalReceipt(value).equals(bytes))throw fail();
+  // Refuse a path replaced while the original descriptor was being read.
+  const linked=await lstat(path);
+  if(!linked.isFile()||linked.dev!==second.dev||linked.ino!==second.ino||
+   linked.nlink!==1)throw fail();
   return {value,identity:{ino:first.ino,dev:first.dev},bytes};
  }finally{await f.close();}
 }
@@ -122,6 +126,9 @@ export async function openReferenceWitnessReceiptPublisher({
   if(!stat.isDirectory()||(stat.mode&0o077)!==0||
    (typeof process.getuid==='function'&&stat.uid!==process.getuid())||
    await realpath(root)!==root)throw fail();
+  // Any pending publication or writer lock must be investigated manually.
+  const startNames=await readdir(root);
+  if(startNames.length!==1||startNames[0]!=='signed-witness-receipt.json')throw fail();
   const initial=await strictRead(path);
   const trusted=verifyEnvelope(initial.value,scope,trustedPublicKey,trustedFloor.count);
   exactFloor(trusted,trustedFloor);
@@ -133,9 +140,23 @@ export async function openReferenceWitnessReceiptPublisher({
   const confirmed=verifyEnvelope(recheck.value,scope,trustedPublicKey,trustedFloor.count);
   exactFloor(confirmed,trustedFloor);
   let expected=copy(recheck.value),identity=recheck.identity;
+  async function verifyLiveEntries(pending){
+   const linkedRoot=await lstat(root),openedRoot=await dir.stat();
+   const linkedLease=await lstat(lockPath),openedLease=await lease.stat();
+   if(!linkedRoot.isDirectory()||linkedRoot.ino!==openedRoot.ino||
+    linkedRoot.dev!==openedRoot.dev||(linkedRoot.mode&0o077)!==0||
+    !linkedLease.isFile()||linkedLease.ino!==openedLease.ino||
+    linkedLease.dev!==openedLease.dev||linkedLease.nlink!==1||
+    (linkedLease.mode&0o077)!==0)throw fail();
+   const names=(await readdir(root)).sort();
+   const allowed=['signed-witness-receipt.json','.receipt-publisher.lock'];
+   if(pending)allowed.push(basename(pending));
+   if(JSON.stringify(names)!==JSON.stringify(allowed.sort()))throw fail();
+  }
   async function check(){
    if(closed||faulted)throw fail();
    try{
+    await verifyLiveEntries();
     const current=await strictRead(path,identity);
     verifyEnvelope(current.value,scope,trustedPublicKey,expected.statement.count);
     if(!canonicalReceipt(current.value).equals(canonicalReceipt(expected)))throw fail();
@@ -199,6 +220,11 @@ export async function openReferenceWitnessReceiptPublisher({
       persistenceAttempted=true;
       try{await f.writeFile(bytes);await f.sync();}finally{await f.close();}
       await injectForTests('after-temp-fsync');
+      await injectForTests('before-final-path-check');
+      // Recheck destination inode, lock and directory before replacement.
+      await verifyLiveEntries(pending);
+      const priorDisk=await strictRead(path,identity);
+      if(!priorDisk.bytes.equals(canonicalReceipt(expected)))throw fail();
       if(signal?.aborted)throw fail();
       await rename(pending,path);
       pendingCreated=false;
@@ -225,6 +251,7 @@ export async function openReferenceWitnessReceiptPublisher({
     if(closed)return;
     if(busy)throw fail();
     closed=true;
+    if(!faulted){try{await verifyLiveEntries();}catch{faulted=true;}}
     await lease.close();
     if(!faulted){
      await unlink(lockPath);
@@ -241,4 +268,37 @@ export async function openReferenceWitnessReceiptPublisher({
   // Caller must not distinguish malformed or rolled-back signed records.
   throw fail();
  }
+}
+
+
+// Read-only triage: never treats a lock as abandoned or authorizes a restart.
+export async function inspectReferenceWitnessReceiptRecovery({
+ directory,issuer,audience,trustedPublicKey,trustedFloor
+}){
+ if(typeof directory!=='string'||!isAbsolute(directory)||
+  !scopeOk(issuer)||!scopeOk(audience)||!trustedPublicKey||
+  !trustedFloor||Object.keys(trustedFloor).sort().join(',')!=='count,headHash'||
+  !Number.isSafeInteger(trustedFloor.count)||trustedFloor.count<1||
+  trustedFloor.count>8192||!HEX.test(trustedFloor.headHash))throw fail();
+ const root=resolve(directory);
+ try{
+  const dirStat=await lstat(root);
+  if(!dirStat.isDirectory()||(dirStat.mode&0o077)!==0||
+   (typeof process.getuid==='function'&&dirStat.uid!==process.getuid())||
+   await realpath(root)!==root)throw fail();
+  const names=(await readdir(root)).sort();
+  if(names.some(n=>n!=='signed-witness-receipt.json'&&
+   n!=='.receipt-publisher.lock'&&!/^\.receipt-[0-9a-f-]+\.pending$/.test(n)))
+   throw fail();
+  const {value}=await strictRead(join(root,'signed-witness-receipt.json'));
+  const seen=verifyEnvelope(value,{issuer,audience},trustedPublicKey,trustedFloor.count);
+  exactFloor(seen,trustedFloor);
+  return Object.freeze({
+   status:'MANUAL_REVIEW_REQUIRED',
+   authenticatedHead:Object.freeze({count:seen.count,headHash:seen.headHash}),
+   writerLockPresent:names.includes('.receipt-publisher.lock'),
+   pendingFiles:Object.freeze(names.filter(n=>n.endsWith('.pending'))),
+   automaticRecoveryPermitted:false
+  });
+ }catch{throw fail();}
 }

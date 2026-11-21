@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {generateKeyPairSync,sign} from 'node:crypto';
-import {mkdtemp,mkdir,readFile,writeFile,rm,unlink,readdir} from 'node:fs/promises';
+import {mkdtemp,mkdir,readFile,writeFile,rm,unlink,readdir,rename,symlink,lstat} from 'node:fs/promises';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 const execFileAsync=promisify(execFile);
@@ -9,7 +9,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {encodeWitnessGenesis,openReferenceWitnessJournal} from '../../src/security/provider-witness-journal.mjs';
 import {openReceiptGuardedReferenceWitness} from '../../src/security/provider-witness-anchor-gate.mjs';
-import {openReferenceWitnessReceiptPublisher} from '../../src/security/provider-witness-publisher-reference.mjs';
+import {openReferenceWitnessReceiptPublisher,inspectReferenceWitnessReceiptRecovery} from '../../src/security/provider-witness-publisher-reference.mjs';
 import {createUnsignedWitnessAuditStatement,canonicalWitnessAuditStatement} from '../../src/security/provider-witness-audit-receipt.mjs';
 
 const scope={issuer:'https://issuer.example.invalid',audience:'verivaro-internal'};
@@ -325,4 +325,103 @@ try{
  assert.ok((await readdir(f.publisherDirectory)).includes('.receipt-publisher.lock'));
  // Only a supervised operator can examine durable evidence and release the
  // stale crash lock. This test does not perform such a recovery in production.
+});
+
+
+test('late valid signer signature after timeout never publishes the receipt',async t=>{
+ const f=await lab(t);
+ let finish,entered;
+ const started=new Promise(resolve=>{entered=resolve;});
+ const publisher=await openReferenceWitnessReceiptPublisher({
+  ...f.publisherConfig(),signerTimeoutMs:35,
+  signStatement:(bytes,_statement,{signal})=>{
+   entered({bytes,signal});
+   return new Promise(resolve=>{finish=resolve;});
+  }
+ });
+ const previous=await publisher.read(scope);
+ const pending=publisher.compareAndSwap({...scope,previous,
+  statement:statement(null,second,2,'e'.repeat(64))});
+ const attempt=await started;
+ await assert.rejects(pending,/unavailable/);
+ assert.equal(attempt.signal.aborted,true);
+ finish(sign(null,attempt.bytes,f.signer.privateKey).toString('base64url'));
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(JSON.parse((await readFile(f.receiptPath)).toString()).statement.count,1);
+ await publisher.close();
+ await assert.rejects(openReferenceWitnessReceiptPublisher(f.publisherConfig()),/unavailable/);
+});
+
+test('orphan pending receipt blocks startup and retains its evidence',async t=>{
+ const f=await lab(t);
+ const pending=join(f.publisherDirectory,'.receipt-deadbeef.pending');
+ await writeFile(pending,'orphaned test record\n',{mode:0o600});
+ await assert.rejects(openReferenceWitnessReceiptPublisher(f.publisherConfig()),/unavailable/);
+ assert.equal((await readFile(pending,'utf8')).includes('orphaned'),true);
+ assert.equal((await readdir(f.publisherDirectory)).includes('.receipt-publisher.lock'),false);
+});
+
+test('signed receipt replaced with identical bytes during CAS is denied',async t=>{
+ const f=await lab(t);
+ const publisher=await openReferenceWitnessReceiptPublisher({
+  ...f.publisherConfig(),enableTestFaultInjection:true,
+  faultInjection:async phase=>{
+   if(phase!=='before-final-path-check')return;
+   const original=await readFile(f.receiptPath);
+   const alternate=join(f.publisherDirectory,'.receipt-swap');
+   await writeFile(alternate,original,{mode:0o600});
+   await rename(alternate,f.receiptPath);
+  }
+ });
+ const previous=await publisher.read(scope);
+ await assert.rejects(publisher.compareAndSwap({...scope,previous,
+  statement:statement(null,second,2,'a'.repeat(64))}),/unavailable/);
+ assert.equal(JSON.parse((await readFile(f.receiptPath)).toString()).statement.count,1);
+ await publisher.close();
+ await assert.rejects(openReferenceWitnessReceiptPublisher(f.publisherConfig()),/unavailable/);
+});
+
+test('symlink substitution at last path check faults publisher, preserves target',async t=>{
+ const f=await lab(t),evidence=join(f.root,'receipt-original.json');
+ const publisher=await openReferenceWitnessReceiptPublisher({
+  ...f.publisherConfig(),enableTestFaultInjection:true,
+  faultInjection:async phase=>{
+   if(phase!=='before-final-path-check')return;
+   await rename(f.receiptPath,evidence);
+   await symlink(evidence,f.receiptPath);
+  }
+ });
+ const previous=await publisher.read(scope);
+ await assert.rejects(publisher.compareAndSwap({...scope,previous,
+  statement:statement(null,second,2,'a'.repeat(64))}),/unavailable/);
+ assert.equal((await lstat(f.receiptPath)).isSymbolicLink(),true);
+ assert.equal(JSON.parse((await readFile(evidence)).toString()).statement.count,1);
+ await publisher.close();
+});
+
+test('read-only recovery inspection never removes writer lock or permits restart',async t=>{
+ const f=await lab(t),publisher=await openReferenceWitnessReceiptPublisher(f.publisherConfig());
+ const args={directory:f.publisherDirectory,...scope,
+  trustedPublicKey:f.signer.publicKey,trustedFloor:f.floor};
+ const active=await inspectReferenceWitnessReceiptRecovery(args);
+ assert.equal(active.status,'MANUAL_REVIEW_REQUIRED');
+ assert.equal(active.writerLockPresent,true);
+ assert.equal(active.automaticRecoveryPermitted,false);
+ await publisher.close();
+ const closed=await inspectReferenceWitnessReceiptRecovery(args);
+ assert.equal(closed.writerLockPresent,false);
+ assert.equal(closed.automaticRecoveryPermitted,false);
+});
+
+test('recovery inventory lists orphan file but refuses unsupported freshness floor',async t=>{
+ const f=await lab(t),pending=join(f.publisherDirectory,'.receipt-abcdef.pending');
+ await writeFile(pending,'unconfirmed publication\n',{mode:0o600});
+ const args={directory:f.publisherDirectory,...scope,
+  trustedPublicKey:f.signer.publicKey,trustedFloor:f.floor};
+ const inventory=await inspectReferenceWitnessReceiptRecovery(args);
+ assert.deepEqual(inventory.pendingFiles,['.receipt-abcdef.pending']);
+ assert.equal(inventory.status,'MANUAL_REVIEW_REQUIRED');
+ await assert.rejects(inspectReferenceWitnessReceiptRecovery({
+  ...args,trustedFloor:{count:2,headHash:'a'.repeat(64)}
+ }),/unavailable/);
 });

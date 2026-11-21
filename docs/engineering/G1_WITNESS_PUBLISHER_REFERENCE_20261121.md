@@ -32,3 +32,35 @@ exclusive writer lease. Signer-timeout, caller-abort, and malformed-client
 negative cases are covered. Safe pre-persistence malformed submissions
 reject without poisoning a healthy publisher. Only a supervised, independently
 verified operation may clear an abandoned lock; no auto-recovery path is added.
+
+
+## Late signer, filesystem race and read-only recovery qualification
+
+An adversarial test resolves a valid signer result AFTER its configured
+deadline. The publisher must never persist it. The reference publisher
+also refuses to start when pending receipt files, unexpected files or
+a previous writer lock remain. Active operations recheck the private
+directory identity, lock inode, and pre-existing receipt inode
+immediately before rename. Same-content inode replacement and symlink
+substitution are injected as negative cases. These checks narrow
+opportunistic filesystem races but cannot eliminate time-of-check versus
+time-of-use gaps, and cannot resist a privileged hostile local operator.
+
+The read-only inspectReferenceWitnessReceiptRecovery API verifies an
+independently trusted signed receipt and exact external freshness floor
+and inventories any writer lock or orphan pending files. Every result
+is MANUAL_REVIEW_REQUIRED, including a clean-looking directory. It does
+not determine whether a lock belongs to a live process and never deletes
+or promotes anything.
+
+Required supervised procedure: (1) isolate authentication/writer traffic,
+preserve local receipts, pending files, locks, journal and process logs;
+(2) obtain signed external receipt, trusted public key and monotonic
+freshness floor from independent custodians; (3) cross-check scope,
+signatures, journal chain, latest sequence and checkpoint against the
+external authority, explicitly accounting for a possible remote commit
+with lost acknowledgement; (4) obtain two-person documented approval for
+specific maintenance, rather than automatically reusing stale signing
+keys, truncating files or deleting locks; (5) independently attest the
+reconciled state and only then resume in fail-closed mode. Real power-loss
+and multi-host integrity claims remain unverified and require external review.
