@@ -47,6 +47,28 @@ const CHECK=String.raw`SELECT
  OR EXISTS(SELECT 1 FROM pg_catalog.pg_database d
    LEFT JOIN LATERAL pg_catalog.aclexplode(d.datacl) a ON true
    WHERE a.grantee=l.oid)
+ -- PostgreSQL 16 grants can also target configuration parameters,
+ -- large objects, tablespaces, procedural languages and FDW objects.
+ -- Some of these can carry powerful non-table capabilities, such as SET
+ -- on session_replication_role, independent of the service group membership.
+ OR EXISTS(SELECT 1 FROM pg_catalog.pg_parameter_acl p
+   CROSS JOIN LATERAL pg_catalog.aclexplode(p.paracl) a
+   WHERE a.grantee=l.oid)
+ OR EXISTS(SELECT 1 FROM pg_catalog.pg_largeobject_metadata lo
+   LEFT JOIN LATERAL pg_catalog.aclexplode(lo.lomacl) a ON true
+   WHERE lo.lomowner=l.oid OR a.grantee=l.oid)
+ OR EXISTS(SELECT 1 FROM pg_catalog.pg_tablespace s
+   LEFT JOIN LATERAL pg_catalog.aclexplode(s.spcacl) a ON true
+   WHERE s.spcowner=l.oid OR a.grantee=l.oid)
+ OR EXISTS(SELECT 1 FROM pg_catalog.pg_language lang
+   LEFT JOIN LATERAL pg_catalog.aclexplode(lang.lanacl) a ON true
+   WHERE lang.lanowner=l.oid OR a.grantee=l.oid)
+ OR EXISTS(SELECT 1 FROM pg_catalog.pg_foreign_data_wrapper fdw
+   LEFT JOIN LATERAL pg_catalog.aclexplode(fdw.fdwacl) a ON true
+   WHERE fdw.fdwowner=l.oid OR a.grantee=l.oid)
+ OR EXISTS(SELECT 1 FROM pg_catalog.pg_foreign_server fs
+   LEFT JOIN LATERAL pg_catalog.aclexplode(fs.srvacl) a ON true
+   WHERE fs.srvowner=l.oid OR a.grantee=l.oid)
  OR (l.oid<>g.oid AND (
   g.rolcanlogin OR NOT EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members m
     WHERE m.member=l.oid AND m.roleid=g.oid AND m.inherit_option=false
