@@ -123,9 +123,25 @@ test('persistent graph independently reviews exact versions and links; contradic
    }),/verification failed/);
    tampered.fill(0);
    console.log('real_scoped_handover_package_integrity_gate_passed');
-   // Invalidate the submitted graph after successful byte-level packaging,
-   // then prove the same package builder refuses the now-stale authorisation.
-   second=link(bad);await graph.linkEvidence(as('author',second));
+   // Cross-transaction TOCTOU: mutate the approved evidence graph only
+   // after the packager has retrieved the real encrypted bytes but before
+   // its final readSubmission authorisation check. No stale ZIP may escape.
+   let graphMutatedDuringRetrieval=false;
+   const racingPackager=createSubmissionPackage({
+    workflow:graph,
+    retrieve:async input=>{
+     const object=await handoverReader(input);
+     if(!graphMutatedDuringRetrieval){
+      second=link(bad);
+      await graph.linkEvidence(as('author',second));
+      graphMutatedDuringRetrieval=true;
+     }
+     return object;
+    }
+   });
+   await assert.rejects(racingPackager(as('owner',submission),{signal}),ReleaseConflict);
+   assert.equal(graphMutatedDuringRetrieval,true);
+   console.log('concurrent_graph_change_blocks_handover_gate_passed');
    const linkedImpact=await impact();assert.equal(linkedImpact.changedCount,1);assert.ok(linkedImpact.changes[0].reasons.includes('evidence_links_changed'));assert.equal(linkedImpact.currentStatus,'blocked');
    assert.equal((await status()).status,'blocked');
    await assert.rejects(graph.readSubmission(as('owner',submission)),ReleaseConflict);
