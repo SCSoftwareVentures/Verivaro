@@ -53,7 +53,7 @@ test('different stale predecessors and rollback attempts never advance the witne
  await assert.rejects(journal.compareAndSwap({...scope,previous:second,next:third}),/conflict/);
  await assert.rejects(journal.compareAndSwap({...scope,previous:first,next:first}),/integrity/);
  await assert.rejects(journal.compareAndSwap({...scope,previous:second,next:first}),/integrity/);
- await assert.rejects(journal.compareAndSwap({...issuer:scope.issuer,audience:'other',previous:first,next:second}),/integrity/);
+ await assert.rejects(journal.compareAndSwap({issuer:scope.issuer,audience:'other',previous:first,next:second}),/integrity/);
  assert.deepEqual(await journal.read(scope),first);
  assert.equal((await journal.audit()).count,1);
 });
