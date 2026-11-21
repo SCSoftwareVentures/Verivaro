@@ -41,3 +41,58 @@ cap sockets and outstanding requests across processes, and instrument
 latency/error budgets. Late completion after an I/O timeout must not restore a
 faulted verifier; operator-led checkpoint reconciliation remains mandatory.
 The 5-second default is provisional and requires measured SLO testing.
+
+## Explicit HTTPS witness transport candidate (21 November 2026)
+
+Implementation: \`src/security/provider-checkpoint-https-witness.mjs\` exports
+\`createHttpsProviderCheckpointWitness({endpoint,issuer,audience,caPem,clientCertPem,clientKeyPem,requestTimeoutMs,maxInFlight,maxResponseBytes})\`.
+It implements the existing witness \`read(scope,{signal})\` and
+\`compareAndSwap({issuer,audience,previous,next},{signal})\` contract. This
+is a **client transport only**, not an external trusted witness deployment.
+
+- **Fixed target:** explicit HTTPS URI ending at \`/v1/provider-checkpoint\`,
+  without query, fragment or user-info; no redirect following, no implicit proxy,
+  dynamic target selection or authentication cookies. Public IP-literal targets
+  and local addresses are rejected. \`allowLoopbackForTests:true\` permits only
+  explicit localhost fixtures and must NEVER be configured in production.
+- **Transport identity:** explicit PEM CA trust anchor and client certificate/key;
+  TLS peer validation is always enabled and server hostname checking is retained.
+  No bearer token, HTTP fallback, global insecure TLS option or system-root
+  fallback. Production must configure independent certificate issuance, private
+  key custody, expiry alarms, revocation and rotation externally.
+- **Request shape:** HTTPS POST with canonical JSON (UTF-8, max 4096 bytes):
+  read \`{"version":1,"operation":"read","issuer":"...","audience":"..."}\`;
+  CAS adds \`"operation":"compare-and-swap"\`, \`"previous":{sequence,digest}\`,
+  and \`"next":{sequence,digest}\`. The witness service must perform an atomic
+  scoped, monotonic CAS with no automatic client retries.
+- **Response shape:** status 200, JSON content type, \`Cache-Control: no-store\`,
+  identity content encoding, and exact canonical JSON:
+  \`{"version":1,"issuer":"...","audience":"...","checkpoint":{"sequence":1,"digest":"<64 lowercase hex>"},"consistency":"linearizable","durability":"committed"}\`.
+  The implemented client validates exact scope, canonical encoding, strict keys,
+  bounded response bytes, checkpoint format and the returned CAS result.
+  Non-200, redirects, ambiguous JSON, unexpected claims, oversized bodies,
+  closed sockets or missing headers fail closed. Claims of linearizability and
+  committed durability are **remote declarations**, not independently proven.
+- **Resource limits:** default request deadline **3000 ms** (25–30000 permitted),
+  **8** concurrent in-flight transport requests (1–32 permitted), **2048**
+  response bytes (256–8192 permitted), with a dedicated bounded HTTPS agent.
+  Caller abort, deadline and client close cancel the native HTTPS request/socket;
+  a timeout during CAS is an **uncertain commit** and must not be retried or
+  treated as a successful rotation. The enclosing verifier permanently faults
+  after a read failure or uncertain persistence. Cross-process load limits and
+  network saturation still require independently tested infrastructure controls.
+- **Unit evidence:** \`tests/unit/provider-checkpoint-https-witness.test.mjs\`
+  creates disposable local certificates and a real local mTLS HTTPS server.
+  Tests cover read/CAS, conflict, wrong trust CA, rejected unsafe configuration,
+  redirects, oversized or ambiguous replies, timeout socket close, concurrent
+  admission, caller abort and client shutdown. These are isolated CI fixtures;
+  they **do not certify** remote witness availability, anti-rollback resilience,
+  certificate governance, HSM/KMS, consistency under partitions, or recovery.
+  
+### Operational hold
+
+Do not configure an externally hosted witness or move production credentials
+under this task. Independent owner authorisation, separate administrative
+security domain, atomic and durable server implementation, network policy,
+outage drills, recovery procedures, realistic load and an external security
+review are outstanding release gates. PR #4 remains draft and unmerged.
