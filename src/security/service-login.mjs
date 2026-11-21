@@ -19,6 +19,34 @@ const CHECK=String.raw`SELECT
  OR EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members m WHERE m.member=l.oid AND m.admin_option)
  OR has_database_privilege(l.oid,current_database(),'CREATE')
  OR EXISTS(SELECT 1 FROM pg_catalog.pg_namespace n WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema' AND has_schema_privilege(l.oid,n.oid,'CREATE'))
+ -- Refuse independent login-level ACLs or ownership outside the designated
+ -- NOLOGIN service group. Membership-only checks miss sequence, type,
+ -- function, default/future-object and other non-table privileges.
+ OR EXISTS(SELECT 1 FROM pg_catalog.pg_namespace n
+   LEFT JOIN LATERAL pg_catalog.aclexplode(n.nspacl) a ON true
+   WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema'
+     AND (n.nspowner=l.oid OR a.grantee=l.oid))
+ OR EXISTS(SELECT 1 FROM pg_catalog.pg_class c
+   JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+   LEFT JOIN LATERAL pg_catalog.aclexplode(c.relacl) a ON true
+   WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema'
+     AND (c.relowner=l.oid OR a.grantee=l.oid))
+ OR EXISTS(SELECT 1 FROM pg_catalog.pg_proc p
+   JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+   LEFT JOIN LATERAL pg_catalog.aclexplode(p.proacl) a ON true
+   WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema'
+     AND (p.proowner=l.oid OR a.grantee=l.oid))
+ OR EXISTS(SELECT 1 FROM pg_catalog.pg_type t
+   JOIN pg_catalog.pg_namespace n ON n.oid=t.typnamespace
+   LEFT JOIN LATERAL pg_catalog.aclexplode(t.typacl) a ON true
+   WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema'
+     AND (t.typowner=l.oid OR a.grantee=l.oid))
+ OR EXISTS(SELECT 1 FROM pg_catalog.pg_default_acl d
+   LEFT JOIN LATERAL pg_catalog.aclexplode(d.defaclacl) a ON true
+   WHERE a.grantee=l.oid)
+ OR EXISTS(SELECT 1 FROM pg_catalog.pg_database d
+   LEFT JOIN LATERAL pg_catalog.aclexplode(d.datacl) a ON true
+   WHERE a.grantee=l.oid)
  OR (l.oid<>g.oid AND (
   g.rolcanlogin OR NOT EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members m
     WHERE m.member=l.oid AND m.roleid=g.oid AND m.inherit_option=false

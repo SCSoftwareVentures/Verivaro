@@ -28,6 +28,26 @@ test('live dedicated service identity rejects indirect, direct and administrativ
   await rejectAfter('GRANT SELECT (key_bytes) ON verivaro_private.context_key TO vv_ci_admission_a','REVOKE SELECT (key_bytes) ON verivaro_private.context_key FROM vv_ci_admission_a');
   await rejectAfter('GRANT CREATE ON SCHEMA public TO vv_ci_admission_a','REVOKE CREATE ON SCHEMA public FROM vv_ci_admission_a');
   await rejectAfter('GRANT verivaro_admission_service TO vv_ci_admission_a WITH ADMIN OPTION','REVOKE ADMIN OPTION FOR verivaro_admission_service FROM vv_ci_admission_a');
+
+  // These privileges are independent of the authorized NOLOGIN service
+  // membership. They must all be rejected on *direct service checkout*
+  // before an application can issue an operation.
+  await rejectAfter('GRANT USAGE ON SCHEMA public TO vv_ci_admission_a',
+    'REVOKE USAGE ON SCHEMA public FROM vv_ci_admission_a');
+  await rejectAfter('GRANT CONNECT ON DATABASE verivaro_test TO vv_ci_admission_a',
+    'REVOKE CONNECT ON DATABASE verivaro_test FROM vv_ci_admission_a');
+  await admin.query('CREATE SEQUENCE verivaro_private.vv_ci_direct_grant_seq');
+  try{
+   await rejectAfter('GRANT USAGE ON SEQUENCE verivaro_private.vv_ci_direct_grant_seq TO vv_ci_admission_a',
+     'REVOKE USAGE ON SEQUENCE verivaro_private.vv_ci_direct_grant_seq FROM vv_ci_admission_a');
+  }finally{await admin.query('DROP SEQUENCE verivaro_private.vv_ci_direct_grant_seq');}
+  await admin.query("CREATE TYPE verivaro_private.vv_ci_direct_grant_type AS ENUM ('ready')");
+  try{
+   await rejectAfter('GRANT USAGE ON TYPE verivaro_private.vv_ci_direct_grant_type TO vv_ci_admission_a',
+     'REVOKE USAGE ON TYPE verivaro_private.vv_ci_direct_grant_type FROM vv_ci_admission_a');
+  }finally{await admin.query('DROP TYPE verivaro_private.vv_ci_direct_grant_type');}
+  await rejectAfter('ALTER DEFAULT PRIVILEGES IN SCHEMA verivaro_private GRANT SELECT ON TABLES TO vv_ci_admission_a',
+    'ALTER DEFAULT PRIVILEGES IN SCHEMA verivaro_private REVOKE SELECT ON TABLES FROM vv_ci_admission_a');
   // PostgreSQL 16 membership is insufficient: SET=FALSE makes the service
   // unusable, while INHERIT=TRUE creates ambient privilege exposure.
   async function rejectMembershipOptions(inherit,set){

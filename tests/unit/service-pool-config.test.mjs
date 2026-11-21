@@ -14,6 +14,11 @@ test('fixed service role and pinned identity reject unsafe configuration and mis
  assert.match(calls[1].sql,/m\.inherit_option=false/);
  assert.match(calls[1].sql,/m\.set_option=true/);
  assert.match(calls[1].sql,/m\.admin_option=false/);
+ for(const catalogue of ['pg_catalog.pg_namespace','pg_catalog.pg_class',
+  'pg_catalog.pg_proc','pg_catalog.pg_type','pg_catalog.pg_default_acl',
+  'pg_catalog.pg_database'])assert.ok(calls[1].sql.includes(catalogue),
+   'expected direct privilege inventory: '+catalogue);
+ assert.match(calls[1].sql,/a\.grantee=l\.oid/);
  assert.throws(()=>validateServiceIdentity('postgres','vv_worker'));assert.throws(()=>validateServiceIdentity(role,role));
 });
 test('private credentials only; loopback exception explicit; no environment TLS downgrade',async t=>{
