@@ -80,9 +80,12 @@
         "tests/unit/provider-witness-recovery-floor-authority.test.mjs",
         "src/security/provider-witness-authority-key-schedule.mjs",
         "tests/unit/provider-witness-authority-key-schedule.test.mjs",
-        "docs/engineering/G1_REVIEW_FLOOR_AUTHORITY_REFERENCE_20261121.md"
+        "docs/engineering/G1_REVIEW_FLOOR_AUTHORITY_REFERENCE_20261121.md",
+        "src/security/provider-witness-authority-trust-policy.mjs",
+        "tests/unit/provider-witness-authority-trust-policy.test.mjs",
+        "docs/engineering/G1_P0A_REMOTE_AUTHORITY_CONTRACT_20261121.md"
       ],
-      "blocker": "Reference authority now tests pinned serial-based signer-key rollover and rejects old-key post-advance signatures. No independent key administration, emergency revocation at one serial, authenticated remote atomic CAS, distributed fencing, independent trusted clock, physical power loss or rollback-resistant floor has been demonstrated."
+      "blocker": "New reference trust-policy verifier supports separately signed policy revisions, explicit same-serial signer revocation and externally supplied checkpoint pre/post reads. No independently administered governance signer, actual monotonic checkpoint service, atomic authority-side revocation+CAS, multi-host fencing, secure clock, remote operator identity or physical power-cycle evidence has been provided."
     },
     {
       "id": "G1_BACKUP",

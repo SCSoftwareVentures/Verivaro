@@ -5,6 +5,10 @@
 import {createHash,createPublicKey,verify,randomBytes} from 'node:crypto';
 import {verifyReferenceRecoveryApprovalLog} from './provider-witness-recovery-consumption.mjs';
 import {resolveTrustedRecoveryFloorAuthorityPublicKey} from './provider-witness-authority-key-schedule.mjs';
+import {
+ inspectTrustedRecoveryFloorTrustPolicy,
+ trustedRecoveryFloorTrustPolicyCheckpoint
+} from './provider-witness-authority-trust-policy.mjs';
 
 const HEX=/^[a-f0-9]{64}$/;
 const IDENT=/^[a-f0-9]{32}$/;
@@ -104,7 +108,7 @@ export function createUnsignedRecoveryFloorAuthorityStatement({
 }
 export function verifySignedRecoveryFloorAuthority(envelope,{
  issuer,audience,trustedAuthorityKey,trustedAuthorityKeySchedule,
- expectedRequestNonce,now,
+ trustedFloorPolicy,expectedRequestNonce,now,
  maxReceiptAgeMs=10000
 }={}){
  if(!keys(envelope,'statement,signature')||!validNonce(expectedRequestNonce)||
@@ -128,6 +132,15 @@ export function verifySignedRecoveryFloorAuthority(envelope,{
     trustedAuthorityKeySchedule,s.serial):pubkey(trustedAuthorityKey);
  }catch{throw invalid();}
  signature(envelope.signature,bytes,authorityKey);
+ if(trustedFloorPolicy!==undefined&&trustedFloorPolicy!==null){
+  if(!scheduled)throw invalid();
+  try{
+   inspectTrustedRecoveryFloorTrustPolicy(trustedFloorPolicy,{
+    issuer,audience,trustedAuthorityKeySchedule,now,
+    serial:s.serial,headHash:s.headHash
+   });
+  }catch{throw invalid();}
+ }
  return Object.freeze({serial:s.serial,headHash:s.headHash});
 }
 // Verifies the entire canonical consumed-review ledger, its last entry and
@@ -197,11 +210,13 @@ async function withDeadline(task,ms){
 // monotonic record and fence every competing writer. This gate cannot do that.
 export async function openReferenceRecoveryFloorPublicationGate({
  issuer,audience,trustedFloor,trustedAuthorityKey,trustedAuthorityKeySchedule,
- trustedCustodianKeys,
+ trustedFloorPolicy,readFloorPolicyCheckpoint,trustedCustodianKeys,
  authority,ioTimeoutMs=2000,clock=()=>new Date(),receiptMaxAgeMs=10000
 }={}){
  if(!scopeOk(issuer)||!scopeOk(audience)||!validHead(trustedFloor)||
   Boolean(trustedAuthorityKey)===Boolean(trustedAuthorityKeySchedule)||
+  Boolean(trustedFloorPolicy)!==(typeof readFloorPolicyCheckpoint==='function')||
+  (trustedFloorPolicy&&!trustedAuthorityKeySchedule)||
   !keys(trustedCustodianKeys,'primary,secondary')||
   !authority||typeof authority.read!=='function'||
   typeof authority.compareAndSwap!=='function'||
@@ -209,21 +224,32 @@ export async function openReferenceRecoveryFloorPublicationGate({
   typeof clock!=='function'||!Number.isSafeInteger(receiptMaxAgeMs)||
   receiptMaxAgeMs<25||receiptMaxAgeMs>30000)throw fail();
  const scope=Object.freeze({issuer,audience});
+ const checkPolicy=async()=>{
+  if(!trustedFloorPolicy)return;
+  const expected=trustedRecoveryFloorTrustPolicyCheckpoint(trustedFloorPolicy);
+  const actual=await withDeadline(signal=>readFloorPolicyCheckpoint(scope,{signal}),ioTimeoutMs);
+  if(!keys(actual,'revision,digest')||
+   actual.revision!==expected.revision||actual.digest!==expected.digest)
+   throw fail();
+ };
  const inspect=(envelope,expectedRequestNonce)=>{
   const stamp=clock();
   if(!(stamp instanceof Date)||!Number.isFinite(stamp.getTime()))throw fail();
   return verifySignedRecoveryFloorAuthority(envelope,{
    ...scope,trustedAuthorityKey,trustedAuthorityKeySchedule,
-   expectedRequestNonce,now:stamp.toISOString(),
+   trustedFloorPolicy,expectedRequestNonce,now:stamp.toISOString(),
    maxReceiptAgeMs:receiptMaxAgeMs
   });
  };
  const readHead=async()=>{
+  await checkPolicy();
   const requestNonce=freshNonce();
   const envelope=await withDeadline(signal=>authority.read(scope,{
    signal,requestNonce
   }),ioTimeoutMs);
-  return inspect(envelope,requestNonce);
+  const result=inspect(envelope,requestNonce);
+  await checkPolicy();
+  return result;
  };
  let head;
  try{
@@ -270,6 +296,7 @@ export async function openReferenceRecoveryFloorPublicationGate({
      throw fail();
     const reread=await readHead();
     if(!same(ack,reread))throw fail();
+    await checkPolicy();
     head=Object.freeze({...reread});
     return Object.freeze({status:'REVIEW_FLOOR_PUBLISHED_ONLY',
      serial:head.serial,headHash:head.headHash,

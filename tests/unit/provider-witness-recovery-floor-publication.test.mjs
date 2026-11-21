@@ -5,6 +5,14 @@ import {
  encodeReferenceRecoveryApprovalGenesis
 } from '../../src/security/provider-witness-recovery-consumption.mjs';
 import {
+ createTrustedRecoveryFloorAuthorityKeySchedule,recoveryFloorAuthorityKeyId
+} from '../../src/security/provider-witness-authority-key-schedule.mjs';
+import {
+ recoveryFloorKeyScheduleDigest,canonicalRecoveryFloorTrustPolicyStatement,
+ createUnsignedRecoveryFloorTrustPolicyStatement,createTrustedRecoveryFloorTrustPolicy,
+ trustedRecoveryFloorTrustPolicyCheckpoint
+} from '../../src/security/provider-witness-authority-trust-policy.mjs';
+import {
  canonicalRecoveryFloorPublicationStatement,
  createUnsignedRecoveryFloorPublicationStatement,
  canonicalRecoveryFloorAuthorityStatement,
@@ -287,4 +295,98 @@ test('an otherwise valid challenge-bound receipt fails the trusted maximum-age c
   clock:()=>new Date(reads>=1?'2026-11-21T04:00:11.000Z':now)
  }),/unavailable/);
  assert.equal(f.commits(),0);
+});
+
+
+function guardedFloorFixture(f,{revoke=false}={}){
+ const governance=generateKeyPairSync('ed25519');
+ const schedule=createTrustedRecoveryFloorAuthorityKeySchedule({epochs:[
+  {firstSerial:0,lastSerial:null,
+   keyId:recoveryFloorAuthorityKeyId(f.authorityKey.publicKey),
+   publicKey:f.authorityKey.publicKey}
+ ]});
+ const statement=createUnsignedRecoveryFloorTrustPolicyStatement({
+  ...scope,revision:2,minimumFloor:f.prior,
+  scheduleDigest:recoveryFloorKeyScheduleDigest(schedule),
+  revokedKeyIds:revoke?[recoveryFloorAuthorityKeyId(f.authorityKey.publicKey)]:[],
+  issuedAt:'2026-11-21T03:00:00.000Z',
+  expiresAt:'2026-11-21T05:00:00.000Z'
+ });
+ const bytes=canonicalRecoveryFloorTrustPolicyStatement(statement);
+ const policy=createTrustedRecoveryFloorTrustPolicy({
+  envelope:{statement,signature:sign(null,bytes,governance.privateKey).toString('base64url')},
+  trustedGovernanceKey:governance.publicKey,
+  trustedCheckpoint:{revision:2,digest:createHash('sha256').update(bytes).digest('hex')},
+  trustedAuthorityKeySchedule:schedule,...scope,now
+ });
+ let latest=trustedRecoveryFloorTrustPolicyCheckpoint(policy),calls=0;
+ const readFloorPolicyCheckpoint=async(request,{signal}={})=>{
+  assert.deepEqual(request,scope);
+  assert.equal(signal?.aborted,false);
+  calls++;
+  return {...latest};
+ };
+ const config=()=>({...f.config(),trustedAuthorityKey:undefined,
+  trustedAuthorityKeySchedule:schedule,trustedFloorPolicy:policy,
+  readFloorPolicyCheckpoint
+ });
+ return {config,policy,checkpoint:()=>({...latest}),calls:()=>calls,
+  advance:()=>{latest={revision:latest.revision+1,digest:'f'.repeat(64)};}};
+}
+
+test('separately pinned floor policy checkpoint is re-read before/after every authority read',async()=>{
+ const f=lab(),policy=guardedFloorFixture(f);
+ const gate=await openReferenceRecoveryFloorPublicationGate(policy.config());
+ assert.deepEqual(await gate.audit(),f.prior);
+ assert.ok(policy.calls()>=6);
+ policy.advance();
+ await assert.rejects(gate.audit(),/unavailable/);
+ // A stale policy cannot silently downgrade or recover after the mismatch.
+ await assert.rejects(gate.publish({
+  publication:f.make(),consumptionLog:f.consumptionLog
+ }),/unavailable/);
+ assert.equal(f.commits(),0);
+ gate.close();
+});
+
+test('policy rollback during a successful remote CAS faults without automatic retry',async()=>{
+ const f=lab(),policy=guardedFloorFixture(f);
+ const gate=await openReferenceRecoveryFloorPublicationGate(policy.config());
+ f.setAfterCommit(()=>policy.advance());
+ await assert.rejects(gate.publish({
+  publication:f.make(),consumptionLog:f.consumptionLog
+ }),/unavailable/);
+ assert.equal(f.commits(),1);
+ assert.deepEqual(f.current(),f.next);
+ await assert.rejects(gate.audit(),/unavailable/);
+ gate.close();
+});
+
+test('revoked authority key at unchanged serial refuses startup despite valid nonce signature',async()=>{
+ const f=lab(),policy=guardedFloorFixture(f,{revoke:true});
+ await assert.rejects(openReferenceRecoveryFloorPublicationGate(policy.config()),
+  /unavailable/);
+ assert.equal(f.commits(),0);
+});
+
+test('floor trust policy cannot activate without external checkpoint reader and pinned key schedule',async()=>{
+ const f=lab(),policy=guardedFloorFixture(f);
+ const missing=policy.config();delete missing.readFloorPolicyCheckpoint;
+ await assert.rejects(openReferenceRecoveryFloorPublicationGate(missing),/unavailable/);
+ const legacy=policy.config();
+ legacy.trustedAuthorityKey=f.authorityKey.publicKey;
+ await assert.rejects(openReferenceRecoveryFloorPublicationGate(legacy),/unavailable/);
+});
+
+
+test('two separately opened policy-guarded gate instances cannot both win a mock remote CAS',async()=>{
+ const f=lab(),policy=guardedFloorFixture(f);
+ const first=await openReferenceRecoveryFloorPublicationGate(policy.config());
+ const second=await openReferenceRecoveryFloorPublicationGate(policy.config());
+ const args={publication:f.make(),consumptionLog:f.consumptionLog};
+ const results=await Promise.allSettled([first.publish(args),second.publish(args)]);
+ assert.equal(results.filter(x=>x.status==='fulfilled').length,1);
+ assert.equal(results.filter(x=>x.status==='rejected').length,1);
+ assert.equal(f.commits(),1);
+ first.close();second.close();
 });
