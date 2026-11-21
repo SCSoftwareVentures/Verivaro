@@ -2,7 +2,7 @@
 
 Intelligence. Verified.
 
-**Status:** Initial engineering foundation, synthetic data only. Not a production application or release. The approved [V4.0 master blueprint](docs/product/MASTER_BLUEPRINT.md) is the source of truth. The [engineering status](docs/engineering/STATUS.md) records partial implementation and outstanding acceptance gates.
+**Status:** Engineering prototype and synthetic/test-data verification on an unmerged draft review branch; **not a production-ready or sale-validated application**. The [V4.0 master blueprint](docs/product/MASTER_BLUEPRINT.md) remains the design baseline. The [current engineering status](docs/engineering/STATUS.md), [G1 production trust-boundary and buyer audit](docs/engineering/G1_PRODUCTION_TRUST_BOUNDARY_BUYER_AUDIT_20261121.md), and [machine-readable evidence register](docs/engineering/G1_BUYER_EVIDENCE_MANIFEST_20261121.json) distinguish tested slices from deployment and buyer acceptance.
 
 This public repository is restricted to synthetic examples and source code. Never commit actual project documents, customer records, credentials or confidential data. No license granting redistribution is implied; ownership and license review remain open.
 
@@ -25,8 +25,12 @@ The demo prints a blocked finding for a synthetic mismatched equipment serial; i
 - Financial rules: exact AUD cents, basis grouping, confirmed milestone deduplication, unknown counts; not legal or payment entitlement.
 - Draft snapshots: deterministic index and text digest verification; not a signed or released handover.
 
-## Security boundary
+## Engineering slices currently in the repository
 
-The present components are local domain functions, not an authenticated API. Input scope, review, source and scan assertions are supplied by the caller. Real authentication, tenant/project isolation, storage quarantine, scanning, document parsing, authorisation and production operations are outstanding.
+The original domain-function demo remains limited. Additional **synthetic CI-tested engineering slices** now include a PostgreSQL 16 migration and tenant-isolation gate; identity/session and scoped-transaction code; a local TLS application runtime; evidence quarantine/retrieval/recovery; browser workspace checks in Chromium and WebKit; and reference G1 signed witness, two-reviewer approval and floor-publication components. Consult `docs/engineering/` and the workflows for precise coverage. These pieces **are not evidence of a fully integrated customer product**.
 
-No production deployment or real-data ingestion is authorised. ProfitPilot code and data are not reused.
+## Security and commercial boundary
+
+The G1 witness publisher, consumption register and floor authority are deliberately **single-host reference implementations**, not independent trust infrastructure. The injected signing capabilities, trusted state, browser identity provider, deployment credentials and real data-custody operation have **not** been proven under a production trust domain. Browser/runtime pathways exist, but a complete product UI and production operating environment do not. No independently verified penetration test, production recovery or customer payment/demand evidence is recorded.
+
+**Do not claim production readiness, fully independent immutable evidence, compliance certification or verified market demand.** Release approval requires separately evidenced gates in the buyer audit and V4.0 blueprint. No real-data ingestion, external deployment, paid infrastructure or automatic merge is authorised. ProfitPilot code and data are not reused.

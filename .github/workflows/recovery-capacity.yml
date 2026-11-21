@@ -1,7 +1,7 @@
 name: G1 maximum recovery capacity
 on:
   push:
-    branches: ["engineering/g1-postgres-tenant-foundation-20261119"]
+    branches: ["engineering/g1-postgres-tenant-foundation-20261119", "audit/g1-restore-catalog-verification-20261121"]
   pull_request:
     branches: [main]
   workflow_dispatch:
