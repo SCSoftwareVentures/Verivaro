@@ -25,6 +25,22 @@ test('live PostgreSQL TLS rejects wrong CA, hostname and plaintext; credential r
   await rejected(await loadServicePoolConfig({env:env(oldLogin,'old',{PGHOST:'vv-wrong.test'}),role}),/hostname|altnames|certificate/i);
   await rejected({...oldCfg,ssl:false},/pg_hba|reject|encryption/i);
   const replacement=createMonitorDatabase(newPool,{mode:'reader',expectedLogin:newLogin});assert.ok((await replacement.snapshot()).health);
+  // Incident regression: the existing credential MUST remain usable while an
+  // unexpected elevated replacement is rejected without any retirement DDL.
+  await admin.query('GRANT pg_read_all_data TO vv_ci_tls_new');
+  try{
+   const c=await admin.connect();
+   try{await assert.rejects(retireServiceCredential(c,{role,oldLogin,newLogin,confirm:oldLogin}),/credential retirement failed/);}
+   finally{c.release(true);}
+   assert.equal((await oldPool.query('SELECT 1 AS ok')).rows[0].ok,1);
+  }finally{await admin.query('REVOKE pg_read_all_data FROM vv_ci_tls_new');}
+  await admin.query('GRANT verivaro_monitor_reader TO vv_ci_tls_new WITH ADMIN OPTION');
+  try{
+   const c=await admin.connect();
+   try{await assert.rejects(retireServiceCredential(c,{role,oldLogin,newLogin,confirm:oldLogin}),/credential retirement failed/);}
+   finally{c.release(true);}
+   assert.equal((await oldPool.query('SELECT 1 AS ok')).rows[0].ok,1);
+  }finally{await admin.query('REVOKE ADMIN OPTION FOR verivaro_monitor_reader FROM vv_ci_tls_new');}
   held=await oldPool.connect();held.on('error',()=>{});
   await held.query('SET ROLE verivaro_monitor_reader');
   const pid=held.processID;

@@ -8,8 +8,41 @@ export async function retireServiceCredential(client,{role,oldLogin,newLogin,con
  let transaction=false;
  try{
   await client.query('BEGIN');transaction=true;
-  const r=await client.query("SELECT rolname::text AS name,rolcanlogin AND NOT rolsuper AND NOT rolbypassrls AND NOT rolcreaterole AND NOT rolcreatedb AND NOT rolreplication AND NOT rolinherit AND pg_has_role(oid,$3,'MEMBER') AS safe FROM pg_catalog.pg_roles WHERE rolname::text IN ($1,$2)",[oldLogin,newLogin,role]);
-  if(r.rows.length!==2||r.rows.some(x=>x.safe!==true))throw Error('credential retirement precondition failed');
+  // Both principals must be *exactly* the dedicated non-privileged service
+  // logins, never an arbitrary group member or elevated replacement. Do not
+  // trust inherited or transitive membership as a retirement precondition.
+  const r=await client.query(String.raw`SELECT l.rolname::text AS name,
+    l.rolcanlogin AND NOT l.rolsuper AND NOT l.rolbypassrls
+    AND NOT l.rolcreaterole AND NOT l.rolcreatedb AND NOT l.rolreplication
+    AND NOT l.rolinherit AND NOT g.rolcanlogin AND NOT g.rolsuper
+    AND NOT g.rolbypassrls AND NOT g.rolcreaterole AND NOT g.rolcreatedb
+    AND NOT g.rolreplication AND NOT g.rolinherit
+    AND (l.rolname::text<>$2 OR l.rolvaliduntil IS NULL OR l.rolvaliduntil>clock_timestamp())
+    AND NOT pg_catalog.has_database_privilege(l.oid,current_database(),'CREATE')
+    AND NOT EXISTS(
+      SELECT 1 FROM pg_catalog.pg_namespace n
+      WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema'
+        AND pg_catalog.has_schema_privilege(l.oid,n.oid,'CREATE'))
+    AND (SELECT count(*) FROM pg_catalog.pg_auth_members m WHERE m.member=l.oid)=1
+    AND EXISTS(
+      SELECT 1 FROM pg_catalog.pg_auth_members m
+      WHERE m.member=l.oid AND m.roleid=g.oid
+        AND m.inherit_option=false AND m.set_option=true
+        AND m.admin_option=false)
+    AND NOT EXISTS(
+      SELECT 1 FROM pg_catalog.pg_roles x
+      WHERE x.oid NOT IN (l.oid,g.oid)
+        AND pg_catalog.pg_has_role(l.oid,x.oid,'MEMBER'))
+    AND NOT EXISTS(
+      SELECT 1 FROM pg_catalog.pg_roles x
+      WHERE x.oid<>g.oid AND pg_catalog.pg_has_role(g.oid,x.oid,'MEMBER'))
+    AS safe
+   FROM pg_catalog.pg_roles l CROSS JOIN pg_catalog.pg_roles g
+   WHERE l.rolname::text IN ($1,$2) AND g.rolname::text=$3`,[oldLogin,newLogin,role]);
+  if(r.rows.length!==2||new Set(r.rows.map(x=>x.name)).size!==2||
+     !r.rows.some(x=>x.name===oldLogin)||!r.rows.some(x=>x.name===newLogin)||
+     r.rows.some(x=>x.safe!==true))
+    throw Error('credential retirement precondition failed');
   // Identifiers are strictly bounded ASCII, never caller-provided SQL.
   await client.query('ALTER ROLE "'+oldLogin+'" NOLOGIN PASSWORD NULL');
   await client.query('REVOKE "'+role+'" FROM "'+oldLogin+'"');
