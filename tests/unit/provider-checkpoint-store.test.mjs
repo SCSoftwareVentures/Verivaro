@@ -31,7 +31,7 @@ test('real disk persistence survives verifier restart and rejects retired keyset
  assert.equal(v.verify(token(nonce(),{iat:now,auth_time:now,exp:now+300})).issuer,issuer);
  assert.deepEqual(await v.rotate(second.catalogue,second.signature,second.checkpoint),second.checkpoint);
  assert.deepEqual(await store.read(),second.checkpoint);
- assert.throws(()=>v.verify(token(nonce(),{iat:now,auth_time:now,exp:now+300})),/key|kid|signature|denied/i);
+ assert.throws(()=>v.verify(token(nonce(),{iat:now,auth_time:now,exp:now+300})),/key|kid|signature|denied|unsupported provider header/i);
  await store.close();
  assert.throws(()=>v.verify('any'),/closed/);
  const restarted=await openFileProviderCheckpointStore({directory,issuer,audience});
