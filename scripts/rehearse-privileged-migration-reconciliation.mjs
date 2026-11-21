@@ -1,7 +1,7 @@
 // Executable ONLY on the fixed throwaway PostgreSQL 16 GitHub CI fixture.
 // Replays all 63 real migrations with NO CREATEROLE on the schema executor.
 // No production connection, credentials or real release authority supported.
-import {spawnSync} from 'node:child_process';
+import {spawn,spawnSync} from 'node:child_process';
 import {randomBytes,createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import {TextDecoder} from 'node:util';
@@ -87,7 +87,56 @@ export function assertInterruptedUpgradeState({historyCount,changedTableAbsent,s
 }
 // The source remains at v62; only a physical clone is upgraded to v63.
 // Both scratch DBs and all roles are removed before the workflow ends.
-function rehearseStagedUpgrade(test,ledger,admin,client){
+function terminateVerifiedStagingBackend(client,admin,script){
+ // The restricted schema executor has NO pg_signal_backend privilege.
+ // Only this disposable CI controller is allowed to kill its exact staged
+ // backend after the migration DDL and ledger INSERT have been executed.
+ return new Promise((resolve,reject)=>{
+  const child=spawn('psql',['-X','-q','-v','ON_ERROR_STOP=1','-f','-'],{
+   env:client,stdio:['pipe','pipe','pipe']
+  });
+  let stdout='',stderr='',killed=false,errored=null,closed=false;
+  const watchdog=setTimeout(()=>{
+   errored=Error('staged backend barrier not observed within 30 seconds');
+   child.kill('SIGKILL');
+  },30000);
+  child.stdout.on('data',bytes=>{
+   stdout+=bytes.toString('utf8');
+   if(stdout.length>8192){errored=Error('oversized staged barrier output');child.kill('SIGKILL');return;}
+   const found=/(?:^|\n)VV_STAGE_READY_(\d+)(?:\r?\n|$)/.exec(stdout);
+   if(!found||killed||errored)return;
+   killed=true;
+   try{
+    const pid=Number(found[1]);
+    if(!Number.isSafeInteger(pid)||pid<1||pid>2147483647)
+     throw Error('invalid staged PostgreSQL backend PID');
+    const active=inspect(admin,"SELECT count(*) FROM pg_stat_activity WHERE pid="+pid+
+     " AND datname='"+UPGRADE_TARGET+"' AND usename='"+LOGIN+"' AND state='active'");
+    if(active!=='1')throw Error('staged backend identity and database do not match');
+    if(inspect(admin,'SELECT pg_terminate_backend('+pid+')')!=='t')
+     throw Error('CI administrator did not terminate the staged backend');
+   }catch(error){errored=error;child.kill('SIGKILL');}
+  });
+  child.stderr.on('data',bytes=>{
+   stderr+=bytes.toString('utf8');
+   if(stderr.length>32768){errored=Error('oversized staged backend error');child.kill('SIGKILL');}
+  });
+  child.on('error',error=>{errored=error;});
+  child.on('close',(code)=>{
+   if(closed)return;closed=true;clearTimeout(watchdog);
+   if(errored)return reject(Error('staged admin kill was not verified: '+errored.message));
+   if(!killed||code===0||!/terminating connection due to administrator command/i.test(stderr))
+    return reject(Error('expected scoped PostgreSQL backend termination did not occur'));
+   resolve(Object.freeze({backendIdentityVerified:true,
+    privilegedCIControllerTerminationVerified:true,
+    restrictedMigratorGrantedSignalPrivilege:false}));
+  });
+  child.stdin.on('error',()=>{});
+  child.stdin.end(script);
+ });
+}
+
+async function rehearseStagedUpgrade(test,ledger,admin,client){
  let sourceCreated=false,targetCreated=false;
  try{
   exec('createdb',['-w','--template=template0',UPGRADE_SOURCE],admin);
@@ -113,14 +162,12 @@ function rehearseStagedUpgrade(test,ledger,admin,client){
   const last='\\endif\nCOMMIT;\nRESET ROLE;\n';
   if(migration.split(last).length!==2)refuse('migration transaction injection anchor missing');
   const killed=migration.replace(last,
-   '\\endif\nSELECT pg_terminate_backend(pg_backend_pid());\nCOMMIT;\nRESET ROLE;\n');
-  const interrupted=spawnSync('psql',['-X','-q','-v','ON_ERROR_STOP=1','-f','-'],{
-   env:targetClient,input:killed,encoding:'utf8',timeout:120000,maxBuffer:4*1024*1024
-  });
-  // A generic SQL error must never count as proof of backend termination.
-  if(interrupted.error||interrupted.signal||interrupted.status===0||
-   !/terminating connection due to administrator command/i.test(interrupted.stderr||''))
-   refuse('staged upgrade did not prove a real PostgreSQL backend termination');
+   '\\endif\nSELECT pg_backend_pid() AS vv_stage_pid \\gset\n'+
+   '\\echo VV_STAGE_READY_:vv_stage_pid\n'+
+   'SELECT pg_sleep(20);\nCOMMIT;\nRESET ROLE;\n');
+  const termination=await terminateVerifiedStagingBackend(targetClient,targetAdmin,killed);
+  if(!termination.privilegedCIControllerTerminationVerified)
+   refuse('staging backend termination witness absent');
   assertInterruptedUpgradeState({
    historyCount:inspect(targetAdmin,'SELECT count(*) FROM verivaro_migration.history'),
    changedTableAbsent:inspect(targetAdmin,
@@ -206,7 +253,7 @@ async function run(){
    ",has_table_privilege('"+LOGIN+"','verivaro_migration.history','DELETE')"+
    ",has_table_privilege('"+EXECUTOR+"','verivaro_migration.history','INSERT')"],root);
   if(denied!=='f|f|t')refuse('persistent ledger privilege leak');
-  const stagedUpgrade=rehearseStagedUpgrade(test,ledger,admin,client);
+  const stagedUpgrade=await rehearseStagedUpgrade(test,ledger,admin,client);
   return {restrictedMigrationsApplied:63,serviceRolesProvisioned:21,
    schemaExecutorCreateRoleDenied:true,unprivilegedLoginSchemaCreateDenied:true,
    ledgerWriteOnlyToExecutor:true,historyVerified:true,

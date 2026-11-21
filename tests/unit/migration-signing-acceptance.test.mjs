@@ -55,3 +55,15 @@ test('staged upgrade rejects any partial commit, leftover DDL or altered seeded 
  ])assert.throws(()=>assertInterruptedUpgradeState({...good,...partial}),
   /restricted reconciliation rehearsal failed/);
 });
+
+test('staging interruption is performed by a separately scoped CI controller, never elevated executor',async()=>{
+ const sql=await readFile('scripts/rehearse-privileged-migration-reconciliation.mjs','utf8');
+ assert.match(sql,/pg_stat_activity WHERE pid=/);
+ assert.match(sql,/datname=.*UPGRADE_TARGET/);
+ assert.match(sql,/usename=.*LOGIN/);
+ assert.match(sql,/pg_terminate_backend/);
+ assert.match(sql,/VV_STAGE_READY_/);
+ assert.match(sql,/privilegedCIControllerTerminationVerified:true/);
+ assert.match(sql,/restrictedMigratorGrantedSignalPrivilege:false/);
+ assert.doesNotMatch(sql,/GRANT pg_signal_backend TO/);
+});
