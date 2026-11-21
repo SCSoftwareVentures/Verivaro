@@ -69,4 +69,4 @@ jobs:
         env:
           VV_BROWSER_ENGINE: ${{ matrix.engine }}
         run: |
-          VV_BROWSER_DIR="$RUNNER_TEMP/vv-browser" node --test tests/browser/workspace-browser.test.mjs
+          VV_BROWSER_DIR="$RUNNER_TEMP/vv-browser" node --experimental-strip-types --test tests/browser/workspace-browser.test.mjs tests/browser/buyer-showcase-browser.test.mjs

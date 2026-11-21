@@ -15,11 +15,14 @@ npm ci --ignore-scripts
 npm test
 npm run demo
 npm run demo:buyer
+npm run demo:buyer:web
 ```
 
 The demo prints a blocked finding for a synthetic mismatched equipment serial; it does not host a website.
 
 The separate [synthetic buyer walkthrough](docs/engineering/G1_SYNTHETIC_BUYER_WALKTHROUGH_20261121.md) reproduces missing → conflicting → provisional → reviewed proof and checks a canonical package against self-held hashes. It is **not** a real buyer/mobile session, authenticated release or independent custody claim.
+
+The [read-only browser showcase](docs/engineering/G1_MOBILE_BUYER_SHOWCASE_20261121.md) presents the same fixture as a four-stage mobile-responsive interface. The local preview is **loopback-only** and intended for developer/buyer inspection on a machine running Node; it is not a public website or an iPhone-deployed app. Chromium/WebKit browser CI checks responsive behavior and the non-release safety boundary.
 
 ## Components
 
