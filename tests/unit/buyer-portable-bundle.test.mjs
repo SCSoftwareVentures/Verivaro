@@ -61,6 +61,27 @@ test('buyer ZIP is reproducible, portable and always labelled synthetic',async()
  });
  assert.equal(syntax.status,0,syntax.stderr);
 });
+test('immutable source revision binding rejects wrong expected commit identity',async()=>{
+ const revision='a'.repeat(40);
+ const x=await createPortableBuyerBundle({sourceRevision:revision});
+ assert.equal(x.sourceRevision,revision);
+ const confirmed=verifyPortableBuyerBundle(x.archive,{
+  expectedArchiveSha256:x.archiveSha256,expectedSourceRevision:revision
+ });
+ assert.equal(confirmed.sourceRevision,revision);
+ assert.equal(confirmed.authenticityVerified,false);
+ assert.throws(()=>verifyPortableBuyerBundle(x.archive,{
+  expectedArchiveSha256:x.archiveSha256,expectedSourceRevision:'b'.repeat(40)
+ }),/verification failed/);
+ assert.throws(()=>verifyPortableBuyerBundle(x.archive,{
+  expectedArchiveSha256:x.archiveSha256,expectedSourceRevision:null
+ }),/verification failed/);
+ await assert.rejects(createPortableBuyerBundle({sourceRevision:'main'}),/verification failed/);
+ const files=entries(x.archive),manifest=JSON.parse(files.at(-1)[1]);
+ assert.equal(manifest.sourceRevision,revision);
+ assert.equal(manifest.archiveAuthenticityVerified,false);
+});
+
 test('ZIP verification fails closed on changed bytes, changed metadata and spoofed readiness',async()=>{
  const p=await createPortableBuyerBundle();
  assert.throws(()=>verifyPortableBuyerBundle(p.archive,{expectedArchiveSha256:'0'.repeat(64)}),
