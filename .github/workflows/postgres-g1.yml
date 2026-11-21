@@ -53,6 +53,10 @@ jobs:
           set -euo pipefail
           node scripts/verify-migration-chain.mjs
           node --test tests/unit/migration-chain-audit.test.mjs
+      - name: Enforce scoped migration role privileges on disposable PostgreSQL
+        run: |
+          set -euo pipefail
+          psql -X -v ON_ERROR_STOP=1 -f db/tests/least_privilege_migrator.sql
       - name: Rehearse disposable migration rollback and safe retry
         env:
           VV_CI_PG_REHEARSAL: '1'

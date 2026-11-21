@@ -38,9 +38,17 @@
         "scripts/ci-migration-ledger.mjs",
         "scripts/rehearse-real-migration-restart.mjs",
         "tests/unit/ci-migration-ledger.test.mjs",
-        "docs/engineering/G1_P0B_ACTUAL_MIGRATION_LEDGER_20261121.md"
+        "docs/engineering/G1_P0B_ACTUAL_MIGRATION_LEDGER_20261121.md",
+        "db/security/production-migration-roles.sql",
+        "db/tests/least_privilege_migrator.sql",
+        "src/security/migration-role-policy.mjs",
+        "src/security/migration-release-attestation.mjs",
+        "scripts/migration-release-cli.mjs",
+        "tests/unit/migration-release-attestation.test.mjs",
+        "tests/unit/migration-role-policy.test.mjs",
+        "docs/engineering/G1_PRODUCTION_MIGRATION_SIGNING_CONTRACT_20261121.md"
       ],
-      "blocker": "The 63 actual migrations now use an atomic CI PostgreSQL SHA-256 migration ledger, and a disposable backend-termination/restart drill passed; this remains repository/synthetic CI evidence only. Production change-control signatures, independently witnessed and rollback-resistant database-stored migration ledger, production migrator identity and credential custody, actual deployment/HA recovery rehearsal, external IdP/TLS and operational privilege attestation remain unverified."
+      "blocker": "CI now includes fail-closed restricted schema-owner/executor separation, role-creating SQL inventory, two-role Ed25519 offline release verification, and unsigned source-bound manifest generation. Actual external owner and reviewer signatures, independent key custody/trust-policy pin, production migrator identity, privileged DDL reconciliation for 63 existing migrations, production recovery witness and real deployment/HA/IdP/TLS security review remain NOT VERIFIED; release approval denied."
     },
     {
       "id": "G1_EVIDENCE",
