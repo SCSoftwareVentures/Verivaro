@@ -52,6 +52,12 @@ jobs:
           set -euo pipefail
           node scripts/verify-migration-chain.mjs
           node --test tests/unit/migration-chain-audit.test.mjs
+      - name: Rehearse disposable migration rollback and safe retry
+        env:
+          VV_CI_PG_REHEARSAL: '1'
+        run: |
+          set -euo pipefail
+          node scripts/rehearse-migration-recovery.mjs
       - name: Apply schema and adversarial checks
         env:
           VV_CI_PG_CONTAINER: ${{ job.services.postgres.id }}
