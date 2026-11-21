@@ -9,7 +9,7 @@ const validCp=c=>c&&typeof c==='object'&&!Array.isArray(c)&&
  Number.isSafeInteger(c.sequence)&&c.sequence>=1&&
  typeof c.digest==='string'&&/^[a-f0-9]{64}$/.test(c.digest);
 function checkPayload(raw,scope){
- if(!Buffer.from(raw,'utf8').toString('utf8')||!raw||raw.length>4096)throw fail();
+ if(!raw||Buffer.byteLength(raw,'utf8')>4096)throw fail();
  let body;
  try{body=JSON.parse(raw);}catch{throw fail();}
  if(!body||typeof body!=='object'||Array.isArray(body)||

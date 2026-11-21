@@ -80,7 +80,7 @@ test('unsupported methods, malformed canonical requests and missing client certi
  assert.equal(await ask({body:JSON.stringify({...JSON.parse(readBody),audience:'other'})}),400);
  assert.equal(await ask({body:readBody,headers:{'Content-Type':'text/plain'}}),400);
  assert.equal(await ask({body:readBody,headers:{'Accept-Encoding':'gzip'}}),400);
- await assert.rejects(ask({body:readBody,key:undefined,cert:undefined}),/certificate|alert|handshake|socket/i);
+ await assert.rejects(ask({body:readBody,key:null,cert:null}),/certificate|alert|handshake|socket/i);
  assert.deepEqual(await f.witness.read(scope),first);
 });
 test('tampering the disk hash chain permanently denies network reads and CAS',async t=>{
