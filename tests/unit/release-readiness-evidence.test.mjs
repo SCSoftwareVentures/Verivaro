@@ -121,7 +121,13 @@ test('P0-B tenancy gate includes exact migration provenance while production sta
   'scripts/migration-release-cli.mjs',
   'tests/unit/migration-release-attestation.test.mjs',
   'tests/unit/migration-role-policy.test.mjs',
-  'docs/engineering/G1_PRODUCTION_MIGRATION_SIGNING_CONTRACT_20261121.md'
+  'docs/engineering/G1_PRODUCTION_MIGRATION_SIGNING_CONTRACT_20261121.md',
+  'src/security/legacy-role-reconciliation.mjs',
+  'scripts/rehearse-privileged-migration-reconciliation.mjs',
+  'scripts/rehearse-migration-signing-acceptance.mjs',
+  'db/security/privileged-service-role-bootstrap.sql',
+  'db/security/verify-installed-migration-state.sql',
+  'docs/engineering/G1_INDEPENDENT_SIGNING_ACCEPTANCE_20261121.json'
  ])assert.ok(gate.sources.includes(source),'Missing P0-B source '+source);
  assert.match(gate.blocker,/actual external owner and reviewer signatures/i);
  assert.match(gate.blocker,/production migrator identity/i);

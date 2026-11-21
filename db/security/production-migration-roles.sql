@@ -1,17 +1,21 @@
--- Reference bootstrap requiring independent DBA approval. NEVER run automatically from CI.
--- First-generation 0001..0063 contains CREATE ROLE statements and is NOT
--- executable solely by this no-CREATEROLE migration executor.
--- No LOGIN is enabled; independent identity/credential issuance is mandatory.
+-- REFERENCE ONLY: independently authorised PostgreSQL 16 bootstrap.
+-- Do not execute in CI or run automatically on a target deployment.
+-- Cluster-global roles: stop on any existing roles and reconcile separately.
+-- No direct LOGIN, CREATEROLE, BYPASSRLS or database-wide SUPERUSER.
 BEGIN;
 CREATE ROLE vv_production_schema_owner
  NOLOGIN NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
 CREATE ROLE vv_production_migration_executor
  NOLOGIN NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
--- On PostgreSQL 16+, grant an explicit SET-only membership without inheritance.
+CREATE ROLE vv_production_ledger_custodian
+ NOLOGIN NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+-- PostgreSQL 16: only explicit SET ROLE access, never automatic INHERIT.
 GRANT vv_production_schema_owner TO vv_production_migration_executor
  WITH INHERIT FALSE, SET TRUE;
--- The owner must own only the separately scoped, approved application schema.
--- Future privileged CREATE ROLE/ALTER ROLE/extension work requires a distinct
--- reviewed bootstrap principal. No PUBLIC, app role or CI principal is granted
--- this membership. Do not enable LOGIN without an external identity review.
+-- The independently owned ledger custodian role MUST NOT be granted to the
+-- executor, schema owner or runtime roles. No identity credentials are here.
+-- A DBA separately scopes CREATE on the dedicated database to schema owner,
+-- provides a short-lived migration login, and grants ledger SELECT+INSERT only
+-- after independent review. No UPDATE/DELETE/TRUNCATE on migration ledger.
+-- Existing installs require read-only inventory and an approved recovery plan.
 COMMIT;

@@ -46,9 +46,18 @@
         "scripts/migration-release-cli.mjs",
         "tests/unit/migration-release-attestation.test.mjs",
         "tests/unit/migration-role-policy.test.mjs",
-        "docs/engineering/G1_PRODUCTION_MIGRATION_SIGNING_CONTRACT_20261121.md"
+        "docs/engineering/G1_PRODUCTION_MIGRATION_SIGNING_CONTRACT_20261121.md",
+        "db/security/privileged-service-role-bootstrap.sql",
+        "db/security/verify-installed-migration-state.sql",
+        "src/security/legacy-role-reconciliation.mjs",
+        "scripts/rehearse-privileged-migration-reconciliation.mjs",
+        "scripts/rehearse-migration-signing-acceptance.mjs",
+        "docs/engineering/G1_PRIVILEGED_BOOTSTRAP_AND_SIGNING_ACCEPTANCE_20261121.md",
+        "docs/engineering/G1_INDEPENDENT_SIGNING_ACCEPTANCE_20261121.json",
+        "tests/unit/legacy-role-reconciliation.test.mjs",
+        "tests/unit/migration-signing-acceptance.test.mjs"
       ],
-      "blocker": "CI now includes fail-closed restricted schema-owner/executor separation, role-creating SQL inventory, two-role Ed25519 offline release verification, and unsigned source-bound manifest generation. Actual external owner and reviewer signatures, independent key custody/trust-policy pin, production migrator identity, privileged DDL reconciliation for 63 existing migrations, production recovery witness and real deployment/HA/IdP/TLS security review remain NOT VERIFIED; release approval denied."
+      "blocker": "The CI-only 63-migration and 21-role deterministic privileged bootstrap/reconciliation rehearsal is implemented with a separate non-superuser schema migrator and ledger custodian; source-bound dual-Ed25519 signing acceptance uses ephemeral CI keys only. Actual external owner and reviewer signatures, independent custody/trust-policy pin and monotonic witness, production migrator identity, a separately approved privileged DBA bootstrap, actual existing-install reconciliation, production recovery witness, TLS/IdP/HA disaster recovery and security review remain NOT VERIFIED. Production release approval denied."
     },
     {
       "id": "G1_EVIDENCE",

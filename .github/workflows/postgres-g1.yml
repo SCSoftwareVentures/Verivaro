@@ -57,6 +57,12 @@ jobs:
         run: |
           set -euo pipefail
           psql -X -v ON_ERROR_STOP=1 -f db/tests/least_privilege_migrator.sql
+      - name: Reconcile 21 privileged roles and replay 63 real SQL migrations as restricted login
+        env:
+          VV_CI_ROLE_RECONCILE: '1'
+        run: |
+          set -euo pipefail
+          node scripts/rehearse-privileged-migration-reconciliation.mjs
       - name: Rehearse disposable migration rollback and safe retry
         env:
           VV_CI_PG_REHEARSAL: '1'

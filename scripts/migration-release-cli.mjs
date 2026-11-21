@@ -18,7 +18,15 @@ export const ADDITIONAL_SIGNED_PATHS=Object.freeze([
  'scripts/ci-migration-ledger.mjs',
  'scripts/verify-migration-chain.mjs',
  'scripts/migration-release-cli.mjs',
- '.github/workflows/postgres-g1.yml'
+ '.github/workflows/postgres-g1.yml',
+ 'db/security/privileged-service-role-bootstrap.sql',
+ 'db/security/verify-installed-migration-state.sql',
+ 'src/security/legacy-role-reconciliation.mjs',
+ 'scripts/rehearse-privileged-migration-reconciliation.mjs',
+ 'scripts/rehearse-migration-signing-acceptance.mjs',
+ 'db/tests/least_privilege_migrator.sql',
+ 'docs/engineering/G1_PRIVILEGED_BOOTSTRAP_AND_SIGNING_ACCEPTANCE_20261121.md',
+ 'docs/engineering/G1_INDEPENDENT_SIGNING_ACCEPTANCE_20261121.json'
 ]);
 function head(){
  const r=spawnSync('git',['rev-parse','--verify','HEAD'],{

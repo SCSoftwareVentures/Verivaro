@@ -17,7 +17,7 @@ function parse(bytes,limit){
  return obj;
 }
 const pathOK=x=>typeof x==='string'&&
- /^(?:db\/migrations\/[0-9]{4}_[a-z0-9_]+\.sql|(?:src|scripts|db|\.github)\/[a-zA-Z0-9_./-]+)$/.test(x)&&
+ /^(?:db\/migrations\/[0-9]{4}_[a-z0-9_]+\.sql|(?:src|scripts|db|\.github|docs)\/[a-zA-Z0-9_./-]+)$/.test(x)&&
  !x.split('/').some(p=>p==='.'||p==='..'||!p);
 export function ledgerHeadFor(files){
  let previous='0'.repeat(64);
