@@ -57,6 +57,20 @@ Neon SQL-created roles do not automatically join `neon_superuser`, unlike the de
 5. Test a real short-lived, authenticated migrator session from an approved external TLS client: verify certificate/hostname, operator/DB identity, `SET ROLE` without INHERIT, and independently captured denied `CREATEROLE`, owner membership to reader/runtime, schema CREATE under the login, ledger UPDATE/DELETE/TRUNCATE, and forbidden role membership pathways. Merely querying `has_*_privilege` is not a substitute for denied-action tests.
 6. Reconcile the 21 source-locked service roles, `pgcrypto` install boundary, schema ownership and ledger custodian separately. Do not write, sign, backfill or apply any of the 63 migrations until external source signatures, DBA signoff, and a witnessed plan are present.
 
+## Observed owner-side ADMIN membership — strict gate blocker
+
+The actual SELECT-only `pg_auth_members` catalog audit also found an **incoming** edge on the already-created reader:
+
+```text
+member_role=neondb_owner
+granted_role=vv_g1_staging_reader
+inherit_option=false; set_option=false; admin_option=true
+```
+
+This does **not** give the reader administrative rights or allow `neondb_owner` to SET the reader role through this edge. It gives the privileged owner a role-management grant. PostgreSQL 16 role creation can assign the creator an ADMIN-option membership; the observed edge is consistent with that model. Previous checks reporting the reader has **zero outbound memberships** remain true, but they did not evaluate inbound role-management grants.
+
+**Policy:** The post-bootstrap audit checks *both inbound and outbound memberships* and currently fails this strict independent-custody requirement. Proposed additional staging roles may similarly accrue operator ADMIN memberships when created. Before approval, the independent DBA must inventory and assess every owner-side ADMIN edge, determine whether explicit member removal is permitted/safe in this managed environment, and document any irreducible administrator override. Never auto-revoke or bypass this gate to force a pass. Even after any permitted cleanup, Neon's overarching account administrator retains an emergency override capability; independent release-signing and external witness custody are separate requirements.
+
 ## Explicit release blockers
 
 - No independent human reviewer, signed source baseline, out-of-band Ed25519 trust anchor, separate retained witness/ledger custody, verified remote TLS/network security, or approved production-equivalent recovery drill.

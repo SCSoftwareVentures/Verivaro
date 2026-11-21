@@ -91,6 +91,15 @@ test('role audit rejects unsolicited memberships, inheritance, ADMIN, missing ed
  const d=after();
  rejected(()=>assertG1StagingMigrationRoleAudit({...d,memberships:d.memberships.slice(0,1)}));
  rejected(()=>assertG1StagingMigrationRoleAudit({...d,memberships:[...d.memberships,edge('neondb_owner',G1_STAGING_ROLES.owner)]}));
+ // Exact live Neon PG16 catalog behavior: the powerful database owner is
+ // recorded as an ADMIN-option member of the SQL-created reader. This does
+ // NOT give the reader privileges but fails the strict custody gate.
+ rejected(()=>assertG1StagingMigrationRoleAudit({...d,memberships:[
+  ...d.memberships,{
+   member_role:'neondb_owner',granted_role:G1_STAGING_ROLES.reader,
+   inherit_option:false,set_option:false,admin_option:true
+  }
+ ]}));
  rejected(()=>assertG1StagingMigrationRoleAudit({...d,memberships:[edge(G1_STAGING_ROLES.reader,G1_STAGING_ROLES.owner),d.memberships[1]]}));
  rejected(()=>assertG1StagingMigrationRoleAudit({...d,memberships:[d.memberships[0],d.memberships[0]]}));
  for(const patch of [
