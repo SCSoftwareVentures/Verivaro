@@ -113,9 +113,20 @@ test('P0-B tenancy gate includes exact migration provenance while production sta
   'scripts/ci-migration-ledger.mjs',
   'scripts/rehearse-real-migration-restart.mjs',
   'tests/unit/ci-migration-ledger.test.mjs',
-  'docs/engineering/G1_P0B_ACTUAL_MIGRATION_LEDGER_20261121.md'
+  'docs/engineering/G1_P0B_ACTUAL_MIGRATION_LEDGER_20261121.md',
+  'db/security/production-migration-roles.sql',
+  'db/tests/least_privilege_migrator.sql',
+  'src/security/migration-role-policy.mjs',
+  'src/security/migration-release-attestation.mjs',
+  'scripts/migration-release-cli.mjs',
+  'tests/unit/migration-release-attestation.test.mjs',
+  'tests/unit/migration-role-policy.test.mjs',
+  'docs/engineering/G1_PRODUCTION_MIGRATION_SIGNING_CONTRACT_20261121.md'
  ])assert.ok(gate.sources.includes(source),'Missing P0-B source '+source);
- assert.match(gate.blocker,/production change-control signatures|database-stored migration ledger/i);
+ assert.match(gate.blocker,/actual external owner and reviewer signatures/i);
+ assert.match(gate.blocker,/production migrator identity/i);
+ assert.match(gate.blocker,/production recovery witness/i);
+ assert.match(gate.blocker,/release approval denied/i);
  const workflow=readFileSync(file('.github/workflows/postgres-g1.yml'),'utf8');
  const orderedCommands=[
   'node scripts/verify-migration-chain.mjs',
