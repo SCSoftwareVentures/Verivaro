@@ -57,6 +57,20 @@
       "blocker": "Production deployment, complete product UI, customer usability and operational SLO testing outstanding."
     },
     {
+      "id": "G1_P0D_HANDOVER",
+      "label": "Portable offline buyer handover and real scoped evidence assembly",
+      "status": "NOT_VERIFIED",
+      "sources": [
+        "src/demo/buyer-portable-bundle.mjs",
+        "tests/unit/buyer-portable-bundle.test.mjs",
+        "tests/browser/offline-buyer-browser.test.mjs",
+        "tests/integration/live-requirement-graph.test.mjs",
+        "docs/engineering/G1_P0D_HANDOVER_OFFLINE_GATE_20261121.md",
+        ".github/workflows/buyer-bundle.yml"
+      ],
+      "blocker": "The new real-database and offline buyer regression gates have no independently confirmed exact-head CI outcome yet; physical iPhone compatibility, trusted custody, genuine reviewer identity and buyer desirability remain unverified."
+    },
+    {
       "id": "G1_WITNESS",
       "label": "Independent immutable witness, signer and monotonic floor",
       "status": "REFERENCE_ONLY",
