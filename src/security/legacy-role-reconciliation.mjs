@@ -18,9 +18,11 @@ export const LEGACY_ROLE_DECLARATIONS=Object.freeze([
  [18,'verivaro_identity_events'],[19,'verivaro_api_admission'],
  [21,'verivaro_evidence_ingestor'],[23,'verivaro_evidence_reader'],
  [24,'verivaro_evidence_auditor'],[31,'verivaro_tenant_operator']
-]);
+].map(row=>Object.freeze(row)));
 export const ROLE_DDL_ATTRIBUTES=
  'NOLOGIN NOSUPERUSER NOINHERIT NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS';
+export const AUDITED_G1_LEDGER_HEAD='7a5dccee57dcdd9b9f7f63074077a2be6db6ac4987d29f62f0259721481ecc55';
+const AUDITED_ROLE_NAMES=Object.freeze(LEGACY_ROLE_DECLARATIONS.map(([,name])=>name));
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const exactly=(path,i)=>new RegExp('^db/migrations/'+String(i).padStart(4,'0')+'_[a-z0-9_]+\\.sql$').test(path);
 const roleLine=name=>'CREATE ROLE '+name+' '+ROLE_DDL_ATTRIBUTES+';';
@@ -61,7 +63,7 @@ export function createLegacyReconciliationPlan(sourceRows){
   }else if(extensionLines.length)fail('unreviewed extension statement');
   migrations.push(Object.freeze({version,path:r.path,
    sourceSha256:sha(r.bytes),transformedSha256:sha(Buffer.from(transformed)),
-   strippedRoles:expected,transformedSql:transformed}));
+   strippedRoles:Object.freeze(expected),transformedSql:transformed}));
  }
  if(seenRoles.length!==21||new Set(seenRoles).size!==21||
   LEGACY_ROLE_DECLARATIONS.some(([,name])=>!seenRoles.includes(name)))
@@ -69,20 +71,26 @@ export function createLegacyReconciliationPlan(sourceRows){
  const ledger=createExpectedLedger(migrations.map(m=>({
   version:m.version,path:m.path,sha256:m.sourceSha256
  })));
+ if(ledger.at(-1).entry_hash!==AUDITED_G1_LEDGER_HEAD)
+  fail('unexpected immutable G1 ledger baseline: independent review required');
  return Object.freeze({version:1,type:'VERIVARO_P0B_PRIVILEGED_RECONCILIATION',
-  migrations,serviceRoles:seenRoles,ledgerHead:ledger.at(-1).entry_hash,
+  migrations:Object.freeze(migrations),serviceRoles:Object.freeze(seenRoles),ledgerHead:ledger.at(-1).entry_hash,
   extensionApprovalRequired:true,privilegedRoleBootstrapRequired:true,
   initialInstallApproved:false,existingInstallBackfillApproved:false,
   independentlySigned:false});
 }
 export function privilegedBootstrapSql(plan,{ownerRole,executorRole,loginRole}){
  if(!plan||plan.type!=='VERIVARO_P0B_PRIVILEGED_RECONCILIATION'||
-  !Array.isArray(plan.serviceRoles)||plan.serviceRoles.length!==21)
-  fail('unverified reconciliation plan');
+  plan.ledgerHead!==AUDITED_G1_LEDGER_HEAD||
+  !Array.isArray(plan.migrations)||plan.migrations.length!==63||
+  !Array.isArray(plan.serviceRoles)||plan.serviceRoles.length!==AUDITED_ROLE_NAMES.length||
+  plan.serviceRoles.some((name,i)=>name!==AUDITED_ROLE_NAMES[i]))
+  fail('unverified or forged reconciliation plan');
  for(const v of [ownerRole,executorRole,loginRole])
   if(typeof v!=='string'||!/^vv_ci_reconcile_[a-z_]+$/.test(v))
    fail('only CI disposable role names supported by executable fixture');
- const rows=plan.serviceRoles.map(name=>roleLine(name));
+ // SQL identifiers derive only from audited constants, not supplied strings.
+ const rows=AUDITED_ROLE_NAMES.map(name=>roleLine(name));
  if(new Set(rows).size!==21)fail('role list not unique');
  return ['BEGIN;',...rows,
   'CREATE ROLE '+ownerRole+' '+ROLE_DDL_ATTRIBUTES+';',
@@ -98,6 +106,7 @@ export function assertExistingInstallReconciliation({
 }={}){
  if(!Array.isArray(observedHistory)||!Array.isArray(expectedHistory)||
   expectedHistory.length!==63||observedHistory.length!==63||
+  expectedHistory.some(v=>typeof v!=='string'||!/^[a-f0-9]{64}$/.test(v))||
   observedHistory.some((v,i)=>v!==expectedHistory[i])||
   !Array.isArray(roleInventory)||roleInventory.length!==21)
   fail('existing deployment cannot be inferred from schema or unverified partial history');
@@ -105,7 +114,7 @@ export function assertExistingInstallReconciliation({
   if(!r||!LEGACY_ROLE_DECLARATIONS.some(x=>x[1]===r.name)||
    r.login!==false||r.superuser!==false||r.inherit!==false||
    r.createRole!==false||r.createDb!==false||r.replication!==false||
-   r.bypassRls!==false||r.unexpectedMembership===true)
+   r.bypassRls!==false||r.unexpectedMembership!==false)
    fail('unsafe existing service role detected');
  }
  if(new Set(roleInventory.map(r=>r.name)).size!==21)

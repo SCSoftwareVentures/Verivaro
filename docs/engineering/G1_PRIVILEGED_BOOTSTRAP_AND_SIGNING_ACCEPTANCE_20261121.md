@@ -53,3 +53,8 @@ This is a **production-shaped, isolated CI upgrade/recovery proof**, not a live 
 The browser CI now executes browser test files sequentially with an explicit per-file failure watchdog; the previous Chromium run exhausted its five-minute workflow step and did not pass. Browser tests remain blocking and are **not** skipped.
 
 Independent review acceptance cannot be self-attested: all nine externally controlled evidence requirements in the machine-readable register remain NOT_VERIFIED until specific dated, independently authenticated evidence is reviewed.
+
+
+## Role-bootstrap input hardening
+
+The CI-only bootstrap SQL generator compares every supplied service-role name in order with the independently frozen 21-name audited inventory, checks the fixed G1 ledger baseline, and derives SQL identifiers from its audited constants rather than caller-provided strings. The 63-migration and service-role plan arrays are immutable. Existing-install role snapshots require explicit `unexpectedMembership:false` for each service role; unknown membership states and malformed SHA-256 strings fail closed. Adversarial tests cover fabricated names containing SQL injection, reordered names, forged ledger heads, attempted plan mutation and incomplete inventories. This does not substitute for a real independent DBA approval.

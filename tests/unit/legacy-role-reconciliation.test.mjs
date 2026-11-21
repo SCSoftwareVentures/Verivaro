@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {createLegacyReconciliationPlan,privilegedBootstrapSql,LEGACY_ROLE_DECLARATIONS,
- assertExistingInstallReconciliation} from '../../src/security/legacy-role-reconciliation.mjs';
+ AUDITED_G1_LEDGER_HEAD,assertExistingInstallReconciliation} from '../../src/security/legacy-role-reconciliation.mjs';
 
 const sha=b=>createHash('sha256').update(b).digest('hex');
 async function source(){
@@ -82,4 +82,43 @@ test('existing install requires 63 exact history entries, safe global role attri
   {roleInventory:roles.map((r,i)=>i===0?{...r,unexpectedMembership:true}:r)}
  ])assert.throws(()=>assertExistingInstallReconciliation({...input,...bad,approvedExistingInstall:true}),
   /privileged migration reconciliation rejected/);
+});
+
+
+test('role-bootstrap SQL refuses fabricated roles and forged approval plans',async()=>{
+ const p=await plan(),options={ownerRole:'vv_ci_reconcile_schema_owner',
+  executorRole:'vv_ci_reconcile_executor',loginRole:'vv_ci_reconcile_login'};
+ const sql=privilegedBootstrapSql(p,options);
+ assert.equal(p.ledgerHead,AUDITED_G1_LEDGER_HEAD);
+ assert.equal(sql.match(/CREATE ROLE /g).length,23);
+ assert.ok(Object.isFrozen(p.serviceRoles));
+ assert.ok(Object.isFrozen(p.migrations));
+ assert.ok(Object.isFrozen(p.migrations[3].strippedRoles));
+ assert.ok(Object.isFrozen(LEGACY_ROLE_DECLARATIONS[0]));
+ assert.throws(()=>{p.serviceRoles[0]='evil';},TypeError);
+ assert.throws(()=>{LEGACY_ROLE_DECLARATIONS[0][1]='evil';},TypeError);
+ for(const tampered of [
+  {...p,serviceRoles:['vv_ci_extra; DROP DATABASE verivaro_test; --',...p.serviceRoles.slice(1)]},
+  {...p,serviceRoles:[...p.serviceRoles].reverse()},
+  {...p,ledgerHead:'f'.repeat(64)},
+  {...p,migrations:[]}
+ ])assert.throws(()=>privilegedBootstrapSql(tampered,options),
+  /privileged migration reconciliation rejected/);
+ assert.doesNotMatch(sql,/DROP DATABASE/);
+});
+
+test('existing-install inventory rejects unknown memberships and malformed digest',async()=>{
+ const p=await plan(),history=p.migrations.map(m=>m.sourceSha256);
+ const roles=p.serviceRoles.map(name=>({name,login:false,superuser:false,inherit:false,
+  createRole:false,createDb:false,replication:false,bypassRls:false,unexpectedMembership:false}));
+ const input={observedHistory:history,expectedHistory:history,roleInventory:roles,approvedExistingInstall:true};
+ for(const patch of [
+  {roleInventory:roles.map((r,i)=>i===0?{...r,unexpectedMembership:undefined}:r)},
+  {roleInventory:roles.map((r,i)=>i===0?{...r,unexpectedMembership:null}:r)},
+  {roleInventory:roles.map((r,i)=>i===0?{...r,unexpectedMembership:true}:r)},
+  {expectedHistory:history.map((h,i)=>i===0?'not-sha256':h),
+   observedHistory:history.map((h,i)=>i===0?'not-sha256':h)}
+ ])assert.throws(()=>assertExistingInstallReconciliation({...input,...patch}),
+  /privileged migration reconciliation rejected/);
+ assert.equal(assertExistingInstallReconciliation(input).productionApproved,false);
 });
