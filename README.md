@@ -38,6 +38,8 @@ The [buyer handover workflow](.github/workflows/buyer-bundle.yml) packages the s
 
 The existing disposable-PostgreSQL integration test now also exercises real encrypted ingestion → distinct reviewer approval → owner-authorised submission → canonical package bytes → SHA-256 verification → stale-graph rejection. These are **CI assertions pending exact-head qualification**, not real buyer acts or independent release signoff.
 
+Detailed test contracts, limitations and local reproduction: [G1/P0-D offline buyer and handover acceptance record](docs/engineering/G1_P0D_HANDOVER_OFFLINE_GATE_20261121.md).
+
 ## Components
 
 - Evidence verification: exact-source checks, revision consistency, mandatory submission blockers and dependency impact.
