@@ -60,6 +60,22 @@ test('live dedicated service identity rejects indirect, direct and administrativ
     'REVOKE USAGE ON LANGUAGE plpgsql FROM vv_ci_admission_a');
   await rejectAfter('GRANT CREATE ON TABLESPACE pg_default TO vv_ci_admission_a',
     'REVOKE CREATE ON TABLESPACE pg_default FROM vv_ci_admission_a');
+  // The approved group must not accumulate privileges usable after
+  // SET ROLE, even when the dedicated login remains NOINHERIT.
+  await rejectAfter('GRANT CREATE ON DATABASE verivaro_test TO verivaro_admission_service',
+    'REVOKE CREATE ON DATABASE verivaro_test FROM verivaro_admission_service');
+  await rejectAfter('GRANT CREATE ON SCHEMA public TO verivaro_admission_service',
+    'REVOKE CREATE ON SCHEMA public FROM verivaro_admission_service');
+  await rejectAfter('GRANT SET ON PARAMETER session_replication_role TO verivaro_admission_service',
+    'REVOKE SET ON PARAMETER session_replication_role FROM verivaro_admission_service');
+  await admin.query('CREATE DATABASE vv_ci_service_group_owned_db OWNER verivaro_admission_service');
+  try{
+   await assert.rejects(check(),/unsafe service login/);
+   await assert.rejects(adapter.acquire('192.0.2.1',1024,signal),/admission operation failed/);
+  }finally{
+   await admin.query('DROP DATABASE vv_ci_service_group_owned_db');
+  }
+  await check();
   await admin.query('CREATE SEQUENCE verivaro_private.vv_ci_direct_grant_seq');
   try{
    await rejectAfter('GRANT USAGE ON SEQUENCE verivaro_private.vv_ci_direct_grant_seq TO vv_ci_admission_a',
