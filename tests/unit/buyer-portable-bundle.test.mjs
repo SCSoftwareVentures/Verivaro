@@ -90,6 +90,22 @@ test('ZIP verification fails closed on changed bytes, changed metadata and spoof
  const upgraded=zip(falsified);
  assert.throws(()=>verifyPortableBuyerBundle(upgraded,{expectedArchiveSha256:sha(upgraded)}),
   /verification failed/);
+ // A complete self-held rehash of a changed offline viewer is not enough:
+ // the rendered page must exactly regenerate from the canonical fixture/assets.
+ const diverted=entries(p.archive).map(([name,data])=>[name,Buffer.from(data)]);
+ const before=diverted[6][1].toString('utf8');
+ const after=before.replace('<title>Verivaro | Evidence lifecycle showcase</title>',
+  '<title>Changed buyer claim</title>');
+ assert.notEqual(before,after);
+ diverted[6][1]=Buffer.from(after,'utf8');
+ const m=JSON.parse(diverted[7][1].toString('utf8'));
+ m.files[6].bytes=diverted[6][1].length;
+ m.files[6].sha256=sha(diverted[6][1]);
+ diverted[7][1]=Buffer.from(JSON.stringify(m));
+ const coherent=zip(diverted);
+ assert.throws(()=>verifyPortableBuyerBundle(coherent,{
+  expectedArchiveSha256:sha(coherent)
+ }),/verification failed/);
 });
 
 test('packaged preview serves only local read-only synthetic assets',{timeout:20000},async t=>{
