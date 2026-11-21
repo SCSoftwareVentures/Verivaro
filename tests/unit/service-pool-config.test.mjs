@@ -11,6 +11,9 @@ test('fixed service role and pinned identity reject unsafe configuration and mis
  const client={query:async(sql,values)=>{calls.push({sql,values});return {rows:[{privileged:false,login_name:'wrong'}]};}};
  await assert.rejects(assertServiceLogin(client,role,'vv_worker'));
  assert.equal(calls[0].sql,'SET search_path TO pg_catalog');assert.deepEqual(calls[1].values,[role,'vv_worker']);
+ assert.match(calls[1].sql,/m\.inherit_option=false/);
+ assert.match(calls[1].sql,/m\.set_option=true/);
+ assert.match(calls[1].sql,/m\.admin_option=false/);
  assert.throws(()=>validateServiceIdentity('postgres','vv_worker'));assert.throws(()=>validateServiceIdentity(role,role));
 });
 test('private credentials only; loopback exception explicit; no environment TLS downgrade',async t=>{

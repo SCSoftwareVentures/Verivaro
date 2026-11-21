@@ -28,6 +28,30 @@ test('live dedicated service identity rejects indirect, direct and administrativ
   await rejectAfter('GRANT SELECT (key_bytes) ON verivaro_private.context_key TO vv_ci_admission_a','REVOKE SELECT (key_bytes) ON verivaro_private.context_key FROM vv_ci_admission_a');
   await rejectAfter('GRANT CREATE ON SCHEMA public TO vv_ci_admission_a','REVOKE CREATE ON SCHEMA public FROM vv_ci_admission_a');
   await rejectAfter('GRANT verivaro_admission_service TO vv_ci_admission_a WITH ADMIN OPTION','REVOKE ADMIN OPTION FOR verivaro_admission_service FROM vv_ci_admission_a');
+  // PostgreSQL 16 membership is insufficient: SET=FALSE makes the service
+  // unusable, while INHERIT=TRUE creates ambient privilege exposure.
+  async function rejectMembershipOptions(inherit,set){
+   await admin.query('REVOKE verivaro_admission_service FROM vv_ci_admission_a');
+   await admin.query('GRANT verivaro_admission_service TO vv_ci_admission_a WITH INHERIT '+inherit+', SET '+set+', ADMIN FALSE');
+   try{
+    const direct=await admin.query(String.raw`SELECT m.inherit_option,m.set_option,m.admin_option
+     FROM pg_catalog.pg_auth_members m
+     JOIN pg_catalog.pg_roles member ON member.oid=m.member
+     JOIN pg_catalog.pg_roles grp ON grp.oid=m.roleid
+     WHERE member.rolname='vv_ci_admission_a' AND grp.rolname='verivaro_admission_service'`);
+    assert.equal(direct.rows.length,1);
+    assert.equal(direct.rows[0].inherit_option,inherit==='TRUE');
+    assert.equal(direct.rows[0].set_option,set==='TRUE');
+    await assert.rejects(check(),/unsafe service login/);
+    await assert.rejects(adapter.acquire('192.0.2.1',1024,signal),/admission operation failed/);
+   }finally{
+    await admin.query('REVOKE verivaro_admission_service FROM vv_ci_admission_a');
+    await admin.query('GRANT verivaro_admission_service TO vv_ci_admission_a WITH INHERIT FALSE, SET TRUE, ADMIN FALSE');
+   }
+   await check();
+  }
+  await rejectMembershipOptions('FALSE','FALSE');
+  await rejectMembershipOptions('TRUE','TRUE');
   // A group role made LOGIN is specifically forbidden for a pinned deployment.
   await rejectAfter('ALTER ROLE verivaro_admission_service LOGIN','ALTER ROLE verivaro_admission_service NOLOGIN');
   await check();

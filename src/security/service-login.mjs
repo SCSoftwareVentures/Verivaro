@@ -1,5 +1,7 @@
 // Shared PostgreSQL connection-boundary validation. This is a deployment
 // misconfiguration guard, not a substitute for PostgreSQL ACL enforcement.
+// PostgreSQL 16 grants have independent SET, INHERIT and ADMIN options:
+// membership alone does not establish safe or usable SET ROLE authority.
 const roles=new Set(['verivaro_runtime','verivaro_share_gateway','verivaro_recipient_gateway','verivaro_admission_service','verivaro_monitor_worker','verivaro_monitor_reader','verivaro_alert_sender','verivaro_identity_service','verivaro_identity_events','verivaro_api_admission','verivaro_evidence_ingestor','verivaro_evidence_reader','verivaro_evidence_auditor','verivaro_release_service','verivaro_tenant_operator']);
 const name=/^[a-z][a-z0-9_]{0,62}$/;
 export function validateServiceIdentity(role,expectedLogin){
@@ -18,7 +20,9 @@ const CHECK=String.raw`SELECT
  OR has_database_privilege(l.oid,current_database(),'CREATE')
  OR EXISTS(SELECT 1 FROM pg_catalog.pg_namespace n WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema' AND has_schema_privilege(l.oid,n.oid,'CREATE'))
  OR (l.oid<>g.oid AND (
-  g.rolcanlogin OR NOT EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members m WHERE m.member=l.oid AND m.roleid=g.oid AND NOT m.admin_option)
+  g.rolcanlogin OR NOT EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members m
+    WHERE m.member=l.oid AND m.roleid=g.oid AND m.inherit_option=false
+      AND m.set_option=true AND m.admin_option=false)
   OR EXISTS(SELECT 1 FROM pg_catalog.pg_namespace n WHERE n.nspname LIKE 'verivaro%' AND has_schema_privilege(l.oid,n.oid,'USAGE'))
   OR EXISTS(SELECT 1 FROM pg_catalog.pg_class t JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
     WHERE n.nspname LIKE 'verivaro%' AND t.relkind IN ('r','p','v','m','f')
