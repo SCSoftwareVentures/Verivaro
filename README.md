@@ -14,9 +14,12 @@ Node.js 22.16.0 is the exact local baseline, not a production security endorseme
 npm ci --ignore-scripts
 npm test
 npm run demo
+npm run demo:buyer
 ```
 
 The demo prints a blocked finding for a synthetic mismatched equipment serial; it does not host a website.
+
+The separate [synthetic buyer walkthrough](docs/engineering/G1_SYNTHETIC_BUYER_WALKTHROUGH_20261121.md) reproduces missing → conflicting → provisional → reviewed proof and checks a canonical package against self-held hashes. It is **not** a real buyer/mobile session, authenticated release or independent custody claim.
 
 ## Components
 

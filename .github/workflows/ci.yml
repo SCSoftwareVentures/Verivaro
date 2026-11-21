@@ -29,6 +29,8 @@ jobs:
           set -euo pipefail
           for f in tests/integration/*.mjs tests/browser/*.mjs; do node --check "$f"; done
       - run: npm run demo
+      - name: Reproducible synthetic buyer evidence lifecycle
+        run: npm run demo:buyer
       - name: Independent PDF rendering and ZIP verification
         run: |
           set -euo pipefail
