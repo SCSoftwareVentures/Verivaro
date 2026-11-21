@@ -109,12 +109,29 @@ test('P0-B tenancy gate includes exact migration provenance while production sta
   'src/security/migration-chain-audit.mjs',
   'scripts/verify-migration-chain.mjs',
   'tests/unit/migration-chain-audit.test.mjs',
-  'docs/engineering/G1_P0B_MIGRATION_CHAIN_20261121.md'
+  'docs/engineering/G1_P0B_MIGRATION_CHAIN_20261121.md',
+  'scripts/ci-migration-ledger.mjs',
+  'scripts/rehearse-real-migration-restart.mjs',
+  'tests/unit/ci-migration-ledger.test.mjs',
+  'docs/engineering/G1_P0B_ACTUAL_MIGRATION_LEDGER_20261121.md'
  ])assert.ok(gate.sources.includes(source),'Missing P0-B source '+source);
  assert.match(gate.blocker,/production change-control signatures|database-stored migration ledger/i);
  const workflow=readFileSync(file('.github/workflows/postgres-g1.yml'),'utf8');
- assert.ok(workflow.indexOf('node scripts/verify-migration-chain.mjs')<
-  workflow.indexOf('psql -X -v ON_ERROR_STOP=1 -f db/migrations/0001_tenant_foundation.sql'));
+ const orderedCommands=[
+  'node scripts/verify-migration-chain.mjs',
+  'node scripts/ci-migration-ledger.mjs init',
+  'node scripts/rehearse-real-migration-restart.mjs',
+  'node scripts/ci-migration-ledger.mjs apply db/migrations/0001_tenant_foundation.sql',
+  'node scripts/ci-migration-ledger.mjs apply db/migrations/0063_ocr_transcription_corrections.sql',
+  'node scripts/ci-migration-ledger.mjs verify',
+  'psql -X -v ON_ERROR_STOP=1 -f db/tests/full_security_gate.sql'
+ ];
+ let previous=-1;
+ for(const command of orderedCommands){
+  const index=workflow.indexOf(command);
+  assert.ok(index>previous,'Missing or misplaced CI migration command '+command);
+  previous=index;
+ }
  assert.equal(manifest.productReleaseApproved,false);
 });
 

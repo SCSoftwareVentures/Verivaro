@@ -34,9 +34,13 @@
         "src/security/migration-chain-audit.mjs",
         "scripts/verify-migration-chain.mjs",
         "tests/unit/migration-chain-audit.test.mjs",
-        "docs/engineering/G1_P0B_MIGRATION_CHAIN_20261121.md"
+        "docs/engineering/G1_P0B_MIGRATION_CHAIN_20261121.md",
+        "scripts/ci-migration-ledger.mjs",
+        "scripts/rehearse-real-migration-restart.mjs",
+        "tests/unit/ci-migration-ledger.test.mjs",
+        "docs/engineering/G1_P0B_ACTUAL_MIGRATION_LEDGER_20261121.md"
       ],
-      "blocker": "A repository-native ordered migration manifest and negative drift tests are added for all 63 files, before disposable PostgreSQL CI applies schema; actual production change-control signatures, database-stored migration ledger, independent owner/custody segregation, external IdP configuration, real deployment/rollback rehearsal and operational privilege attestation remain unverified."
+      "blocker": "The 63 actual migrations now use an atomic CI PostgreSQL SHA-256 migration ledger, and a disposable backend-termination/restart drill passed; this remains repository/synthetic CI evidence only. Production change-control signatures, independently witnessed and rollback-resistant database-stored migration ledger, production migrator identity and credential custody, actual deployment/HA recovery rehearsal, external IdP/TLS and operational privilege attestation remain unverified."
     },
     {
       "id": "G1_EVIDENCE",
