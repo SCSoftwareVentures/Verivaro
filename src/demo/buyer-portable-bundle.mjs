@@ -8,7 +8,7 @@ import {buildBuyerShowcasePayload} from './buyer-showcase.mjs';
 
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const expected=['index.html','buyer-showcase.css','buyer-showcase.js',
- 'buyer-demo.json','README.txt','preview.mjs','manifest.json'];
+ 'buyer-demo.json','README.txt','preview.mjs','buyer-offline.html','manifest.json'];
 const strictHash=h=>typeof h==='string'&&/^[a-f0-9]{64}$/.test(h);
 const fail=()=>{throw Error('portable buyer bundle verification failed');};
 const utf8=b=>new TextDecoder('utf-8',{fatal:true}).decode(b);
@@ -18,7 +18,10 @@ const guide=[
  'This is a deterministic demo, not a customer release, hosted SaaS,',
  'production security assessment, legal compliance or sale validation.',
  '',
- 'Requirements: Node.js 22.16.0. No npm install, domain, payment or internet.',
+ 'Offline viewer: open buyer-offline.html in a local HTML/JavaScript-capable browser.',
+ 'It requires NO Node.js, hosting or network access. Some mobile file viewers',
+ 'disable local JavaScript; that device compatibility is NOT yet certified.',
+ 'For the optional loopback preview, Node.js 22.16.0 is required.',
  '1. Extract every file to one directory. Keep all filenames unchanged.',
  '2. In that directory, run: node preview.mjs',
  '3. Open the 127.0.0.1 URL shown in the terminal on the SAME device.',
@@ -29,7 +32,8 @@ const guide=[
  '   before it can independently authenticate an acquired archive.',
  '',
  'Files: index.html, buyer-showcase.css, buyer-showcase.js,',
- 'buyer-demo.json, README.txt, preview.mjs, manifest.json.',
+ 'buyer-demo.json, README.txt, preview.mjs, buyer-offline.html,',
+ 'manifest.json. Each has a SHA-256 inventory entry.',
  'No real users, reviewer signatures, independent custody or customer data.',
  'The archive may be sold as a SOURCE/DEMO asset only, subject to due diligence.',
  ''
@@ -78,6 +82,34 @@ function syntheticOnly(p){
    s.ready!==(i===3)||s.blockers!==(i===3?0:1)))fail();
 }
 
+function createOfflineViewer({rawHtml,rawCss,rawJs,payload}){
+ const fetchLine="const response=await fetch('/buyer-demo.json',{cache:'no-store',credentials:'omit'});";
+ const cssTag='<link rel="stylesheet" href="/buyer-showcase.css">';
+ const jsTag='<script defer src="/buyer-showcase.js"></script>';
+ if(!rawHtml.includes(cssTag)||!rawHtml.includes(jsTag)||
+  !rawJs.includes(fetchLine)||/<\/style\b/i.test(rawCss)||
+  /<\/script\b/i.test(rawJs))fail();
+ // JSON is inserted as a JavaScript literal, never as unescaped HTML text.
+ // Escaping < prevents a synthetic source string from closing our script tag.
+ const safeJson=JSON.stringify(payload).replace(/[<>&\u2028\u2029]/g,ch=>({
+  '<':'\\u003c','>':'\\u003e','&':'\\u0026',
+  '\u2028':'\\u2028','\u2029':'\\u2029'
+ })[ch]);
+ const script="const offlinePayload="+safeJson+";\n"+
+  rawJs.replace(fetchLine,"const response={ok:true,json:async()=>offlinePayload};");
+ const b64=s=>createHash('sha256').update(s,'utf8').digest('base64');
+ const csp="default-src 'none'; script-src 'sha256-"+b64(script)+
+  "'; style-src 'sha256-"+b64(rawCss)+
+  "'; connect-src 'none'; img-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
+ const html=rawHtml.replace(cssTag,
+  '<meta http-equiv="Content-Security-Policy" content="'+csp+'">\n<style>'+rawCss+'</style>')
+  .replace(jsTag,'<script>'+script+'</script>');
+ if(html.includes('src="/buyer-showcase.js"')||
+  html.includes('href="/buyer-showcase.css"')||
+  html.includes('fetch(\'/buyer-demo.json\''))fail();
+ return html;
+}
+
 export async function createPortableBuyerBundle(){
  const p=await buildBuyerShowcasePayload();
  syntheticOnly(p);
@@ -100,7 +132,8 @@ export async function createPortableBuyerBundle(){
   ['buyer-showcase.js',Buffer.from(js)],
   ['buyer-demo.json',Buffer.from(JSON.stringify(p,null,2)+'\n')],
   ['README.txt',Buffer.from(guide)],
-  ['preview.mjs',Buffer.from(preview)]
+  ['preview.mjs',Buffer.from(preview)],
+  ['buyer-offline.html',Buffer.from(createOfflineViewer({rawHtml,rawCss,rawJs,payload:p}))]
  ];
  const manifest=Buffer.from(JSON.stringify({
   schemaVersion:1,kind:'VERIVARO_SYNTHETIC_BUYER_DEMO',
@@ -162,6 +195,13 @@ export function verifyPortableBuyerBundle(archive,{expectedArchiveSha256}={}){
    x.name!==name||x.bytes!==b.length||x.sha256!==hash(b))fail();
  }
  syntheticOnly(payload);
+ const offline=utf8(files[6][1]);
+ if(!offline.includes('http-equiv="Content-Security-Policy"')||
+  !offline.includes("connect-src 'none'")||
+  !offline.includes("const offlinePayload=")||
+  !offline.includes('const response={ok:true,json:async()=>offlinePayload};')||
+  offline.includes('src="/buyer-showcase.js"')||
+  offline.includes('href="/buyer-showcase.css"'))fail();
  if(!utf8(files[0][1]).includes('href="./buyer-showcase.css"')||
   !utf8(files[0][1]).includes('src="./buyer-showcase.js"')||
   !utf8(files[2][1]).includes("fetch(new URL('./buyer-demo.json',document.baseURI),"))fail();
