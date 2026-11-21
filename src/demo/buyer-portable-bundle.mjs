@@ -202,6 +202,22 @@ export function verifyPortableBuyerBundle(archive,{expectedArchiveSha256}={}){
   !offline.includes('const response={ok:true,json:async()=>offlinePayload};')||
   offline.includes('src="/buyer-showcase.js"')||
   offline.includes('href="/buyer-showcase.css"'))fail();
+ // Re-derive the one-file viewer from the canonical multi-file sources and
+ // the validated fixture. Reject separately edited HTML, even if its ZIP
+ // inventory was rehashed to appear internally self-consistent.
+ let regenerated;
+ try{
+  const sourceHtml=utf8(files[0][1])
+   .replace('href="./buyer-showcase.css"','href="/buyer-showcase.css"')
+   .replace('src="./buyer-showcase.js"','src="/buyer-showcase.js"');
+  const sourceJs=utf8(files[2][1])
+   .replace("fetch(new URL('./buyer-demo.json',document.baseURI),",
+    "fetch('/buyer-demo.json',");
+  regenerated=createOfflineViewer({
+   rawHtml:sourceHtml,rawCss:utf8(files[1][1]),rawJs:sourceJs,payload
+  });
+ }catch{fail();}
+ if(regenerated!==offline)fail();
  if(!utf8(files[0][1]).includes('href="./buyer-showcase.css"')||
   !utf8(files[0][1]).includes('src="./buyer-showcase.js"')||
   !utf8(files[2][1]).includes("fetch(new URL('./buyer-demo.json',document.baseURI),"))fail();
