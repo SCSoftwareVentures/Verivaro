@@ -29,25 +29,64 @@ export function inventoryPrivilegedMigrations(migrations){
   serviceRolesMayRunMigrations:false
  });
 }
+// Role names are fixed to the separately reviewed bootstrap contract. All
+// supplied role attributes MUST be explicit observations; an absent field is
+// neither a safe default nor independent permission evidence.
 export const PRODUCTION_ROLES=Object.freeze({
  schemaOwner:'vv_production_schema_owner',
  executor:'vv_production_migration_executor',
- mandatoryAttributes:['NOSUPERUSER','NOCREATEDB','NOCREATEROLE','NOREPLICATION','NOBYPASSRLS','NOINHERIT'],
+ ledgerCustodian:'vv_production_ledger_custodian',
+ runtime:'verivaro_runtime',
+ mandatoryAttributes:Object.freeze([
+  'NOSUPERUSER','NOCREATEDB','NOCREATEROLE','NOREPLICATION',
+  'NOBYPASSRLS','NOINHERIT'
+ ]),
  runtimeMustNotBeMember:true
 });
-export function validateRoleSnapshot({owner,executor,application,canExecutorSetOwner}={}){
- if(!owner||!executor||!application)problem('missing role inventory');
- for(const role of [owner,executor,application]){
-  if(typeof role.name!=='string'||role.superuser!==false||
-   role.createRole!==false||role.createDb!==false||
-   role.bypassRls!==false||role.replication!==false)
-   problem('privileged production role detected');
+const ROLE_PROPERTIES=Object.freeze([
+ 'superuser','createRole','createDb','bypassRls','replication',
+ 'inherit','canLogin','canCreateInDatabase'
+]);
+const isRole=r=>r&&typeof r==='object'&&!Array.isArray(r)&&
+ typeof r.name==='string'&&ROLE_PROPERTIES.every(p=>typeof r[p]==='boolean');
+
+// This routine is *only* a fail-closed, read-only catalogue snapshot policy.
+// Application credentials, external signer custody and trusted provenance
+// must be approved independently. It never authorises a staging SQL write.
+export function validateRoleSnapshot({owner,executor,custodian,application,memberships}={}){
+ const expected=[
+  [owner,PRODUCTION_ROLES.schemaOwner],
+  [executor,PRODUCTION_ROLES.executor],
+  [custodian,PRODUCTION_ROLES.ledgerCustodian],
+  [application,PRODUCTION_ROLES.runtime]
+ ];
+ if(expected.some(([r,name])=>!isRole(r)||r.name!==name))
+  problem('missing or wrongly identified role inventory');
+ if(new Set(expected.map(([r])=>r.name)).size!==expected.length)
+  problem('role principal collision');
+ for(const [r,name] of expected){
+  if(r.superuser||r.createRole||r.createDb||r.bypassRls||
+     r.replication||r.inherit||r.canLogin||
+     r.canCreateInDatabase!==(name===PRODUCTION_ROLES.schemaOwner))
+   problem('privileged or unverified role attributes: '+name);
  }
- if(owner.name!==PRODUCTION_ROLES.schemaOwner||owner.canLogin!==false||
-  executor.name!==PRODUCTION_ROLES.executor||executor.inherit!==false||
-  executor.canLogin!==false||canExecutorSetOwner!==true||
-  application.canSetOwner!==false||application.isOwnerMember!==false)
-  problem('ownership, membership or login contract not met');
- return Object.freeze({roleSeparationVerified:true,ownerLoginDisabled:true,
-  executorLoginDisabledUntilProvisioned:true,productionApproval:false});
+ // The only allowed grant touching the four protected principals is
+ // executor -> schema owner with SET TRUE, INHERIT FALSE, ADMIN FALSE.
+ // A caller must supply a COMPLETE inbound and outbound membership inventory;
+ // a boolean "can SET" assertion is insufficient to prove no hidden edge.
+ if(!Array.isArray(memberships)||memberships.length!==1)
+  problem('unverified or unexpected role membership inventory');
+ const e=memberships[0];
+ if(!e||typeof e!=='object'||Array.isArray(e)||
+    e.member!==PRODUCTION_ROLES.executor||
+    e.grantedRole!==PRODUCTION_ROLES.schemaOwner||
+    e.inherit!==false||e.set!==true||e.admin!==false)
+  problem('unsafe or incomplete SET-only membership');
+ return Object.freeze({
+  roleSeparationVerified:true,ownerLoginDisabled:true,
+  executorLoginDisabledUntilProvisioned:true,
+  ledgerCustodianSeparated:true,
+  independentlyWitnessed:false,
+  productionApproval:false
+ });
 }
