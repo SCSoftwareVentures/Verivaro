@@ -1,0 +1,137 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,open,writeFile,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {createHash,generateKeyPairSync,sign} from 'node:crypto';
+import {issuer,audience,nonce,token,publicKey,privateKey} from '../fixtures/provider-fixture.mjs';
+import {openFileProviderCheckpointStore} from '../../src/security/provider-checkpoint-store.mjs';
+import {openWitnessBoundProviderVerifier} from '../../src/security/provider-checkpoint-witness.mjs';
+
+const now=1800000000;
+const record=c=>JSON.stringify({version:1,issuer,audience,sequence:c.sequence,digest:c.digest})+'\n';
+function catalogue(authority,sequence,kid,key){
+ const bytes=Buffer.from(JSON.stringify({version:1,issuer,audience,sequence,issuedAt:now,expiresAt:now+600,
+  keys:[{kid,pem:key.export({type:'spki',format:'pem'})}]}));
+ return {catalogue:bytes,signature:sign(null,bytes,authority.privateKey),
+  checkpoint:{sequence,digest:createHash('sha256').update(bytes).digest('hex')}};
+}
+async function fixture(t,first){
+ const directory=await mkdtemp(join(tmpdir(),'vv-witness-'));
+ t.after(async()=>rm(directory,{recursive:true,force:true}));
+ const filename=join(directory,'provider-keyset-checkpoint.json');
+ const f=await open(filename,'wx',0o600);
+ try{await f.writeFile(record(first.checkpoint));await f.sync();}finally{await f.close();}
+ return {directory,filename};
+}
+function fakeWitness(initial,events=[]){
+ let stored={...initial};
+ return {
+  read:async({issuer:iss,audience:aud})=>{
+   assert.equal(iss,issuer);assert.equal(aud,audience);
+   events.push('witness-read');return {...stored};
+  },
+  compareAndSwap:async({issuer:iss,audience:aud,previous,next})=>{
+   assert.equal(iss,issuer);assert.equal(aud,audience);
+   events.push('witness-commit');
+   if(stored.sequence!==previous.sequence||stored.digest!==previous.digest)
+    throw Error('witness compare-and-swap conflict');
+   if(next.sequence<=stored.sequence)throw Error('witness sequence rollback');
+   stored={...next};
+   return {...stored};
+  },
+  inspect:()=>({...stored}),
+  setForTest:c=>{stored={...c};}
+ };
+}
+function config(store,witness,authority,first){
+ return {store,witness,issuer,audience,authorityKey:authority.publicKey,requiredAcr:'fixture:mfa',
+  catalogue:first.catalogue,signature:first.signature,now:()=>now};
+}
+test('independent witness catches local disk snapshot rollback on verifier restart',async t=>{
+ const authority=generateKeyPairSync('ed25519'),other=generateKeyPairSync('rsa',{modulusLength:2048});
+ const first=catalogue(authority,1,'fixture',publicKey),next=catalogue(authority,2,'next',other.publicKey);
+ const {directory,filename}=await fixture(t,first);
+ const witness=fakeWitness(first.checkpoint),store=await openFileProviderCheckpointStore({directory,issuer,audience});
+ t.after(()=>store.close().catch(()=>{}));
+ const v=await openWitnessBoundProviderVerifier(config(store,witness,authority,first));
+ assert.equal(v.verify(token(nonce(),{iat:now,auth_time:now,exp:now+300})).issuer,issuer);
+ await v.rotate(next.catalogue,next.signature,next.checkpoint);
+ assert.deepEqual(await store.read(),next.checkpoint);
+ assert.deepEqual(witness.inspect(),next.checkpoint);
+ assert.throws(()=>v.verify(token(nonce(),{iat:now,auth_time:now,exp:now+300})),/unsupported provider header/);
+ await store.close();
+ // Simulate rollback of ONLY local storage, without rewriting the separate
+ // witness. The checkpoint directory is already single-owner-unlocked.
+ await writeFile(filename,record(first.checkpoint));
+ const rolledBack=await openFileProviderCheckpointStore({directory,issuer,audience});
+ t.after(()=>rolledBack.close().catch(()=>{}));
+ await assert.rejects(openWitnessBoundProviderVerifier(config(rolledBack,witness,authority,first)),/witness disagreement/);
+ assert.deepEqual(witness.inspect(),next.checkpoint);
+});
+test('witness-before-disk ordering and fail-closed ambiguous second commit',async t=>{
+ const authority=generateKeyPairSync('ed25519'),other=generateKeyPairSync('rsa',{modulusLength:2048});
+ const first=catalogue(authority,1,'fixture',publicKey),next=catalogue(authority,2,'next',other.publicKey);
+ const {directory}=await fixture(t,first),events=[];
+ const witness=fakeWitness(first.checkpoint,events);
+ const real=await openFileProviderCheckpointStore({directory,issuer,audience});
+ t.after(()=>real.close().catch(()=>{}));
+ const store={
+  read:()=>real.read(),isOpen:()=>real.isOpen(),
+  bindVerifier:()=>{
+   const commit=real.bindVerifier();
+   return async(prev,nextState)=>{
+    events.push('disk-commit');
+    return commit(prev,nextState);
+   };
+  }
+ };
+ const v=await openWitnessBoundProviderVerifier(config(store,witness,authority,first));
+ await v.rotate(next.catalogue,next.signature,next.checkpoint);
+ assert.ok(events.indexOf('witness-commit')<events.indexOf('disk-commit'));
+ assert.deepEqual(await real.read(),next.checkpoint);
+ await real.close();
+ // An independent witness ahead of a restored old disk checkpoint must
+ // block startup even when the old catalogue is correctly signed.
+ const oldDirectory=await fixture(t,first);
+ const stale=await openFileProviderCheckpointStore({directory:oldDirectory.directory,issuer,audience});
+ t.after(()=>stale.close().catch(()=>{}));
+ await assert.rejects(openWitnessBoundProviderVerifier(config(stale,witness,authority,first)),/witness disagreement/);
+});
+test('witness conflict or incomplete persistence blocks all further token checks',async t=>{
+ const authority=generateKeyPairSync('ed25519'),other=generateKeyPairSync('rsa',{modulusLength:2048});
+ const first=catalogue(authority,1,'fixture',publicKey),next=catalogue(authority,2,'next',other.publicKey);
+ const {directory}=await fixture(t,first);
+ const witness=fakeWitness(first.checkpoint);
+ const real=await openFileProviderCheckpointStore({directory,issuer,audience});
+ t.after(()=>real.close().catch(()=>{}));
+ const store={read:()=>real.read(),isOpen:()=>real.isOpen(),
+  bindVerifier:()=>{
+   real.bindVerifier();
+   return async()=>{throw Error('synthetic disk fsync failure');};
+  }};
+ const verifier=await openWitnessBoundProviderVerifier(config(store,witness,authority,first));
+ await assert.rejects(verifier.rotate(next.catalogue,next.signature,next.checkpoint),/update unconfirmed/);
+ assert.throws(()=>verifier.verify(token(nonce(),{iat:now,auth_time:now,exp:now+300})),/unavailable/);
+ assert.deepEqual(await real.read(),first.checkpoint);
+ assert.deepEqual(witness.inspect(),next.checkpoint);
+ await real.close();
+ // Since the authoritative witness committed and local fsync failed, a new
+ // process may not silently fall back to the previous signed catalogue.
+ const restarted=await openFileProviderCheckpointStore({directory,issuer,audience});
+ t.after(()=>restarted.close().catch(()=>{}));
+ await assert.rejects(openWitnessBoundProviderVerifier(config(restarted,witness,authority,first)),/witness disagreement/);
+});
+test('requires an independently supplied witness and rejects stale external state at startup',async t=>{
+ const authority=generateKeyPairSync('ed25519'),first=catalogue(authority,1,'fixture',publicKey);
+ const {directory}=await fixture(t,first);
+ const real=await openFileProviderCheckpointStore({directory,issuer,audience});
+ t.after(()=>real.close().catch(()=>{}));
+ await assert.rejects(openWitnessBoundProviderVerifier(config(real,undefined,authority,first)),/independent provider checkpoint witness required/);
+ const stale=fakeWitness({sequence:0,digest:first.checkpoint.digest});
+ await assert.rejects(openWitnessBoundProviderVerifier(config(real,stale,authority,first)),/witness disagreement/);
+ // A failed pre-bind witness check must not permanently consume the store's
+ // single authorised verifier lease.
+ const accepted=await openWitnessBoundProviderVerifier(config(real,fakeWitness(first.checkpoint),authority,first));
+ assert.equal(accepted.verify(token(nonce(),{iat:now,auth_time:now,exp:now+300})).issuer,issuer);
+});
