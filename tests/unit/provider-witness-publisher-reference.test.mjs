@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {generateKeyPairSync,sign} from 'node:crypto';
-import {mkdtemp,mkdir,readFile,writeFile,rm,unlink} from 'node:fs/promises';
+import {mkdtemp,mkdir,readFile,writeFile,rm,unlink,readdir} from 'node:fs/promises';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+const execFileAsync=promisify(execFile);
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {encodeWitnessGenesis,openReferenceWitnessJournal} from '../../src/security/provider-witness-journal.mjs';
@@ -171,4 +174,155 @@ test('mutating a live signed receipt permanently faults the publisher even after
  await publisher.close();
  // A fault must retain the lock to force an operator review before reopening.
  await assert.rejects(openReferenceWitnessReceiptPublisher(f.publisherConfig()),/unavailable/);
+});
+
+
+test('nonresponsive signer is deadline-bounded, receives abort, and never commits a late signature',async t=>{
+ const f=await lab(t);
+ let receivedSignal;
+ const publisher=await openReferenceWitnessReceiptPublisher({
+  ...f.publisherConfig(),signerTimeoutMs:40,
+  signStatement:async(_bytes,_statement,{signal})=>{
+   receivedSignal=signal;
+   return new Promise(()=>{});
+  }
+ });
+ const previous=await publisher.read(scope);
+ await assert.rejects(publisher.compareAndSwap({...scope,previous,
+  statement:statement(null,second,2,'e'.repeat(64))}),/unavailable/);
+ assert.equal(receivedSignal?.aborted,true);
+ assert.deepEqual((await readFile(f.receiptPath)).toString('utf8'),
+  JSON.stringify(f.initial)+'\n');
+ await assert.rejects(publisher.read(scope),/unavailable/);
+ await publisher.close();
+ await assert.rejects(openReferenceWitnessReceiptPublisher(f.publisherConfig()),/unavailable/);
+});
+
+test('caller cancellation propagates to signer before disk publication and latches uncertainty',async t=>{
+ const f=await lab(t);
+ let entered;
+ const started=new Promise(resolve=>{entered=resolve;});
+ const controller=new AbortController();
+ const publisher=await openReferenceWitnessReceiptPublisher({
+  ...f.publisherConfig(),signerTimeoutMs:1000,
+  signStatement:(_bytes,_statement,{signal})=>{
+   entered(signal);
+   return new Promise(()=>{});
+  }
+ });
+ const previous=await publisher.read(scope);
+ const pending=publisher.compareAndSwap({...scope,previous,
+  statement:statement(null,second,2,'f'.repeat(64))},
+  {signal:controller.signal});
+ const observedSignal=await started;
+ controller.abort();
+ await assert.rejects(pending,/unavailable/);
+ assert.equal(observedSignal.aborted,true);
+ assert.equal((await publisher.read(scope).catch(e=>e.message)), 'reference receipt publisher unavailable');
+ assert.equal(JSON.parse((await readFile(f.receiptPath)).toString()).statement.count,1);
+ await publisher.close();
+});
+
+test('prewrite malformed client submissions reject safely without disabling healthy publisher',async t=>{
+ const f=await lab(t),publisher=await openReferenceWitnessReceiptPublisher(f.publisherConfig());
+ const previous=await publisher.read(scope);
+ await assert.rejects(publisher.compareAndSwap({...scope,
+  previous:{statement:{invalid:true},signature:'wrong'},
+  statement:statement(null,second,2,'a'.repeat(64))}),/conflict/);
+ await assert.rejects(publisher.compareAndSwap({...scope,previous,
+  statement:{version:1,malformed:true}}),/invalid transition/);
+ assert.deepEqual((await publisher.read(scope)).statement.checkpoint,first);
+ await publisher.compareAndSwap({...scope,previous,
+  statement:statement(null,second,2,'b'.repeat(64))});
+ assert.deepEqual((await publisher.read(scope)).statement.checkpoint,second);
+ await publisher.close();
+});
+
+test('failure after temporary fsync leaves committed receipt unchanged and preserves recovery lock',async t=>{
+ const f=await lab(t);
+ const publisher=await openReferenceWitnessReceiptPublisher({
+  ...f.publisherConfig(),enableTestFaultInjection:true,
+  faultInjection:phase=>{
+   if(phase==='after-temp-fsync')throw Error('synthetic interrupted persistence');
+  }
+ });
+ const previous=await publisher.read(scope);
+ await assert.rejects(publisher.compareAndSwap({...scope,previous,
+  statement:statement(null,second,2,'a'.repeat(64))}),/unavailable/);
+ await publisher.close();
+ assert.equal(JSON.parse((await readFile(f.receiptPath)).toString()).statement.count,1);
+ assert.equal((await readdir(f.publisherDirectory)).filter(n=>n.endsWith('.pending')).length,0);
+ await assert.rejects(openReferenceWitnessReceiptPublisher(f.publisherConfig()),/unavailable/);
+});
+
+test('separate Node process cannot obtain a publisher lease held by another process',async t=>{
+ const f=await lab(t),publisher=await openReferenceWitnessReceiptPublisher(f.publisherConfig());
+ const pub=join(f.root,'trusted-publisher-key.pem');
+ await writeFile(pub,f.signer.publicKey.export({type:'spki',format:'pem'}),{mode:0o600});
+ const code=String.raw`
+import {readFileSync} from 'node:fs';
+import {openReferenceWitnessReceiptPublisher} from './src/security/provider-witness-publisher-reference.mjs';
+try{
+ const cfg=JSON.parse(process.env.VV_ARGS);
+ await openReferenceWitnessReceiptPublisher({...cfg,
+  trustedPublicKey:readFileSync(process.env.VV_PUBLIC_KEY),
+  signStatement:async()=>{throw Error('signer not expected');}
+ });
+ process.exit(21);
+}catch{process.exit(22);}
+`;
+ await assert.rejects(execFileAsync(process.execPath,
+  ['--input-type=module','-e',code],{
+   cwd:process.cwd(),timeout:10000,
+   env:{...process.env,VV_ARGS:JSON.stringify({
+    directory:f.publisherDirectory,...scope,trustedFloor:f.floor
+   }),VV_PUBLIC_KEY:pub}
+  }),error=>error.code===22);
+ assert.deepEqual((await publisher.read(scope)).statement.checkpoint,first);
+ await publisher.close();
+});
+
+test('separate Node process crash after rename leaves ambiguous receipt and abandoned writer lock',async t=>{
+ const f=await lab(t);
+ const keyPath=join(f.root,'test-only-signer.pem');
+ const pubPath=join(f.root,'test-only-public.pem');
+ await writeFile(keyPath,f.signer.privateKey.export({type:'pkcs8',format:'pem'}),{mode:0o600});
+ await writeFile(pubPath,f.signer.publicKey.export({type:'spki',format:'pem'}),{mode:0o600});
+ const code=String.raw`
+import {readFileSync} from 'node:fs';
+import {createPrivateKey,sign} from 'node:crypto';
+import {openReferenceWitnessReceiptPublisher} from './src/security/provider-witness-publisher-reference.mjs';
+try{
+ const cfg=JSON.parse(process.env.VV_ARGS);
+ const signer=createPrivateKey(readFileSync(process.env.VV_SIGN_KEY));
+ const publisher=await openReferenceWitnessReceiptPublisher({...cfg,
+  trustedPublicKey:readFileSync(process.env.VV_PUBLIC_KEY),
+  signStatement:bytes=>sign(null,bytes,signer).toString('base64url'),
+  enableTestFaultInjection:true,
+  faultInjection:phase=>{if(phase==='after-rename')process.exit(73);}
+ });
+ const previous=await publisher.read({issuer:cfg.issuer,audience:cfg.audience});
+ await publisher.compareAndSwap({...cfg.scope,previous,statement:cfg.statement});
+ process.exit(21);
+}catch{process.exit(22);}
+`;
+ const request={
+  directory:f.publisherDirectory,...scope,trustedFloor:f.floor,
+  scope,statement:statement(null,second,2,'c'.repeat(64))
+ };
+ await assert.rejects(execFileAsync(process.execPath,
+  ['--input-type=module','-e',code],{
+   cwd:process.cwd(),timeout:10000,
+   env:{...process.env,VV_ARGS:JSON.stringify(request),
+    VV_PUBLIC_KEY:pubPath,VV_SIGN_KEY:keyPath}
+  }),error=>error.code===73);
+ const updated=JSON.parse((await readFile(f.receiptPath)).toString()).statement;
+ assert.equal(updated.count,2,'rename was visible, but crash durability remains unproven');
+ await assert.rejects(openReferenceWitnessReceiptPublisher(f.publisherConfig()),/unavailable/);
+ await assert.rejects(openReferenceWitnessReceiptPublisher(f.publisherConfig({
+  count:updated.count,headHash:updated.headHash
+ })),/unavailable/);
+ assert.ok((await readdir(f.publisherDirectory)).includes('.receipt-publisher.lock'));
+ // Only a supervised operator can examine durable evidence and release the
+ // stale crash lock. This test does not perform such a recovery in production.
 });

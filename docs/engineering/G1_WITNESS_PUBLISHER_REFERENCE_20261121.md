@@ -9,3 +9,26 @@ On startup, the publisher requires an independently supplied `{count,headHash}` 
 `tests/unit/provider-witness-publisher-reference.test.mjs` connects the real on-disk witness journal, the receipt-guarded verifier and separate file-backed reference publisher. The tests cover successful paired publication/restart, concurrency, replay/fork/rollback rejection, competing writer lease, stale/truncated receipt snapshots, signer outage, and remote committed publication with its ACK deliberately discarded.
 
 **Limitations and explicit release gates:** The publisher is on the same CI host as the journal and its temporary signer and thus is NOT independent anti-rollback custody. The file snapshot is not a replicated, append-only audit transparency log. No off-host floor publication, hardware-backed keys, cross-region atomicity, authorization policy, anti-split-brain protocol, hostile-local-admin resilience, or real crash/power-loss qualification is demonstrated. A privileged operator who controls the journal, publisher receipt, signer and trusted floor can still roll everything back. No automatic replay, repair or head promotion is allowed after an uncertain publication. A real production design requires independent publisher governance, durable quorum storage, separately controlled public-key trust anchors, authenticated monotonic floor custody, independent review and owner authorization. PR #4 remains draft and unmerged.
+
+## Deadline, cancellation and crash-injection qualification (21 Nov 2026)
+
+The publisher now accepts \`signerTimeoutMs\` (default 3000 ms, range 25–30000).
+It invokes \`signStatement(bytes,statement,{signal})\` with an AbortSignal and
+caps the application's await even for an uncooperative signer. Optional
+\`compareAndSwap(request,{signal})\` propagates caller cancellation through
+the signing boundary. An uncertain signing result latches fail-closed; a late
+signature cannot be persisted by the publisher after the caller has failed.
+The remote signer itself must also honour abort, enforce its own resource
+limits, and never treat cancellation as permission to retry an ambiguous act.
+
+Test-only \`enableTestFaultInjection:true\` plus \`faultInjection(phase)\`
+supports \`after-temp-fsync\` and \`after-rename\` injection; it MUST NOT be
+configured in any deployed workload. The tests include a separate Node
+process exiting after the receipt rename but before the parent-directory
+fsync, demonstrating an uncertain commit with an abandoned writer lock.
+Visible receipt bytes after an ordinary process crash are **not proof of
+power-loss durability**. A second process also attempts and is denied the
+exclusive writer lease. Signer-timeout, caller-abort, and malformed-client
+negative cases are covered. Safe pre-persistence malformed submissions
+reject without poisoning a healthy publisher. Only a supervised, independently
+verified operation may clear an abandoned lock; no auto-recovery path is added.

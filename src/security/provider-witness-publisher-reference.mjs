@@ -16,6 +16,38 @@ const DIR=constants.O_RDONLY|constants.O_DIRECTORY|constants.O_NOFOLLOW;
 const READ=constants.O_RDONLY|constants.O_NOFOLLOW;
 const EXCLUSIVE=constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW;
 const MAX=4096;
+// Application deadlines alone do not stop an uncooperative remote signer.
+// Late signatures cannot reach this publisher's persistence path after timeout.
+const signalOk=s=>s===undefined||(
+ s&&typeof s.addEventListener==='function'&&
+ typeof s.removeEventListener==='function'&&typeof s.aborted==='boolean'
+);
+async function signWithDeadline(signStatement,bytes,statement,timeoutMs,externalSignal){
+ if(!signalOk(externalSignal)||externalSignal?.aborted)throw fail();
+ const controller=new AbortController();
+ const signal=externalSignal?AbortSignal.any([controller.signal,externalSignal]):controller.signal;
+ let timer,onAbort;
+ try{
+  const abandoned=new Promise((_,reject)=>{
+   onAbort=()=>reject(fail());
+   signal.addEventListener('abort',onAbort,{once:true});
+   timer=setTimeout(()=>controller.abort(),timeoutMs);
+  });
+  const signed=await Promise.race([
+   Promise.resolve().then(()=>{
+    if(signal.aborted)throw fail();
+    return signStatement(Buffer.from(bytes),statement,{signal});
+   }),
+   abandoned
+  ]);
+  if(signal.aborted)throw fail();
+  return signed;
+ }finally{
+  clearTimeout(timer);
+  signal.removeEventListener('abort',onAbort);
+  controller.abort();
+ }
+}
 const checkpointSame=(a,b)=>a?.sequence===b?.sequence&&a?.digest===b?.digest;
 function same(a,b){return a.count===b.count&&a.headHash===b.headHash&&
  checkpointSame(a.checkpoint,b.checkpoint);}
@@ -69,13 +101,18 @@ const copy=e=>Object.freeze({
  signature:e.signature
 });
 export async function openReferenceWitnessReceiptPublisher({
- directory,issuer,audience,trustedPublicKey,trustedFloor,signStatement
+ directory,issuer,audience,trustedPublicKey,trustedFloor,signStatement,
+ signerTimeoutMs=3000,faultInjection,enableTestFaultInjection=false
 }){
  if(!isAbsolute(directory??'')||!scopeOk(issuer)||!scopeOk(audience)||
   !trustedFloor||Object.keys(trustedFloor).sort().join(',')!=='count,headHash'||
   !Number.isSafeInteger(trustedFloor.count)||trustedFloor.count<1||
   trustedFloor.count>8192||!HEX.test(trustedFloor.headHash)||
-  !trustedPublicKey||typeof signStatement!=='function')throw fail();
+  !trustedPublicKey||typeof signStatement!=='function'||
+  !Number.isSafeInteger(signerTimeoutMs)||signerTimeoutMs<25||signerTimeoutMs>30000||
+  (faultInjection!==undefined&&
+   (typeof faultInjection!=='function'||enableTestFaultInjection!==true)))
+  throw fail();
  const scope=Object.freeze({issuer,audience}),root=resolve(directory);
  const path=join(root,'signed-witness-receipt.json'),lockPath=join(root,'.receipt-publisher.lock');
  const dir=await open(root,DIR);
@@ -108,33 +145,51 @@ export async function openReferenceWitnessReceiptPublisher({
     throw fail();
    }
   }
+  async function injectForTests(phase){
+   // Never pass this callback from production configuration. It is deliberately
+   // opt-in and exists only to force deterministic local crash/failure stages.
+   if(enableTestFaultInjection&&faultInjection)await faultInjection(phase);
+  }
   return Object.freeze({
    async read(requestScope){
     if(requestScope?.issuer!==issuer||requestScope?.audience!==audience||
      closed||faulted||busy)throw fail();
     return copy(await check());
    },
-   async compareAndSwap({issuer:iss,audience:aud,previous,statement}={}){
-    if(iss!==issuer||aud!==audience||closed||faulted||busy)throw fail();
+   async compareAndSwap({issuer:iss,audience:aud,previous,statement}={}, {signal}={}){
+    if(iss!==issuer||aud!==audience||closed||faulted||busy||
+     !signalOk(signal)||signal?.aborted)throw fail();
     busy=true;
     let persistenceAttempted=false;
     try{
      const current=await check();
-     if(!previous||!canonicalReceipt(previous).equals(canonicalReceipt(current)))
-      throw Error('reference receipt CAS conflict');
+     // Malformed/replayed client input has not altered trusted state. Reject
+     // safely without poisoning an otherwise healthy publisher.
+     let previousMatches=false;
+     try{
+      previousMatches=!!previous&&canonicalReceipt(previous).equals(canonicalReceipt(current));
+     }catch{}
+     if(!previousMatches)throw Error('reference receipt CAS conflict');
      const prior=verifyEnvelope(current,scope,trustedPublicKey,1);
-     const nextBytes=canonicalWitnessAuditStatement(statement);
+     let nextBytes;
+     try{nextBytes=canonicalWitnessAuditStatement(statement);}
+     catch{throw Error('reference receipt invalid transition');}
      if(statement.issuer!==issuer||statement.audience!==audience||
       statement.count!==prior.count+1||statement.count>8192||
       statement.checkpoint.sequence<=prior.checkpoint.sequence||
       statement.headHash===prior.headHash)throw Error('reference receipt invalid transition');
      // The signer is an external dependency: it must independently verify the
      // signed journal transition and enforce separate custody in production.
-     const signature=await signStatement(Buffer.from(nextBytes),statement);
+     const signature=await signWithDeadline(
+      signStatement,nextBytes,statement,signerTimeoutMs,signal
+     );
      const next=copy({statement,signature});
      const observed=verifyEnvelope(next,scope,trustedPublicKey,statement.count);
      if(!same(observed,{count:statement.count,headHash:statement.headHash,
       checkpoint:statement.checkpoint}))throw fail();
+     // A cancelled caller cannot cause a local receipt publication. Once
+     // persistence begins, ambiguous outcomes fault and require reconciliation.
+     if(signal?.aborted)throw fail();
      const bytes=canonicalReceipt(next);
      const pending=join(root,'.receipt-'+randomUUID()+'.pending');
      let pendingCreated=false;
@@ -143,8 +198,11 @@ export async function openReferenceWitnessReceiptPublisher({
       pendingCreated=true;
       persistenceAttempted=true;
       try{await f.writeFile(bytes);await f.sync();}finally{await f.close();}
+      await injectForTests('after-temp-fsync');
+      if(signal?.aborted)throw fail();
       await rename(pending,path);
       pendingCreated=false;
+      await injectForTests('after-rename');
       await dir.sync();
       const verified=await strictRead(path);
       verifyEnvelope(verified.value,scope,trustedPublicKey,statement.count);
