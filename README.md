@@ -57,6 +57,12 @@ The inventory covers four local npm lockfiles, pinned GitHub Actions references 
 - Financial rules: exact AUD cents, basis grouping, confirmed milestone deduplication, unknown counts; not legal or payment entitlement.
 - Draft snapshots: deterministic index and text digest verification; not a signed or released handover.
 
+## PostgreSQL migration integrity gate
+
+The [P0-B source migration register](docs/engineering/G1_P0B_MIGRATION_CHAIN_20261121.md) tracks all 63 numbered SQL migrations by Git blob identity and byte length. The PostgreSQL workflow verifies **the complete on-disk chain and exact CI application order before executing any migration**, then retains its final privilege audit after migration 0063. New or modified migrations require an explicit reviewed register update.
+
+Run `node scripts/verify-migration-chain.mjs` for the same preflight locally. **This is Git SHA-1 repository-drift detection, not an independently signed, collision-resistant supply-chain attestation or production migration history.** The migration owner, database role custody, backup/rollback rehearsal, deployment downtime and customer environment remain unverified.
+
 ## Engineering slices currently in the repository
 
 The [P0-A buyer trust acceptance register](docs/engineering/G1_P0A_BUYER_ACCEPTANCE_REGISTER_20261121.json) now lists eight **unverified** off-host and ownership proof requirements. A new synchronous, in-memory authority transition model tests stale writer fencing, policy revocation ordering, simulated partitions and lost acknowledgements without asserting remote consensus or production safety.

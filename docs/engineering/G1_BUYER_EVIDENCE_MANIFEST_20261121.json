@@ -29,9 +29,14 @@
         "db/migrations/0003_signed_context.sql",
         "src/security/scoped-database.mjs",
         "tests/integration/live-pool.test.mjs",
-        ".github/workflows/postgres-g1.yml"
+        ".github/workflows/postgres-g1.yml",
+        "db/migration-lock.json",
+        "src/security/migration-chain-audit.mjs",
+        "scripts/verify-migration-chain.mjs",
+        "tests/unit/migration-chain-audit.test.mjs",
+        "docs/engineering/G1_P0B_MIGRATION_CHAIN_20261121.md"
       ],
-      "blocker": "Independent operator assurance, external identity-provider deployment, migration recovery signoff and role custody absent."
+      "blocker": "A repository-native ordered migration manifest and negative drift tests are added for all 63 files, before disposable PostgreSQL CI applies schema; actual production change-control signatures, database-stored migration ledger, independent owner/custody segregation, external IdP configuration, real deployment/rollback rehearsal and operational privilege attestation remain unverified."
     },
     {
       "id": "G1_EVIDENCE",

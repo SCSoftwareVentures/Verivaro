@@ -5,6 +5,7 @@
 ## What is demonstrably implemented
 
 - **G0 domain core:** deterministic source and dependency calculations, findings, proof deadlines, financial arithmetic and synthetic export checks, with unit tests and demo. Not an autonomous AI analysis engine or validated customer workflow.
+- **P0-B migration provenance:** All 63 numbered SQL migration files are now registered by Git blob ID and byte length; CI rejects missing, altered, extra or out-of-order migration sources **before** applying schema. This is an unsigned repository integrity gate, not a production migration approval, history ledger or independent DBA signoff.
 - **G1 database and identity slices:** versioned PostgreSQL migrations, tenant/project policies, signed transaction scope, sessions and revocation, TLS identity/runtime plumbing, and real disposable-PostgreSQL integration gates. RLS does not constrain superusers or compromised context-signing authority.
 - **G1 storage and evidence slices:** quarantine, scanner integration, bounded parsing/normalization, encrypted artifact and backup/recovery components; scoped read/write and retrieval tests for exercised paths. Tested scanners are not malware certification.
 - **G2–G4 partial engineering:** OCR, document/requirement analysis, proof planning, handover/export and browser workspace components with test fixtures. Their presence does **not** demonstrate full V4.0 acceptance or market usability.

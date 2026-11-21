@@ -101,6 +101,23 @@ test('P0-A buyer contract lists all unsupported production trust requirements',(
  ])assert.ok(gate.sources.includes(name),'Missing P0-A reference evidence '+name);
 });
 
+test('P0-B tenancy gate includes exact migration provenance while production stays blocked',()=>{
+ const gate=manifest.states.find(x=>x.id==='G1_TENANCY');
+ assert.equal(gate.status,'PARTIAL_CI');
+ for(const source of [
+  'db/migration-lock.json',
+  'src/security/migration-chain-audit.mjs',
+  'scripts/verify-migration-chain.mjs',
+  'tests/unit/migration-chain-audit.test.mjs',
+  'docs/engineering/G1_P0B_MIGRATION_CHAIN_20261121.md'
+ ])assert.ok(gate.sources.includes(source),'Missing P0-B source '+source);
+ assert.match(gate.blocker,/production change-control signatures|database-stored migration ledger/i);
+ const workflow=readFileSync(file('.github/workflows/postgres-g1.yml'),'utf8');
+ assert.ok(workflow.indexOf('node scripts/verify-migration-chain.mjs')<
+  workflow.indexOf('psql -X -v ON_ERROR_STOP=1 -f db/migrations/0001_tenant_foundation.sql'));
+ assert.equal(manifest.productReleaseApproved,false);
+});
+
 test('production, sale and automated recovery claims are blocked while unresolved gates remain',()=>{
  const unresolved=manifest.states.filter(x=>x.status!=='INDEPENDENTLY_VERIFIED');
  assert.ok(unresolved.length>0);
