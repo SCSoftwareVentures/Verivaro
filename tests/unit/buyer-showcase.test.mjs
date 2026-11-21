@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {once} from 'node:events';
+import {request} from 'node:http';
 import {buildBuyerShowcasePayload} from '../../src/demo/buyer-showcase.mjs';
 import {createBuyerShowcaseServer} from '../../src/demo/buyer-showcase-server.mjs';
 
@@ -45,6 +46,14 @@ test('showcase renders deterministic synthetic state with no writable endpoint',
  assert.equal(payload.stages.length,4);
  assert.equal((await fetch(base+'/no-such-page')).status,404);
  assert.equal((await fetch(base+'/buyer-demo.json',{method:'POST'})).status,405);
- assert.equal((await fetch(base+'/buyer-demo.json',{headers:{Host:'remote.example'}})).status,403);
+ const hostSpoofStatus=await new Promise((resolve,reject)=>{
+  const req=request({
+   host:'127.0.0.1',port:server.address().port,
+   path:'/buyer-demo.json',method:'GET',
+   headers:{host:'remote.example'}
+  },res=>{res.resume();res.on('end',()=>resolve(res.statusCode));});
+  req.on('error',reject);req.end();
+ });
+ assert.equal(hostSpoofStatus,403);
  assert.equal((await fetch(base+'/buyer-demo.json',{method:'HEAD'})).headers.get('cache-control'),'no-store');
 });
