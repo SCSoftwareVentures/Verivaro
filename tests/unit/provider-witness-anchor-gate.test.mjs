@@ -145,3 +145,12 @@ test('forged signatures, wrong externally pinned head and invalid receipt floors
  await assert.rejects(f.open({count:1,headHash:'a'.repeat(64)}),/anchor state unavailable/);
  await assert.rejects(f.open({count:0,headHash:f.initialFloor.headHash}),/anchor state unavailable/);
 });
+
+test('stale client CAS before any write rejects safely without poisoning current authentication',async t=>{
+ const f=await lab(t),w=await f.open();
+ await assert.rejects(w.compareAndSwap({...scope,previous:second,next:third}),/conflict/);
+ assert.equal(f.writes(),0);
+ assert.deepEqual(await w.read(scope),first);
+ assert.deepEqual(await w.compareAndSwap({...scope,previous:first,next:second}),second);
+ await w.close();
+});

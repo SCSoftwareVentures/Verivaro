@@ -116,11 +116,16 @@ export async function openReceiptGuardedReferenceWitness({
     next.sequence<=previous.sequence||!ready())throw fail();
    if(writing)throw Error('witness anchor write in progress');
    writing=true;epoch++;
+   let safeClientConflict=false;
    try{
     const before=await journal.audit();
     exact(expected,before);
-    if(!SAME(previous,before.checkpoint))
+    if(!SAME(previous,before.checkpoint)){
+     // A stale, rejected client request has not touched disk or the anchor.
+     // It must not permanently deny otherwise healthy authentication.
+     safeClientConflict=true;
      throw Error('witness compare-and-swap conflict');
+    }
     const remote=await withDeadline(signal=>anchor.read(scope,{signal}),ioTimeoutMs);
     checkedEnvelope(remote,before);
     const committed=await journal.compareAndSwap({...scope,previous,next});
@@ -146,10 +151,10 @@ export async function openReceiptGuardedReferenceWitness({
     remoteEnvelope=confirmed;
     return Object.freeze({...after.checkpoint});
    }catch(e){
-    // A pre-write conflict is safe for local state, but we deliberately fault
-    // the active guard rather than allowing uncertain remote races.
+    if(safeClientConflict)throw e;
+    // Every other error can conceal remote advancement or local persistence
+    // uncertainty; deny until a supervised reconciliation and restart.
     faulted=true;
-    if(e?.message==='witness compare-and-swap conflict')throw e;
     throw fail();
    }finally{writing=false;epoch++;}
   },
