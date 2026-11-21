@@ -15,6 +15,8 @@ import {
 
 const scope={issuer:'https://issuer.example.invalid',audience:'verivaro-internal'};
 const now='2026-11-21T04:00:00.000Z';
+const testNonce='A'.repeat(43);
+const anotherNonce='B'.repeat(42)+'A';
 const approvalId='1'.repeat(32),publicationId='2'.repeat(32),evidenceHash='3'.repeat(64);
 function lab(){
  const custodians={primary:generateKeyPairSync('ed25519'),
@@ -42,19 +44,20 @@ function lab(){
    {role:'secondary',signature:sign(null,bytes,signKeys.secondary.privateKey).toString('base64url')}
   ]};
  }
- function signedHead(h){
+ function signedHead(h,requestNonce=testNonce){
   const statement=createUnsignedRecoveryFloorAuthorityStatement({
-   ...scope,...h,issuedAt:'2026-11-21T03:00:00.000Z'
+   ...scope,...h,requestNonce,issuedAt:now,
+   expiresAt:'2026-11-21T04:00:10.000Z'
   });
   return {statement,signature:sign(null,canonicalRecoveryFloorAuthorityStatement(statement),
    authorityKey.privateKey).toString('base64url')};
  }
  let remote={...prior},commits=0,dropAck=false,afterCommit,readHook;
  const authority={
-  async read(request){
+  async read(request,{requestNonce}){
    if(readHook)await readHook();
    assert.deepEqual(request,scope);
-   return signedHead(remote);
+   return signedHead(remote,requestNonce);
   },
   async compareAndSwap(request){
    if(request.issuer!==scope.issuer||request.audience!==scope.audience||
@@ -72,7 +75,7 @@ function lab(){
    remote={...request.publication.statement.next};
    if(afterCommit)await afterCommit();
    if(dropAck)throw Error('lost remote ack');
-   return signedHead(remote);
+   return signedHead(remote,request.requestNonce);
   }
  };
  const config=()=>({...scope,trustedFloor:prior,
@@ -123,7 +126,8 @@ test('changed scope, invalid validity and forged authority receipt fail closed',
  const receipt=f.signedHead(f.prior);
  const tampered={...receipt,signature:'a'.repeat(86)};
  assert.throws(()=>verifySignedRecoveryFloorAuthority(tampered,{
-  ...scope,trustedAuthorityKey:f.authorityKey.publicKey
+  ...scope,trustedAuthorityKey:f.authorityKey.publicKey,
+  expectedRequestNonce:testNonce,now
  }),/rejected/);
 });
 test('remote CAS publishes signed floor; fresh audit succeeds but old startup floor fails',async()=>{
@@ -215,4 +219,72 @@ test('invalid signed publication rejects safely before remote CAS',async()=>{
  assert.equal(f.commits(),0);
  assert.deepEqual(await gate.audit(),f.prior);
  gate.close();
+});
+
+
+test('signed v2 receipt requires matching nonce and rejects expiry, future time and v1 downgrade',()=>{
+ const f=lab(),envelope=f.signedHead(f.prior,testNonce);
+ const opts={...scope,trustedAuthorityKey:f.authorityKey.publicKey,
+  expectedRequestNonce:testNonce,now};
+ assert.deepEqual(verifySignedRecoveryFloorAuthority(envelope,opts),f.prior);
+ assert.throws(()=>verifySignedRecoveryFloorAuthority(envelope,{
+  ...opts,expectedRequestNonce:anotherNonce
+ }),/rejected/);
+ assert.throws(()=>verifySignedRecoveryFloorAuthority(envelope,{
+  ...opts,now:'2026-11-21T04:00:10.000Z'
+ }),/rejected/);
+ assert.throws(()=>verifySignedRecoveryFloorAuthority(envelope,{
+  ...opts,now:'2026-11-21T03:59:59.999Z'
+ }),/rejected/);
+ assert.throws(()=>verifySignedRecoveryFloorAuthority(envelope,{
+  ...opts,now:'2026-11-21T04:00:09.000Z',maxReceiptAgeMs:8000
+ }),/rejected/);
+ const v1={statement:{version:1,domain:'verivaro-g1-review-floor-authority-v1',
+  ...scope,...f.prior,issuedAt:now},signature:envelope.signature};
+ assert.throws(()=>verifySignedRecoveryFloorAuthority(v1,opts),/rejected/);
+});
+
+test('a cached authenticated authority read fails against the next fresh random nonce',async()=>{
+ const f=lab(),original=f.authority.read.bind(f.authority);
+ let cached,reads=0;
+ f.authority.read=async(...args)=>{
+  reads++;
+  if(!cached)cached=await original(...args);
+  return cached;
+ };
+ await assert.rejects(openReferenceRecoveryFloorPublicationGate(f.config()),/unavailable/);
+ assert.equal(reads,2);
+ assert.equal(f.commits(),0);
+});
+
+test('a signed CAS receipt from an older request cannot acknowledge a new commit',async()=>{
+ const f=lab(),original=f.authority.compareAndSwap.bind(f.authority);
+ f.authority.compareAndSwap=async(...args)=>{
+  await original(...args);
+  // Authentically signed, but bound to the wrong challenge, so not an ACK.
+  return f.signedHead(f.next,testNonce);
+ };
+ const gate=await openReferenceRecoveryFloorPublicationGate(f.config());
+ await assert.rejects(gate.publish({
+  publication:f.make(),consumptionLog:f.consumptionLog
+ }),/unavailable/);
+ assert.deepEqual(f.current(),f.next);
+ assert.equal(f.commits(),1);
+ await assert.rejects(gate.audit(),/unavailable/);
+ gate.close();
+});
+
+test('an otherwise valid challenge-bound receipt fails the trusted maximum-age check',async()=>{
+ const f=lab(),original=f.authority.read.bind(f.authority);
+ let reads=0;
+ const authority={...f.authority,read:async(...args)=>{
+  const signed=await original(...args);
+  reads++;
+  return signed;
+ }};
+ await assert.rejects(openReferenceRecoveryFloorPublicationGate({
+  ...f.config(),authority,
+  clock:()=>new Date(reads>=1?'2026-11-21T04:00:11.000Z':now)
+ }),/unavailable/);
+ assert.equal(f.commits(),0);
 });

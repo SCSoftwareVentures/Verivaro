@@ -13,3 +13,10 @@ An uncertain file write, remote acknowledgement, failed signature, timeout, path
 **Production-blocking limitations:** A privileged operator can roll back the file and locally supplied trusted state together; app-controlled private keys cannot replace independent custody. Local `O_EXCL` locks cannot fence workers on other hosts and cannot guarantee distributed linearizability. This design has no independent replicated state, transport authentication, remote quorum/lease, key rotation/revocation authority, monotonic floor publication, off-site backup, verified power-cycle semantics, or security assessment. The independent authority must be implemented and operated in a genuinely separate trust domain, with verified atomic conditional writes and consensus/fencing before making production security claims.
 
 The authority and gate deliberately expose **REVIEW_ONLY** floor publication. They never authorise automatic recovery, lock removal, repair, deployment or an external transaction. PR #4 remains draft, unmerged and undeployed; no spending or external infrastructure is required by this reference test.
+
+
+## Signed receipt v2 — breaking authority interface
+
+The authority now requires `read(scope,{requestNonce,signal})` and `compareAndSwap({...,requestNonce},{signal})`; a missing, malformed or noncanonical request nonce is rejected before a write. For each request it issues an Ed25519 signed v2 receipt containing the exact nonce, issuedAt and a 10-second expiresAt (configurable for synthetic tests within 25–30,000 ms). It verifies its own signer response against the challenge and time window before returning. The gate checks a distinct randomly generated nonce per interaction and rejects v1 responses.
+
+This protocol is **reference-only**, and the injected system clock is not an independent trusted-time service. Production adapters and protocol migration must be reviewed together rather than automatically falling back to legacy v1 receipts.

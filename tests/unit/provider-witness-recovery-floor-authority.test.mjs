@@ -23,6 +23,7 @@ import {
 const execAsync=promisify(execFile);
 const scope={issuer:'https://issuer.example.invalid',audience:'verivaro-internal'};
 const now='2026-11-21T04:00:00.000Z';
+const testNonce='A'.repeat(43),otherNonce='B'.repeat(42)+'A';
 const approvalId='1'.repeat(32),publicationId='2'.repeat(32),evidenceHash='3'.repeat(64);
 const signedBytes=(bytes,key)=>sign(null,bytes,key).toString('base64url');
 async function lab(t){
@@ -77,15 +78,16 @@ async function lab(t){
   clock:()=>new Date(now)
  });
  const request=(overrides={})=>({...scope,previous:prior,
-  publication:make(),consumptionLog:log,...overrides});
+  publication:make(),consumptionLog:log,requestNonce:testNonce,...overrides});
  return {root,directory,path,custodians,authorityKeys,
   prior,next,genesis,log,trustedKeys,config,make,open,gate,request};
 }
 test('real file-backed reference authority interoperates with signed publication gate',async t=>{
  const f=await lab(t),a=await f.open(),g=await f.gate(a);
- const initial=await a.read(scope);
+ const initial=await a.read(scope,{requestNonce:testNonce});
  assert.deepEqual(verifySignedRecoveryFloorAuthority(initial,{
-  ...scope,trustedAuthorityKey:f.authorityKeys.publicKey
+  ...scope,trustedAuthorityKey:f.authorityKeys.publicKey,
+  expectedRequestNonce:testNonce,now
  }),f.prior);
  const receipt=await g.publish({publication:f.make(),consumptionLog:f.log});
  assert.equal(receipt.status,'REVIEW_FLOOR_PUBLISHED_ONLY');
@@ -99,8 +101,9 @@ test('real file-backed reference authority interoperates with signed publication
  await assert.rejects(f.open(),/unavailable/);
  const reopened=await f.open({serial:durable.serial,
   headHash:durable.headHash,logHash:durable.logHash});
- assert.deepEqual(verifySignedRecoveryFloorAuthority(await reopened.read(scope),{
-  ...scope,trustedAuthorityKey:f.authorityKeys.publicKey
+ assert.deepEqual(verifySignedRecoveryFloorAuthority(await reopened.read(scope,{requestNonce:testNonce}),{
+  ...scope,trustedAuthorityKey:f.authorityKeys.publicKey,
+  expectedRequestNonce:testNonce,now
  }),f.next);
  await reopened.close();
 });
@@ -174,7 +177,8 @@ test('actual child process crash after fsync preserves ambiguous commit and lock
  await writeFile(signer,f.authorityKeys.privateKey.export({type:'pkcs8',format:'pem'}),{mode:0o600});
  await writeFile(temp,JSON.stringify({
   directory:f.directory,...scope,trustedAuthorityState:f.genesis.trustedAuthorityState,
-  publication:f.make(),consumptionLog:f.log.toString('base64')
+  publication:f.make(),consumptionLog:f.log.toString('base64'),
+  requestNonce:testNonce
  }),{mode:0o600});
  const child=String.raw`
 import {readFileSync} from 'node:fs';
@@ -248,7 +252,7 @@ test('out-of-band log mutation permanently faults and preserves lease',async t=>
  await writeFile(f.path,initial.subarray(0,initial.length-3));
  await assert.rejects(a.audit(),/unavailable/);
  await writeFile(f.path,initial);
- await assert.rejects(a.read(scope),/unavailable/);
+ await assert.rejects(a.read(scope,{requestNonce:testNonce}),/unavailable/);
  await a.close();
  await assert.rejects(f.open(),/unavailable/);
 });
@@ -262,7 +266,7 @@ test('valid signature returned by unavailable signer after deadline cannot ackno
    return new Promise(resolve=>{finish=resolve;});
   }
  });
- const pending=a.read(scope);
+ const pending=a.read(scope,{requestNonce:testNonce});
  const invocation=await started;
  await assert.rejects(pending,/unavailable/);
  assert.equal(invocation.signal.aborted,true);
@@ -300,4 +304,35 @@ test('orphan evidence, stale lock and symlink do not acquire writer lease',async
  await rename(f.path,other);
  await symlink(other,f.path);
  await assert.rejects(f.open(),/unavailable/);
+});
+
+
+test('reference authority rejects unchallenged reads and CAS before changing persistent data',async t=>{
+ const f=await lab(t),a=await f.open(),bytes=await readFile(f.path);
+ await assert.rejects(a.read(scope),/unavailable/);
+ await assert.rejects(a.compareAndSwap(f.request({requestNonce:undefined})),/unavailable/);
+ assert.equal((await readFile(f.path)).equals(bytes),true);
+ const signed=await a.read(scope,{requestNonce:testNonce});
+ assert.equal(signed.statement.requestNonce,testNonce);
+ await a.close();
+});
+
+test('authority signs the exact read and CAS nonce with a short v2 expiry window',async t=>{
+ const f=await lab(t),a=await f.open();
+ const initial=await a.read(scope,{requestNonce:testNonce});
+ assert.equal(initial.statement.version,2);
+ assert.equal(initial.statement.domain,'verivaro-g1-review-floor-authority-v2');
+ assert.equal(initial.statement.requestNonce,testNonce);
+ assert.equal(initial.statement.expiresAt,'2026-11-21T04:00:10.000Z');
+ const ack=await a.compareAndSwap(f.request({requestNonce:otherNonce}));
+ assert.equal(ack.statement.requestNonce,otherNonce);
+ assert.throws(()=>verifySignedRecoveryFloorAuthority(ack,{
+  ...scope,trustedAuthorityKey:f.authorityKeys.publicKey,
+  expectedRequestNonce:testNonce,now
+ }),/rejected/);
+ assert.deepEqual(verifySignedRecoveryFloorAuthority(ack,{
+  ...scope,trustedAuthorityKey:f.authorityKeys.publicKey,
+  expectedRequestNonce:otherNonce,now
+ }),f.next);
+ await a.close();
 });

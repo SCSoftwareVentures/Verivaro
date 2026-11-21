@@ -14,6 +14,10 @@ import {
 } from './provider-witness-recovery-floor-publication.mjs';
 
 const HEX=/^[0-9a-f]{64}$/,IDENT=/^[0-9a-f]{32}$/,ZERO='0'.repeat(64);
+const NONCE=/^[A-Za-z0-9_-]{43}$/;
+const validNonce=v=>typeof v==='string'&&NONCE.test(v)&&
+ Buffer.from(v,'base64url').length===32&&
+ Buffer.from(v,'base64url').toString('base64url')===v;
 const fail=()=>Error('reference floor authority unavailable');
 const conflict=()=>Error('reference floor authority CAS conflict');
 const invalid=()=>Error('reference floor authority invalid publication');
@@ -145,7 +149,7 @@ async function signBounded(signReceipt,statement,timeoutMs,externalSignal){
 export async function openReferenceRecoveryFloorAuthority({
  directory,issuer,audience,trustedAuthorityState,
  trustedAuthorityKey,trustedCustodianKeys,signReceipt,
- clock=()=>new Date(),signTimeoutMs=2000,
+ clock=()=>new Date(),signTimeoutMs=2000,receiptValidityMs=10000,
  enableTestFaultInjection=false,faultInjection
 }={}){
  if(typeof directory!=='string'||!isAbsolute(directory)||
@@ -153,7 +157,9 @@ export async function openReferenceRecoveryFloorAuthority({
   !trustedAuthorityKey||!exact(trustedCustodianKeys,'primary,secondary')||
   typeof signReceipt!=='function'||typeof clock!=='function'||
   !Number.isSafeInteger(signTimeoutMs)||signTimeoutMs<25||
-  signTimeoutMs>30000||(faultInjection!==undefined&&
+  signTimeoutMs>30000||!Number.isSafeInteger(receiptValidityMs)||
+  receiptValidityMs<25||receiptValidityMs>30000||
+  (faultInjection!==undefined&&
    (enableTestFaultInjection!==true||typeof faultInjection!=='function')))
   throw fail();
  const root=resolve(directory),scope=Object.freeze({issuer,audience});
@@ -214,23 +220,30 @@ export async function openReferenceRecoveryFloorAuthority({
    if(!(time instanceof Date)||!Number.isFinite(time.getTime()))throw fail();
    return time.toISOString();
   }
-  async function receipt(state,signal){
+  async function receipt(state,signal,requestNonce){
+   if(!validNonce(requestNonce))throw fail();
+   const issuedAt=timestamp();
+   const expiresAt=new Date(Date.parse(issuedAt)+receiptValidityMs).toISOString();
    const statement=createUnsignedRecoveryFloorAuthorityStatement({
     ...scope,serial:state.serial,headHash:state.headHash,
-    issuedAt:timestamp()
+    requestNonce,issuedAt,expiresAt
    });
    const response=await signBounded(signReceipt,statement,signTimeoutMs,signal);
-   verifySignedRecoveryFloorAuthority(response,{...scope,trustedAuthorityKey});
+   verifySignedRecoveryFloorAuthority(response,{
+    ...scope,trustedAuthorityKey,expectedRequestNonce:requestNonce,
+    now:timestamp(),maxReceiptAgeMs:receiptValidityMs
+   });
    return response;
   }
   return Object.freeze({
-   async read(requestScope,{signal}={}){
+   async read(requestScope,{signal,requestNonce}={}){
     if(closed||faulted||busy||requestScope?.issuer!==issuer||
-     requestScope?.audience!==audience)throw fail();
+     requestScope?.audience!==audience||!validSignal(signal)||
+     signal?.aborted||!validNonce(requestNonce))throw fail();
     busy=true;
     try{
      const state=await checked();
-     const signed=await receipt(state,signal);
+     const signed=await receipt(state,signal,requestNonce);
      const second=await checked();
      if(!sameState(state,second)||signal?.aborted)throw fail();
      return signed;
@@ -238,9 +251,9 @@ export async function openReferenceRecoveryFloorAuthority({
     finally{busy=false;}
    },
    async compareAndSwap({issuer:iss,audience:aud,previous,publication,
-    consumptionLog}={}, {signal}={}){
+    consumptionLog,requestNonce}={}, {signal}={}){
     if(closed||faulted||busy||iss!==issuer||aud!==audience||
-     !validSignal(signal)||signal?.aborted)throw fail();
+     !validSignal(signal)||signal?.aborted||!validNonce(requestNonce))throw fail();
     busy=true;
     let started=false;
     try{
@@ -279,7 +292,7 @@ export async function openReferenceRecoveryFloorAuthority({
       logHash:next.hash,count:before.count+1};
      await checked();
      usedIds.add(proposal.publicationId);
-     const signed=await receipt(expected,signal);
+     const signed=await receipt(expected,signal,requestNonce);
      if(signal?.aborted)throw fail();
      return signed;
     }catch(e){
