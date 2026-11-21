@@ -57,7 +57,7 @@
         "tests/unit/legacy-role-reconciliation.test.mjs",
         "tests/unit/migration-signing-acceptance.test.mjs"
       ],
-      "blocker": "A restricted non-superuser runner with 21 independently scoped reference service roles and all 63 locked migrations is CI-verified. A new version-62 to version-63 cloned-database interruption/restart test is staged for exact-head CI qualification. Production-like remote identity, real API load, signed release custody, external monotonic ledger witness, independent DBA and security approvals, genuine deployment/HA DR, real staged upgrade and validated commercial buyer demand remain NOT VERIFIED. Production release approval denied."
+      "blocker": "A restricted non-superuser runner with 21 reference service roles and all 63 locked migrations is CI-verified. An isolated v62 to v63 cloned-database interruption/restart test is staged for exact-head qualification. Actual external owner and reviewer signatures, independent key custody/trust-policy pin, production migrator identity, production recovery witness, independently operated staging and real API load, DBA/security review, TLS/IdP, HA disaster recovery and commercial demand remain NOT VERIFIED. Production release approval denied."
     },
     {
       "id": "G1_EVIDENCE",

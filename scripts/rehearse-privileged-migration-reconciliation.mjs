@@ -114,7 +114,13 @@ function rehearseStagedUpgrade(test,ledger,admin,client){
   if(migration.split(last).length!==2)refuse('migration transaction injection anchor missing');
   const killed=migration.replace(last,
    '\\endif\nSELECT pg_terminate_backend(pg_backend_pid());\nCOMMIT;\nRESET ROLE;\n');
-  exec('psql',['-X','-q','-v','ON_ERROR_STOP=1','-f','-'],targetClient,killed,false);
+  const interrupted=spawnSync('psql',['-X','-q','-v','ON_ERROR_STOP=1','-f','-'],{
+   env:targetClient,input:killed,encoding:'utf8',timeout:120000,maxBuffer:4*1024*1024
+  });
+  // A generic SQL error must never count as proof of backend termination.
+  if(interrupted.error||interrupted.signal||interrupted.status===0||
+   !/terminating connection due to administrator command/i.test(interrupted.stderr||''))
+   refuse('staged upgrade did not prove a real PostgreSQL backend termination');
   assertInterruptedUpgradeState({
    historyCount:inspect(targetAdmin,'SELECT count(*) FROM verivaro_migration.history'),
    changedTableAbsent:inspect(targetAdmin,
