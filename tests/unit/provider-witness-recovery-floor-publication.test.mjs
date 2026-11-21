@@ -1,0 +1,218 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createHash,generateKeyPairSync,sign} from 'node:crypto';
+import {
+ encodeReferenceRecoveryApprovalGenesis
+} from '../../src/security/provider-witness-recovery-consumption.mjs';
+import {
+ canonicalRecoveryFloorPublicationStatement,
+ createUnsignedRecoveryFloorPublicationStatement,
+ canonicalRecoveryFloorAuthorityStatement,
+ createUnsignedRecoveryFloorAuthorityStatement,
+ verifyRecoveryFloorPublication,verifySignedRecoveryFloorAuthority,
+ openReferenceRecoveryFloorPublicationGate
+} from '../../src/security/provider-witness-recovery-floor-publication.mjs';
+
+const scope={issuer:'https://issuer.example.invalid',audience:'verivaro-internal'};
+const now='2026-11-21T04:00:00.000Z';
+const approvalId='1'.repeat(32),publicationId='2'.repeat(32),evidenceHash='3'.repeat(64);
+function lab(){
+ const custodians={primary:generateKeyPairSync('ed25519'),
+  secondary:generateKeyPairSync('ed25519')};
+ const authorityKey=generateKeyPairSync('ed25519');
+ const genesis=encodeReferenceRecoveryApprovalGenesis({...scope,serial:6});
+ const prior={serial:6,headHash:genesis.headHash};
+ const body={version:1,kind:'consume',...scope,serial:7,approvalId,
+  evidenceHash,previousHash:genesis.headHash};
+ const nextHash=createHash('sha256')
+  .update('verivaro-g1-consumed-review-v1\0')
+  .update(Buffer.from(JSON.stringify(body))).digest('hex');
+ const next={serial:7,headHash:nextHash};
+ const consumptionLog=Buffer.concat([genesis.bytes,
+  Buffer.from(JSON.stringify({...body,hash:nextHash})+'\n')]);
+ function make(overrides={},signKeys=custodians){
+  const statement=createUnsignedRecoveryFloorPublicationStatement({
+   ...scope,publicationId,previous:prior,next,approvalId,evidenceHash,
+   issuedAt:'2026-11-21T03:00:00.000Z',
+   expiresAt:'2026-11-21T05:00:00.000Z',...overrides
+  });
+  const bytes=canonicalRecoveryFloorPublicationStatement(statement);
+  return {statement,signatures:[
+   {role:'primary',signature:sign(null,bytes,signKeys.primary.privateKey).toString('base64url')},
+   {role:'secondary',signature:sign(null,bytes,signKeys.secondary.privateKey).toString('base64url')}
+  ]};
+ }
+ function signedHead(h){
+  const statement=createUnsignedRecoveryFloorAuthorityStatement({
+   ...scope,...h,issuedAt:'2026-11-21T03:00:00.000Z'
+  });
+  return {statement,signature:sign(null,canonicalRecoveryFloorAuthorityStatement(statement),
+   authorityKey.privateKey).toString('base64url')};
+ }
+ let remote={...prior},commits=0,dropAck=false,afterCommit,readHook;
+ const authority={
+  async read(request){
+   if(readHook)await readHook();
+   assert.deepEqual(request,scope);
+   return signedHead(remote);
+  },
+  async compareAndSwap(request){
+   if(request.issuer!==scope.issuer||request.audience!==scope.audience||
+    request.previous.serial!==remote.serial||
+    request.previous.headHash!==remote.headHash)
+    throw Error('remote CAS conflict');
+   verifyRecoveryFloorPublication(request.publication,{
+    ...scope,expectedPrevious:remote,
+    trustedCustodianKeys:{
+     primary:custodians.primary.publicKey,
+     secondary:custodians.secondary.publicKey
+    },consumptionLog:request.consumptionLog,now
+   });
+   commits++;
+   remote={...request.publication.statement.next};
+   if(afterCommit)await afterCommit();
+   if(dropAck)throw Error('lost remote ack');
+   return signedHead(remote);
+  }
+ };
+ const config=()=>({...scope,trustedFloor:prior,
+  trustedAuthorityKey:authorityKey.publicKey,
+  trustedCustodianKeys:{
+   primary:custodians.primary.publicKey,secondary:custodians.secondary.publicKey
+  },authority,clock:()=>new Date(now),ioTimeoutMs:650});
+ const check=(envelope=make(),overrides={})=>verifyRecoveryFloorPublication(envelope,{
+  ...scope,expectedPrevious:prior,consumptionLog,now,
+  trustedCustodianKeys:{primary:custodians.primary.publicKey,
+   secondary:custodians.secondary.publicKey},...overrides
+ });
+ return {prior,next,consumptionLog,custodians,authorityKey,authority,
+  make,signedHead,config,check,setDropAck:v=>{dropAck=v;},
+  setAfterCommit:v=>{afterCommit=v;},setReadHook:v=>{readHook=v;},
+  current:()=>({...remote}),commits:()=>commits};
+}
+test('both independent custodian signatures verify exact consumed-review ledger',()=>{
+ const f=lab(),r=f.check();
+ assert.equal(r.decision,'REVIEW_FLOOR_ELIGIBLE_ONLY');
+ assert.deepEqual({serial:r.serial,headHash:r.headHash},f.next);
+ assert.equal(r.automaticRecoveryPermitted,false);
+});
+test('wrong or duplicated custodian signatures cannot publish',()=>{
+ const f=lab(),e=f.make();
+ for(const signatures of [
+  [e.signatures[0]],
+  [e.signatures[0],e.signatures[0]],
+  [...e.signatures].reverse(),
+  [{...e.signatures[0],signature:'a'.repeat(86)},e.signatures[1]]
+ ])assert.throws(()=>f.check({...e,signatures}),/rejected/);
+ assert.throws(()=>f.check(e,{trustedCustodianKeys:{
+  primary:f.custodians.primary.publicKey,secondary:f.custodians.primary.publicKey
+ }}),/rejected/);
+});
+test('forked, stale and tampered ledger evidence reject, even with signed publication',()=>{
+ const f=lab();
+ assert.throws(()=>f.check(f.make(),{consumptionLog:f.consumptionLog.subarray(0,-5)}),/rejected/);
+ assert.throws(()=>f.check(f.make(),{expectedPrevious:{serial:6,headHash:'a'.repeat(64)}}),/rejected/);
+ assert.throws(()=>f.check(f.make({next:{serial:7,headHash:'b'.repeat(64)}})),/rejected/);
+ assert.throws(()=>f.check(f.make({approvalId:'a'.repeat(32)})),/rejected/);
+});
+test('changed scope, invalid validity and forged authority receipt fail closed',()=>{
+ const f=lab();
+ assert.throws(()=>f.check(f.make(),{audience:'other'}),/rejected/);
+ assert.throws(()=>f.check(f.make(),{now:'2026-11-21T05:00:00.000Z'}),/rejected/);
+ assert.throws(()=>f.make({expiresAt:'2026-11-23T04:00:00.000Z'}),/rejected/);
+ const receipt=f.signedHead(f.prior);
+ const tampered={...receipt,signature:'a'.repeat(86)};
+ assert.throws(()=>verifySignedRecoveryFloorAuthority(tampered,{
+  ...scope,trustedAuthorityKey:f.authorityKey.publicKey
+ }),/rejected/);
+});
+test('remote CAS publishes signed floor; fresh audit succeeds but old startup floor fails',async()=>{
+ const f=lab(),gate=await openReferenceRecoveryFloorPublicationGate(f.config());
+ const result=await gate.publish({publication:f.make(),consumptionLog:f.consumptionLog});
+ assert.equal(result.status,'REVIEW_FLOOR_PUBLISHED_ONLY');
+ assert.equal(result.automaticRecoveryPermitted,false);
+ assert.deepEqual(await gate.audit(),f.next);
+ assert.equal(f.commits(),1);
+ gate.close();
+ await assert.rejects(openReferenceRecoveryFloorPublicationGate(f.config()),/unavailable/);
+ const fresh=await openReferenceRecoveryFloorPublicationGate({
+  ...f.config(),trustedFloor:f.next
+ });
+ assert.deepEqual(await fresh.audit(),f.next);
+ fresh.close();
+});
+test('16 competing local publish calls produce exactly one remote publication',async()=>{
+ const f=lab(),gate=await openReferenceRecoveryFloorPublicationGate(f.config());
+ const args={publication:f.make(),consumptionLog:f.consumptionLog};
+ const results=await Promise.allSettled(Array.from({length:16},()=>gate.publish(args)));
+ assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+ assert.equal(results.filter(r=>r.status==='rejected').length,15);
+ assert.equal(f.commits(),1);
+ gate.close();
+});
+test('two gate instances cannot both promote one externally pinned floor',async()=>{
+ const f=lab();
+ const first=await openReferenceRecoveryFloorPublicationGate(f.config());
+ const second=await openReferenceRecoveryFloorPublicationGate(f.config());
+ const args={publication:f.make(),consumptionLog:f.consumptionLog};
+ const results=await Promise.allSettled([first.publish(args),second.publish(args)]);
+ assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+ assert.equal(results.filter(r=>r.status==='rejected').length,1);
+ assert.equal(f.commits(),1);
+ await assert.rejects(second.audit(),/unavailable/);
+ first.close();second.close();
+});
+test('lost remote ACK after durable-style mock commit faults without retrying',async()=>{
+ const f=lab(),gate=await openReferenceRecoveryFloorPublicationGate(f.config());
+ f.setDropAck(true);
+ await assert.rejects(gate.publish({
+  publication:f.make(),consumptionLog:f.consumptionLog
+ }),/unavailable/);
+ assert.deepEqual(f.current(),f.next);
+ assert.equal(f.commits(),1);
+ await assert.rejects(gate.audit(),/unavailable/);
+ await assert.rejects(gate.publish({
+  publication:f.make(),consumptionLog:f.consumptionLog
+ }),/unavailable/);
+ assert.equal(f.commits(),1);
+ gate.close();
+});
+test('remote commit completing only after timeout cannot be safely acknowledged',async()=>{
+ const f=lab();
+ let release,entered;
+ const waiting=new Promise(r=>{release=r;});
+ const signalled=new Promise(r=>{entered=r;});
+ f.setAfterCommit(async()=>{entered();await waiting;});
+ const gate=await openReferenceRecoveryFloorPublicationGate({
+  ...f.config(),ioTimeoutMs:35
+ });
+ const pending=gate.publish({publication:f.make(),consumptionLog:f.consumptionLog});
+ await signalled;
+ await assert.rejects(pending,/unavailable/);
+ release();
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(f.commits(),1);
+ assert.deepEqual(f.current(),f.next);
+ await assert.rejects(gate.audit(),/unavailable/);
+ gate.close();
+});
+test('authority read changing after opening is detected as trust-floor drift',async()=>{
+ const f=lab(),gate=await openReferenceRecoveryFloorPublicationGate(f.config());
+ f.setReadHook(()=>{throw Error('remote unreachable');});
+ await assert.rejects(gate.audit(),/unavailable/);
+ f.setReadHook(null);
+ await assert.rejects(gate.publish({
+  publication:f.make(),consumptionLog:f.consumptionLog
+ }),/unavailable/);
+ gate.close();
+});
+test('invalid signed publication rejects safely before remote CAS',async()=>{
+ const f=lab(),gate=await openReferenceRecoveryFloorPublicationGate(f.config());
+ const invalid=f.make({approvalId:'f'.repeat(32)});
+ await assert.rejects(gate.publish({
+  publication:invalid,consumptionLog:f.consumptionLog
+ }),/rejected/);
+ assert.equal(f.commits(),0);
+ assert.deepEqual(await gate.audit(),f.prior);
+ gate.close();
+});
