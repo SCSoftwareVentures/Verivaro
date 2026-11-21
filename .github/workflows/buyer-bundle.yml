@@ -30,7 +30,9 @@ jobs:
           node --experimental-strip-types buyer-bundle.mjs \
             "$RUNNER_TEMP/verivaro-synthetic-buyer.zip" | tee "$RUNNER_TEMP/buyer-bundle-receipt.json"
           unzip -t "$RUNNER_TEMP/verivaro-synthetic-buyer.zip"
-          test "$(unzip -Z1 "$RUNNER_TEMP/verivaro-synthetic-buyer.zip" | wc -l)" -eq 7
+          test "$(unzip -Z1 "$RUNNER_TEMP/verivaro-synthetic-buyer.zip" | wc -l)" -eq 8
+          unzip -p "$RUNNER_TEMP/verivaro-synthetic-buyer.zip" buyer-offline.html > "$RUNNER_TEMP/buyer-offline.html"
+          test -s "$RUNNER_TEMP/buyer-offline.html"
           sha256sum "$RUNNER_TEMP/verivaro-synthetic-buyer.zip"
       - name: Upload review artifact only (not deploy)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -39,6 +41,7 @@ jobs:
           path: |
             ${{ runner.temp }}/verivaro-synthetic-buyer.zip
             ${{ runner.temp }}/buyer-bundle-receipt.json
+            ${{ runner.temp }}/buyer-offline.html
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
