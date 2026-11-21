@@ -295,7 +295,8 @@ export async function inspectReferenceWitnessReceiptRecovery({
   exactFloor(seen,trustedFloor);
   return Object.freeze({
    status:'MANUAL_REVIEW_REQUIRED',
-   authenticatedHead:Object.freeze({count:seen.count,headHash:seen.headHash}),
+   authenticatedHead:Object.freeze({count:seen.count,headHash:seen.headHash,
+    checkpoint:Object.freeze({...seen.checkpoint})}),
    writerLockPresent:names.includes('.receipt-publisher.lock'),
    pendingFiles:Object.freeze(names.filter(n=>n.endsWith('.pending'))),
    automaticRecoveryPermitted:false
